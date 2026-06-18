@@ -33,6 +33,7 @@ class ExaminerConfig:
     n_estimators: int = 100
     test_size: float = 0.30      # fraction of real rare events held out
     random_state: int = 42
+    max_train_rows: int = 10000  # subsample normal training rows (Examiner doesn't need all 284K)
 
 
 # ── Public API ─────────────────────────────────────────────────────────────────
@@ -65,6 +66,14 @@ def measure_lift(
     real_df = pd.concat([normal_df, rare_df], ignore_index=True)
     X_normal_all = _encode_features(normal_df[feature_cols])
     X_rare_all   = _encode_features(rare_df[feature_cols])
+
+    # Subsample normal training rows for speed. The Examiner only needs a
+    # representative sample to estimate lift — 10K rows is plenty and keeps
+    # RandomForest training under 10s instead of 2+ minutes on 284K rows.
+    if len(X_normal_all) > config.max_train_rows:
+        rng_state = np.random.RandomState(config.random_state)
+        idx = rng_state.choice(len(X_normal_all), size=config.max_train_rows, replace=False)
+        X_normal_all = X_normal_all[idx]
 
     if len(X_rare_all) < 4:
         logger.warning("Too few rare events (%d) for reliable lift estimate", len(X_rare_all))

@@ -13,12 +13,11 @@ authors = [
 ]
 requires-python = ">=3.10"
 dependencies = [
-    "tabpfn>=2.0,<3.0",
-    "GPy",
     "numpy",
     "pandas",
     "scipy",
     "scikit-learn",
+    "GPy",
     "matplotlib",
     "pyarrow",
 ]
@@ -28,12 +27,13 @@ dev = [
     "pytest",
     "pytest-xdist",
 ]
-gnn = [
+pfn = [
+    "tabpfn>=2.0,<3.0",
     "torch",
     "torch-geometric",
 ]
 all = [
-    "regen-synth[dev,gnn]",
+    "regen-synth[dev,pfn]",
 ]
 
 [project.urls]
