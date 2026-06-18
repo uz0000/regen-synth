@@ -1,0 +1,16 @@
+id,name,rows,minority,minority_pct,features,numeric,categorical,regime
+4154,CreditCardSubset,14240,23,0.16,30,30,0,homogeneous
+42175,CreditCardFraudDetection,284807,492,0.17,30,30,0,homogeneous
+40900,Satellite,5100,75,1.47,36,36,0,homogeneous
+42742,porto-seguro,595212,21694,3.64,57,26,31,heterogeneous
+40676,hypothyroid,3163,151,4.77,25,7,18,heterogeneous
+40983,wilt,4839,261,5.39,5,5,0,heterogeneous
+4135,Amazon_employee_access,32769,1897,5.79,9,0,9,heterogeneous
+1487,ozone-level-8hr,2534,160,6.31,72,72,0,homogeneous
+42738,open_payments,73558,4749,6.46,5,0,5,heterogeneous
+4137,Dorothea,1150,112,9.74,100000,100000,0,homogeneous
+1461,bank-marketing,45211,5289,11.7,16,7,9,heterogeneous
+42732,sf-police-incidents,2215023,269319,12.16,8,3,5,heterogeneous
+40701,churn,5000,707,14.14,20,16,4,heterogeneous
+42733,Click_prediction_small,39948,6728,16.84,11,5,6,heterogeneous
+40702,solar-flare,1066,182,17.07,10,0,10,heterogeneous
