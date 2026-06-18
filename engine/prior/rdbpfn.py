@@ -27,7 +27,7 @@ Generator.
 
 import logging
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -84,6 +84,7 @@ class PriorModel:
     _X_rare: np.ndarray          # encoded rare-event covariate support
     _X_rare_std: np.ndarray      # per-feature std of rare support
     schema_graph: SchemaGraph
+    _backend_used: str = "gaussian"  # 'gaussian' or 'pfn' — which backend actually ran
 
     def score(self, df: pd.DataFrame) -> pd.Series:
         """
@@ -200,10 +201,11 @@ def fit_prior(
 
     # Fit the scorer
     if config.backend == "pfn":
-        scorer = _load_pfn_backend(config, X_all, y_all)
+        scorer, backend_actual = _load_pfn_backend(config, X_all, y_all)
     else:
         scorer = GaussianPrior()
         scorer.fit(X_all, y_all)
+        backend_actual = "gaussian"
         logger.info("Prior fitted (Gaussian backend) on %d normal rows, %d features",
                      len(X), len(feature_cols))
 
@@ -221,6 +223,7 @@ def fit_prior(
 
     return PriorModel(
         _scorer=scorer,
+        _backend_used=backend_actual,
         _feature_cols=feature_cols,
         _label_col=label_col,
         _X_train=X,
@@ -281,12 +284,17 @@ def _load_pfn_backend(
     config: PriorConfig,
     X_all: np.ndarray,
     y_all: np.ndarray,
-) -> object:
+) -> Tuple[object, str]:
     """
     Load and fit the PFN backend (TabPFN or RDB-PFN).
 
     Requires 'pip install regen-synth[pfn]'. Falls back to GaussianPrior
-    if the package is not installed.
+    if the package is not installed or authentication fails. Logs a loud
+    warning on any fallback.
+
+    Returns:
+        (scorer, backend_name) where backend_name is 'pfn', 'rdbpfn',
+        or 'gaussian' (fallback).
     """
     # Try RDB-PFN first (relational)
     try:
@@ -294,9 +302,11 @@ def _load_pfn_backend(
         logger.info("Using rdbpfn (relational PFN)")
         model = rdbpfn.RDBPFNClassifier(device=config.device, seed=42)
         model.fit(X_all, y_all)
-        return model
+        return model, "rdbpfn"
     except ImportError:
         pass
+    except Exception as exc:
+        logger.warning("rdbpfn loaded but failed: %s", exc)
 
     # Fall back to TabPFN (flat table)
     try:
@@ -304,15 +314,28 @@ def _load_pfn_backend(
         logger.info("Using TabPFN (flat-table PFN)")
         model = TabPFNClassifier(device=config.device, ignore_pretraining_limits=True)
         model.fit(X_all, y_all)
-        return model
+        return model, "pfn"
     except ImportError:
         logger.warning(
-            "PFN backend requested but neither rdbpfn nor TabPFN installed. "
-            "Falling back to GaussianPrior. Install with: pip install regen-synth[pfn]"
+            "PFN backend requested but TabPFN not installed. "
+            "Install with: pip install regen-synth[pfn]"
         )
-        scorer = GaussianPrior()
-        scorer.fit(X_all, y_all)
-        return scorer
+    except Exception as exc:
+        logger.warning(
+            "PFN backend requested but TabPFN failed: %s. "
+            "Falling back to GaussianPrior.",
+            exc,
+        )
+
+    # Fallback
+    scorer = GaussianPrior()
+    scorer.fit(X_all, y_all)
+    logger.warning(
+        "Prior backend fell back to GaussianPrior (requested: '%s'). "
+        "PFN features (ARD lengthscales, relational structure) unavailable.",
+        config.backend,
+    )
+    return scorer, "gaussian"
 
 
 # ── Internals ──────────────────────────────────────────────────────────────────
