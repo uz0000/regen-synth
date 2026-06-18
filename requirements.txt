@@ -16,3 +16,4 @@ pyarrow                    # Parquet I/O
 
 # Dev / test
 pytest
+streamlit                # Demo visualization
