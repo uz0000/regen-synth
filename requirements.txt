@@ -1,0 +1,18 @@
+# Engine dependencies (deterministic — no LLM)
+tabpfn>=2.0,<3.0
+GPy
+numpy
+pandas
+scipy
+scikit-learn
+matplotlib                 # GPy runtime dependency (plotting module on import)
+
+# Optional: relational GNN enrichment
+torch
+torch-geometric
+
+# Control plane (narration only — not imported by engine/)
+openai
+
+# Dev / test
+pytest

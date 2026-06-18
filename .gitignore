@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+.DS_Store
+
+# Demo run artifacts
+examples/_run/
+examples/transactions.csv
+
+# Local model tokens / secrets
+.env
+
+# Research PDFs (large reference materials, not code)
+*.pdf
