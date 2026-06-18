@@ -49,7 +49,7 @@ def main():
     out_dir.mkdir(exist_ok=True)
 
     print("\n[benchmark] Starting REGEN campaign...")
-    print(f"[benchmark] Params: passes=5, batch=300, max_features=10, coverage=0.70\n")
+    print(f"[benchmark] Params: passes=5, batch=300, max_features=6, coverage=0.70\n")
 
     t0 = time.time()
 

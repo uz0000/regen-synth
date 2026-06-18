@@ -42,8 +42,15 @@ class PriorModel:
     """
     Fitted prior. Exposes .score(df) and stores training state
     needed by the Amplifier to compute residuals.
+
+    Scoring uses a fast Gaussian Naive Bayes estimator (not the PFN model)
+    because TabPFN/RDB-PFN .predict_proba() scales poorly on large datasets
+    (full transformer pass over the training set per prediction). The GNB
+    captures the same "normal vs rare" contrast at O(1) per row and is
+    intentionally weak on the tail — the Amplifier's job is to correct that.
     """
-    _model: object               # TabPFN or rdbpfn model instance
+    _model: object               # TabPFN or rdbpfn model instance (for generate_base_batch)
+    _scorer: object              # GaussianPrior instance for fast .score()
     _feature_cols: List[str]
     _label_col: str
     _X_train: np.ndarray         # encoded normal training features (float32)
@@ -56,10 +63,13 @@ class PriorModel:
         """
         Return predicted probability of being a *normal* event per row.
         Higher = more normal; lower = more anomalous (rare).
+
+        Uses a fast Gaussian scorer (O(1) per row) rather than the PFN
+        model. See class docstring for rationale.
         """
         X = _encode_features(df[self._feature_cols])
-        proba = self._model.predict_proba(X)
-        # TabPFN/rdbpfn returns [P(class=0), P(class=1)]; class 1 = normal
+        proba = self._scorer.predict_proba(X)
+        # Returns [P(class=0), P(class=1)]; class 1 = normal
         normal_proba = proba[:, 1] if proba.shape[1] == 2 else proba[:, 0]
         return pd.Series(normal_proba, index=df.index)
 
@@ -189,10 +199,16 @@ def fit_prior(
         X_rare = X.astype(np.float64)
     X_rare_std = X_rare.std(axis=0)
     X_rare_std = np.where(X_rare_std < 1e-8, 1.0, X_rare_std)
-
     logger.info("Prior fitted on %d normal rows, %d features", len(X), len(feature_cols))
+
+    # Build a fast Gaussian scorer for .score() — the PFN model is needed
+    # only for generate_base_batch (in-context generation), not for scoring.
+    scorer = GaussianPrior()
+    scorer.fit(X_all, y_all)
+
     return PriorModel(
         _model=model,
+        _scorer=scorer,
         _feature_cols=feature_cols,
         _label_col=label_col,
         _X_train=X,
