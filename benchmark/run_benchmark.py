@@ -64,7 +64,7 @@ def main():
             "--n-rows", "300",
             "--out", str(out_dir),
             "--coverage-threshold", "0.70",
-            "--max-features", "10",
+            "--max-features", "6",
             "--seed", "42",
             "--json",
         ],

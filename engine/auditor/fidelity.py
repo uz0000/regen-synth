@@ -105,6 +105,12 @@ def audit(
 
     # ── Per-column TVD / Wasserstein vs the rare reference ────────────────────
     shared = [c for c in reference_df.columns if c in synthetic_df.columns and c in field_dict]
+    # Skip the label column — its distribution is metadata (all synthetic rows
+    # are rare), not a generated property of the synthetic data. Comparing it
+    # against the real rare distribution guarantees a false rejection.
+    label_col = ingest.label_col
+    if label_col and label_col in shared:
+        shared.remove(label_col)
     col_results: List[ColumnFidelity] = []
     for col in shared:
         col_results.append(
