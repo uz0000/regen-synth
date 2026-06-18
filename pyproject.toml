@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "regen-synth"
+version = "0.1.0"
+description = "Rare-Event Generation & Noise amplification — statistically grounded synthetic data for tail events"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "REGEN Contributors"},
+]
+requires-python = ">=3.10"
+dependencies = [
+    "tabpfn>=2.0,<3.0",
+    "GPy",
+    "numpy",
+    "pandas",
+    "scipy",
+    "scikit-learn",
+    "matplotlib",
+    "pyarrow",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-xdist",
+]
+gnn = [
+    "torch",
+    "torch-geometric",
+]
+all = [
+    "regen-synth[dev,gnn]",
+]
+
+[project.urls]
+Homepage = "https://github.com/your-org/regen-synth"
+Documentation = "https://github.com/your-org/regen-synth/docs"
+
+[project.scripts]
+regen = "cli.main:main"
+
+[tool.setuptools.packages.find]
+include = ["engine*", "contracts*", "agent-runtime*", "cli*"]
+exclude = ["tests*", "examples*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
