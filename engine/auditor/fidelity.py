@@ -158,9 +158,16 @@ def _coverage_rate(
     R_n = R / sigma
     S_n = S / sigma
 
+    # Coverage radius adapts to dimensionality: L2 norm / sqrt(D).
+    # In D dimensions, the expected L2 norm of a standard normal vector is
+    # ~sqrt(D), so a threshold of 1.0 means "within 1 sigma of the mean
+    # Euclidean distance" regardless of how many features there are.
+    d = R.shape[1]
+    radius = np.sqrt(d)
+
     covered = sum(
         1 for r_row in R_n
-        if np.abs(S_n - r_row).max(axis=1).min() <= 1.0
+        if np.sqrt((((S_n - r_row) ** 2).sum(axis=1))).min() <= radius
     )
     return covered / len(R)
 

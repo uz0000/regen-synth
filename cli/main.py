@@ -102,6 +102,8 @@ def _build_parser() -> argparse.ArgumentParser:
                        help="Auditor coverage threshold (default: 0.80)")
     run_p.add_argument("--gp-noise", type=float, default=0.1,
                        help="GP noise variance (default: 0.1)")
+    run_p.add_argument("--max-features", type=int, default=0,
+                       help="Max features for GP input (0=all). Speeds up high-dim data. (default: 0)")
     run_p.add_argument("--json", action="store_true",
                        help="Output campaign summary as JSON")
     run_p.set_defaults(command="run")
@@ -199,7 +201,7 @@ def _cmd_run(args):
         max_passes=args.passes,
         label_col=result.label_col,
         prior_config={"device": "cpu"},
-        amplifier_config={"gp_noise_variance": args.gp_noise},
+        amplifier_config={"gp_noise_variance": args.gp_noise, "max_features": args.max_features},
         auditor_config={"coverage_threshold": args.coverage_threshold},
         examiner_config={"n_estimators": 100},
         scout_config={"num_candidates": 100},

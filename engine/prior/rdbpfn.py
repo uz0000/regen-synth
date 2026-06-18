@@ -32,6 +32,7 @@ class PriorConfig:
     device: str = "cpu"          # "cuda" if GPU available
     gnn_layers: int = 3          # message-passing rounds for relational context
     latent_dim: int = 64         # per-row latent vector size
+    max_train_rows: int = 5000   # subsample normal rows when dataset exceeds this (TabPFN scale limit)
 
 
 # ── Fitted model ──────────────────────────────────────────────────────────────
@@ -138,6 +139,15 @@ def fit_prior(
 
     feature_cols = [c for c in normal_df.columns if c != label_col]
     X = _encode_features(normal_df[feature_cols])
+
+    # Subsample normal rows for TabPFN scale limits. The prior only needs to
+    # characterize the average-case distribution — 5000 rows is plenty and
+    # keeps TabPFN inference fast. Use the seed from the Generator for
+    # deterministic subsampling across runs with the same manifest.
+    if len(X) > config.max_train_rows:
+        idx = rng.choice(len(X), size=config.max_train_rows, replace=False)
+        X = X[idx]
+        logger.info("Subsampled normal training set: %d → %d", len(normal_df), config.max_train_rows)
 
     # Relational enrichment via GNN message-passing when schema is non-trivial
     if not schema_graph.is_empty():

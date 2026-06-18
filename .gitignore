@@ -8,6 +8,16 @@ __pycache__/
 examples/_run/
 examples/transactions.csv
 
+# Campaign output
+regen-output/
+
+# Benchmark output
+benchmark/regen-output/
+benchmark/creditcard.csv
+
+# Python egg info
+*.egg-info/
+
 # Local model tokens / secrets
 .env
 

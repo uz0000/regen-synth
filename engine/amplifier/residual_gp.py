@@ -14,11 +14,16 @@ Short lengthscale → feature drives rare-event deviation.
 Long lengthscale → feature is mostly irrelevant to the tail.
 
 Rolling buffer: observations are capped at gp_max_obs (Cholesky stability).
+
+High-dim feature selection: when max_features > 0, only the top-K columns
+(by variance in the rare data) are used as GP inputs. This keeps the ARD
+kernel fitting fast — GP hyperparameter optimization scales as O(d³) where
+d = input dimension.
 """
 
 import logging
 from dataclasses import dataclass
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import GPy
 import numpy as np
@@ -36,6 +41,7 @@ logger = logging.getLogger(__name__)
 class AmplifierConfig:
     gp_max_obs: int = 300          # rolling buffer cap (Cholesky stays stable)
     gp_noise_variance: float = 0.1 # observation noise σ²
+    max_features: int = 0          # 0 = all features; >0 = top-K by variance (speeds GP on high-D data)
 
 
 # ── Fitted residual model ──────────────────────────────────────────────────────
@@ -46,10 +52,14 @@ class ResidualModel:
     _feature_cols: List[str]
     _X_train: np.ndarray          # rare-event feature points (training set)
     _feature_relevance: np.ndarray  # normalized ARD relevance per feature [0,1]
+    _gp_feature_idx: np.ndarray   # indices of features used as GP inputs
+    _n_total_features: int        # total feature count before selection
 
     def posterior(self, X: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         """GP posterior mean and variance at X. Returns (mean, var) as (n,) arrays."""
-        mean, var = self._gp.predict(X)
+        # If the GP was fit on a subset of features, select those columns
+        X_gp = X[:, self._gp_feature_idx] if len(self._gp_feature_idx) < self._n_total_features else X
+        mean, var = self._gp.predict(X_gp)
         return mean.ravel(), var.ravel()
 
 
@@ -67,6 +77,11 @@ def fit_residuals(
     normal prediction? A prior score near 1.0 means "looks very normal" — the
     residual (1 - score) captures how anomalous the rare event actually is.
 
+    When config.max_features > 0, only the top-K features (by variance in the
+    rare data) are used as GP inputs. This speeds the ARD kernel significantly
+    on high-dimensional data without losing informativeness — the GP only
+    needs the most varying dimensions to learn the residual structure.
+
     Args:
         ingest: IngestResult (uses rare_df).
         prior:  Fitted PriorModel from engine.prior.
@@ -82,30 +97,51 @@ def fit_residuals(
     prior_scores = prior.score(rare_df).values  # P(normal) for each rare row
     residuals = 1.0 - prior_scores              # high = very un-normal
 
+    # Feature selection: when max_features > 0, keep only the top-K by variance
+    n_total = X_rare.shape[1]
+    if 0 < config.max_features < n_total:
+        variances = X_rare.var(axis=0)
+        gp_feature_idx = np.argsort(variances)[::-1][:config.max_features]
+        X_gp = X_rare[:, gp_feature_idx].copy()
+        logger.info(
+            "GP input dim: %d → %d (top %d by variance)",
+            n_total, config.max_features, config.max_features,
+        )
+    else:
+        gp_feature_idx = np.arange(n_total)
+        X_gp = X_rare
+
     # Enforce rolling buffer so Cholesky stays stable
-    if len(X_rare) > config.gp_max_obs:
-        logger.info("Rare event buffer capped: %d → %d", len(X_rare), config.gp_max_obs)
-        X_rare    = X_rare[-config.gp_max_obs:]
+    if len(X_gp) > config.gp_max_obs:
+        logger.info("Rare event buffer capped: %d → %d", len(X_gp), config.gp_max_obs)
+        X_gp = X_gp[-config.gp_max_obs:]
         residuals = residuals[-config.gp_max_obs:]
 
-    gp = _fit_gp(X_rare, residuals, config)
+    gp = _fit_gp(X_gp, residuals, config)
 
     # Per-feature relevance from ARD lengthscales: shorter → more relevant
     ls = gp.kern.lengthscale.values.copy()
-    relevance = 1.0 / (ls + 1e-8)
-    relevance = relevance / (relevance.max() + 1e-8)
+    relevance_gp = 1.0 / (ls + 1e-8)
+    relevance_gp = relevance_gp / (relevance_gp.max() + 1e-8)
 
+    # Expand relevance back to full feature space: selected features get
+    # their ARD relevance, unselected features get near-zero relevance
+    relevance = np.zeros(n_total, dtype=np.float64)
+    relevance[gp_feature_idx] = relevance_gp
+
+    top5 = np.argsort(relevance)[::-1][:5]
     logger.info(
-        "ResidualGP fitted on %d rare rows; top-5 feature indices: %s",
-        len(X_rare),
-        np.argsort(relevance)[::-1][:5].tolist(),
+        "ResidualGP fitted on %d rare rows, %d GP dims; top-5 feature indices: %s",
+        len(X_gp), X_gp.shape[1], top5.tolist(),
     )
 
     return ResidualModel(
         _gp=gp,
         _feature_cols=feature_cols,
-        _X_train=X_rare,
+        _X_train=X_gp,
         _feature_relevance=relevance,
+        _gp_feature_idx=gp_feature_idx,
+        _n_total_features=n_total,
     )
 
 
@@ -122,20 +158,29 @@ def sample_residuals(
     residual is broadcast to all features via ARD relevance weights so only
     the features that matter for rare events are shifted.
 
+    If the GP was fit on a subset of features (max_features > 0), the
+    correction is computed on the GP's input dimensions and then expanded
+    to the full feature space via relevance weighting — unselected features
+    get negligible correction.
+
     Returns:
         (gp_mean, gp_var, X_residuals) — all shape (n, D) or (n,)
     """
     gp = residual_model._gp
     n  = len(X_base)
+    D  = X_base.shape[1]
 
-    mean, var = gp.predict(X_base.astype(np.float64))
+    # Select the GP input columns from the base features
+    idx = residual_model._gp_feature_idx
+    X_gp = X_base[:, idx].astype(np.float64) if len(idx) < D else X_base.astype(np.float64)
+
+    mean, var = gp.predict(X_gp)
     mean = mean.ravel()
     var  = var.ravel().clip(min=1e-6)
 
     residuals = mean + np.sqrt(var) * rng.standard_normal(n)
 
     relevance = residual_model._feature_relevance  # (D,)
-    D = X_base.shape[1]
     if len(relevance) == D:
         X_residuals = residuals[:, None] * relevance[None, :]
     else:
