@@ -1,0 +1,42 @@
+[
+  {
+    "seed": 42,
+    "regen_best_lift": 0.30434782608695643,
+    "regen_avg_lift": 0.22608695652173907,
+    "regen_accepted": 5,
+    "regen_total_rows": 1000,
+    "smote_lift": 0.08695652173913038
+  },
+  {
+    "seed": 43,
+    "regen_best_lift": 0.26086956521739124,
+    "regen_avg_lift": 0.22608695652173907,
+    "regen_accepted": 5,
+    "regen_total_rows": 1000,
+    "smote_lift": 0.17391304347826086
+  },
+  {
+    "seed": 44,
+    "regen_best_lift": 0.26086956521739124,
+    "regen_avg_lift": 0.21739130434782608,
+    "regen_accepted": 5,
+    "regen_total_rows": 1000,
+    "smote_lift": 0.0
+  },
+  {
+    "seed": 45,
+    "regen_best_lift": 0.21739130434782605,
+    "regen_avg_lift": 0.19999999999999998,
+    "regen_accepted": 5,
+    "regen_total_rows": 1000,
+    "smote_lift": 0.08695652173913049
+  },
+  {
+    "seed": 46,
+    "regen_best_lift": 0.26086956521739124,
+    "regen_avg_lift": 0.21739130434782608,
+    "regen_accepted": 5,
+    "regen_total_rows": 1000,
+    "smote_lift": 0.17391304347826086
+  }
+]
