@@ -15,6 +15,9 @@ regen-output/
 benchmark/regen-output/
 benchmark/creditcard.csv
 
+# Benchmark datasets (downloaded by run_multi.py from OpenML)
+benchmark/data/
+
 # Python egg info
 *.egg-info/
 
