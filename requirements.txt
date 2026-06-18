@@ -6,6 +6,7 @@ pandas
 scipy
 scikit-learn
 matplotlib                 # GPy runtime dependency (plotting module on import)
+pyarrow                    # Parquet I/O for persist_ingest
 
 # Optional: relational GNN enrichment
 torch
