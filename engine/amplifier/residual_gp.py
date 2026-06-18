@@ -56,6 +56,7 @@ class ResidualModel:
     _feature_relevance: np.ndarray  # normalized ARD relevance per feature [0,1]
     _gp_feature_idx: np.ndarray   # indices of features used as GP inputs
     _n_total_features: int        # total feature count before selection
+    _is_continuous: np.ndarray    # bool mask: which features are continuous
     _gp_optimized: bool           # whether the GP was successfully optimized
 
     def posterior(self, X: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
@@ -157,9 +158,12 @@ def fit_residuals(
         relevance_gp = rarity / (rarity.max() + 1e-8)
 
     # Expand relevance back to full feature space: selected features get
-    # their relevance, unselected features get near-zero relevance
+    # their relevance, unselected features get near-zero relevance.
+    # Non-continuous features (binary, categorical) get zero relevance
+    # because perturbing them produces meaningless intermediate values
+    # (e.g. on_thyroxine=0.35 instead of 0 or 1).
     relevance = np.zeros(n_total, dtype=np.float64)
-    relevance[gp_feature_idx] = relevance_gp
+    relevance[gp_feature_idx] = relevance_gp * prior._is_continuous[gp_feature_idx]
 
     top5 = np.argsort(relevance)[::-1][:5]
     logger.info(
@@ -174,6 +178,7 @@ def fit_residuals(
         _feature_relevance=relevance,
         _gp_feature_idx=gp_feature_idx,
         _n_total_features=n_total,
+        _is_continuous=prior._is_continuous,
         _gp_optimized=optimized,
     )
 

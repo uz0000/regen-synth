@@ -83,6 +83,7 @@ class PriorModel:
     _X_train_std: np.ndarray     # per-feature std of normal training data
     _X_rare: np.ndarray          # encoded rare-event covariate support
     _X_rare_std: np.ndarray      # per-feature std of rare support
+    _is_continuous: np.ndarray   # bool mask: which feature columns are continuous
     schema_graph: SchemaGraph
     _backend_used: str = "gaussian"  # 'gaussian' or 'pfn' — which backend actually ran
 
@@ -221,6 +222,15 @@ def fit_prior(
     X_rare_std = X_rare.std(axis=0)
     X_rare_std = np.where(X_rare_std < 1e-8, 1.0, X_rare_std)
 
+    # Build continuous-feature mask
+    from contracts.types import FieldType
+    is_continuous = np.array([
+        ingest.field_dict[c].field_type == FieldType.CONTINUOUS
+        if c in ingest.field_dict else True
+        for c in feature_cols
+    ], dtype=bool)
+    logger.info("Continuous features: %d/%d", int(is_continuous.sum()), len(feature_cols))
+
     return PriorModel(
         _scorer=scorer,
         _backend_used=backend_actual,
@@ -230,6 +240,7 @@ def fit_prior(
         _X_train_std=X_std,
         _X_rare=X_rare,
         _X_rare_std=X_rare_std,
+        _is_continuous=is_continuous,
         schema_graph=schema_graph,
     )
 
@@ -273,7 +284,15 @@ def generate_base_batch(
 
     idx = rng.choice(len(X_anchor), size=n, replace=True, p=weights)
     X_base = X_anchor[idx].copy().astype(np.float64)
-    X_base += rng.standard_normal(X_base.shape) * anchor_std * 0.25
+
+    # Only perturb continuous features. Binary/categorical features keep
+    # their anchor values — perturbing a binary column (e.g. on_thyroxine)
+    # produces meaningless intermediate values and causes the Auditor
+    # to reject with TVD=1.0 on that column.
+    continuous = prior._is_continuous
+    noise = np.zeros_like(X_base)
+    noise[:, continuous] = rng.standard_normal((n, int(continuous.sum()))) * anchor_std[continuous] * 0.25
+    X_base += noise
 
     return pd.DataFrame(X_base, columns=feature_cols)
 
