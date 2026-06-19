@@ -172,7 +172,7 @@ def _repig(gp, candidates: np.ndarray, targets: np.ndarray) -> np.ndarray:
 
     # Predictive variance at candidates (includes noise)
     _, var_cand = gp.predict(candidates)                      # (C, 1)
-    sigma_y_sq  = var_cand.ravel() + float(gp.Gaussian_noise.variance)  # (C,)
+    sigma_y_sq  = var_cand.ravel() + gp.Gaussian_noise.variance.values.item()  # (C,)
 
     # Posterior variance at targets
     _, var_target = gp.predict(targets)                       # (T, 1)
