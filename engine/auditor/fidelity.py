@@ -12,7 +12,9 @@ Metrics:
 
   Rare event coverage rate (PRIMARY METRIC):
     Fraction of real rare events that have at least one synthetic neighbor
-    within 1 standard deviation per feature (L∞ ball). This is checked
+    within √D Euclidean distance in σ-normalised space (L2 ball, radius
+    = √features). The threshold scales with dimensionality so coverage
+    is consistent regardless of feature count. This is checked
     first — a batch can pass bulk column metrics and still fail if it
     doesn't actually cover the tail.
 
@@ -145,7 +147,12 @@ def _coverage_rate(
     Fraction of real rare events covered by the synthetic batch.
 
     A rare event r is "covered" if there exists a synthetic row s such that
-    for all numeric features f:  |r[f] - s[f]| ≤ σ_f  (L∞ ball, radius=1σ).
+    the Euclidean (L2) distance between r and s, in per-feature σ-normalised
+    space, is ≤ √D (where D = number of numeric features).  The threshold
+    √D is the expected L2 norm of a D-dimensional standard normal vector,
+    so the radius grows naturally with dimensionality — a row that stays
+    within ~1σ of the mean along every axis passes the gate regardless of
+    how many features there are.
     """
     numeric_cols = [
         c for c in rare_df.columns

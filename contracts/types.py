@@ -184,3 +184,56 @@ class LiftReport:
     tail_lift: float          # primary number Scout uses
     n_synthetic_used: int
     manifest: Optional[BatchManifest] = None
+
+
+# ── Campaign output ───────────────────────────────────────────────────────────
+
+@dataclass
+class PassDetail:
+    """One pass of an amplification campaign: accept/reject + metrics."""
+    pass_num: int
+    status: str                     # "accepted" | "rejected"
+    tail_lift: float = 0.0
+    baseline_recall: float = 0.0
+    amplified_recall: float = 0.0
+    baseline_precision: float = 0.0
+    amplified_precision: float = 0.0
+    coverage: float = 0.0
+
+
+@dataclass
+class CampaignResult:
+    """Full outcome of a multi-pass REGEN campaign."""
+    best_lift: float
+    passes: List[PassDetail] = field(default_factory=list)
+    n_accepted: int = 0
+    n_rejected: int = 0
+    n_normal: int = 0
+    n_rare: int = 0
+    n_features: int = 0
+    n_rows_per_pass: int = 0
+    output_dir: str = ""
+    best_batch_path: Optional[str] = None
+
+
+# ── Screen result ──────────────────────────────────────────────────────────────
+
+@dataclass
+class ScreenResult:
+    """Win-boundary prediction: which method is likely to win on this data.
+
+    The prediction rule is calibrated against the breadth benchmark
+    (benchmark/RESULTS_BREADTH.md, ~75% accuracy). The metric is the
+    coefficient of variation (CV = σ/μ) of the fitted ARD kernel
+    inverse-lengthscales — high spread means features vary in
+    informativeness (REGEN-favorable), low spread means features are
+    homogeneous/redundant (SMOTE-favorable). Two known misclassifications
+    are both conservative (predicted SMOTE, REGEN actually won).
+    """
+    recommended_method: str         # "REGEN" | "SMOTE"
+    heterogeneity_score: float      # CV of ARD inverse-lengthscales
+    confidence: float               # distance from decision boundary [0, 1]
+    predicted_lift_band: str        # rough estimate range
+    rationale: str                  # one-line explanation
+    n_rare: int = 0
+    n_features: int = 0

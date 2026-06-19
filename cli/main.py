@@ -1,11 +1,15 @@
 """
-REGEN CLI — entry point and subcommands.
+REGEN CLI — thin wrappers around regen.api.
 
 Usage:
     regen run <data> --label <col> [options]
     regen ingest <data> [--label <col>]
+    regen screen <data> [--label <col>] [options]
     regen test
     regen --version
+
+Every command delegates its logic to regen.api.*. The CLI only parses
+flags, calls the API, and formats output.
 """
 
 import argparse
@@ -40,6 +44,8 @@ def main():
         _cmd_ingest(args)
     elif args.command == "run":
         _cmd_run(args)
+    elif args.command == "screen":
+        _cmd_screen(args)
 
 
 # ── Argument parser ────────────────────────────────────────────────────────
@@ -108,6 +114,26 @@ def _build_parser() -> argparse.ArgumentParser:
                        help="Output campaign summary as JSON")
     run_p.set_defaults(command="run")
 
+    # ── regen screen ────────────────────────────────────────────────────────
+    screen_p = sub.add_parser("screen", help="Predict whether REGEN or SMOTE will win on your data")
+    screen_p.add_argument("data", type=str, help="Path to input data (CSV/JSON/Parquet)")
+    screen_p.add_argument("--label", type=str, default="",
+                          help="Label column name (auto-detect if omitted)")
+    screen_p.add_argument("--rare-mode", type=str, default="percentile",
+                          choices=["label", "percentile", "imbalance_ratio"],
+                          help="How to identify rare events (default: percentile)")
+    screen_p.add_argument("--rare-value", type=str, default=None,
+                          help="Value for label mode (e.g. '1' for is_fraud=1)")
+    screen_p.add_argument("--percentile", type=float, default=0.05,
+                          help="Percentile threshold (default: 0.05 = bottom 5%%)")
+    screen_p.add_argument("--imbalance-ratio", type=float, default=0.01,
+                          help="Imbalance ratio threshold (default: 0.01)")
+    screen_p.add_argument("--seed", type=int, default=42,
+                          help="RNG seed (default: 42)")
+    screen_p.add_argument("--quick-campaign", action="store_true",
+                          help="Run a single campaign pass to sharpen the estimate")
+    screen_p.set_defaults(command="screen")
+
     return p
 
 
@@ -130,12 +156,10 @@ def _cmd_test():
 # ── Command: ingest ────────────────────────────────────────────────────────
 
 def _cmd_ingest(args):
-    """Load and inspect a dataset without running a campaign."""
-    from engine.ingest.loader import ingest as do_ingest
-    from contracts.types import RareEventDef, RareMode
-
+    """Load and inspect a dataset via the API."""
+    from regen.api import ingest as api_ingest
     rare_def = _build_rare_def(args)
-    result = do_ingest(
+    result = api_ingest(
         filepath=args.data,
         label_col=args.label,
         rare_def=rare_def,
@@ -149,111 +173,115 @@ def _cmd_ingest(args):
     print()
     print("Columns:")
     for name, meta in result.field_dict.items():
-        sym = "★" if name == result.label_col else " "
+        sym = "\u2605" if name == result.label_col else " "
         print(f"  {sym} {name}  ({meta.field_type.value})", end="")
         if meta.cardinality:
             print(f"  [{meta.cardinality} unique]", end="")
         if meta.min_val is not None:
-            print(f"  [{meta.min_val:.2f}–{meta.max_val:.2f}]", end="")
+            print(f"  [{meta.min_val:.2f}\u2013{meta.max_val:.2f}]", end="")
         print()
 
 
 # ── Command: run ───────────────────────────────────────────────────────────
 
 def _cmd_run(args):
-    """Run a full REGEN amplification campaign."""
-    from engine.ingest.loader import ingest as do_ingest, persist_ingest
-    from contracts.types import RareEventDef, RareMode
-    import importlib.util
-    skill_path = _repo_root() / "agent-runtime" / "skills" / "regen-loop" / "skill.py"
-    spec = importlib.util.spec_from_file_location("regen_loop_skill", str(skill_path))
-    skill_mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(skill_mod)
-    run_campaign = skill_mod.run_campaign
-
-    # 1. Build the rare-event definition
+    """Run a full REGEN campaign via the API."""
+    from regen.api import run_campaign
     rare_def = _build_rare_def(args)
 
-    # 2. Ingest the data
-    print(f"[regen] Loading {args.data} ...", file=sys.stderr)
-    result = do_ingest(
+    out_dir = Path(args.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    print(f"[regen] Running campaign on {args.data} ...", file=sys.stderr)
+
+    result = run_campaign(
         filepath=args.data,
         label_col=args.label,
         rare_def=rare_def,
-    )
-    print(f"[regen] {len(result.normal_df)} normal, {len(result.rare_df)} rare, label='{result.label_col}'",
-          file=sys.stderr)
-
-    # 3. Persist the ingest layout for stages
-    out_dir = Path(args.out)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    ingest_path = str(out_dir / "data")
-    persist_ingest(result, ingest_path)
-
-    # 4. Run the campaign
-    print(f"[regen] Running campaign ({args.passes} passes, {args.n_rows} rows/pass) ...",
-          file=sys.stderr)
-
-    summary = run_campaign(
-        ingest_path=ingest_path,
         seed=args.seed,
         n_rows=args.n_rows,
         max_passes=args.passes,
-        label_col=result.label_col,
-        prior_config={"device": "cpu"},
-        amplifier_config={"gp_noise_variance": args.gp_noise, "max_features": args.max_features},
-        auditor_config={"coverage_threshold": args.coverage_threshold},
-        examiner_config={"n_estimators": 100},
-        scout_config={"num_candidates": 100},
+        out_dir=str(out_dir),
+        coverage_threshold=args.coverage_threshold,
+        gp_noise=args.gp_noise,
+        max_features=args.max_features,
+        n_estimators=100,
+        num_candidates=100,
     )
 
-    # 5. Report
     if args.json:
-        print(json.dumps(summary, indent=2))
+        print(json.dumps(_cr_to_dict(result), indent=2))
     else:
-        _print_summary(summary, out_dir)
+        _print_summary(result, out_dir)
 
 
-def _print_summary(summary: dict, out_dir: Path):
-    """Print a human-readable campaign summary."""
+def _print_summary(result, out_dir: Path):
+    """Print a human-readable campaign summary from CampaignResult."""
     print()
     print("=" * 62)
     print("  REGEN CAMPAIGN SUMMARY")
     print("=" * 62)
 
-    for p in summary["passes"]:
-        if p["status"] == "accepted":
-            lift = p.get("tail_lift", 0.0)
-            base_r = p.get("baseline_recall", 0.0)
-            amp_r  = p.get("amplified_recall", 0.0)
-            base_p = p.get("baseline_precision", 0.0)
-            amp_p  = p.get("amplified_precision", 0.0)
-            print(f"  Pass {p['pass']}: ✓ ACCEPTED")
-            print(f"      recall     {base_r:.3f} → {amp_r:.3f}  (lift {lift:+.3f})")
-            print(f"      precision  {base_p:.3f} → {amp_p:.3f}")
+    for p in result.passes:
+        if p.status == "accepted":
+            print(f"  Pass {p.pass_num}: \u2713 ACCEPTED")
+            print(f"      recall     {p.baseline_recall:.3f} \u2192 {p.amplified_recall:.3f}"
+                  f"  (lift {p.tail_lift:+.3f})")
+            print(f"      precision  {p.baseline_precision:.3f} \u2192 {p.amplified_precision:.3f}")
         else:
-            cov = p.get("coverage", 0.0)
-            print(f"  Pass {p['pass']}: ✗ REJECTED  coverage={cov:.3f}")
+            print(f"  Pass {p.pass_num}: \u2717 REJECTED  coverage={p.coverage:.3f}")
 
     print()
-    print(f"  Best tail lift:  {summary['best_lift']:+.4f}")
-    print(f"  Memory:          {summary.get('memory', {}).get('n_explored', 0)} regions explored")
+    print(f"  Best tail lift:  {result.best_lift:+.4f}")
+    print(f"  Accepted:        {result.n_accepted}/{len(result.passes)}")
     print(f"  Output:          {out_dir.resolve()}")
     print("=" * 62)
 
-    # Show the best batch path
-    best_path = out_dir / "data.prior_batch.parquet.amplified.parquet"
-    if best_path.exists():
-        print(f"  Accepted synthetic batch: {best_path}")
+    if result.best_batch_path:
+        print(f"  Accepted synthetic batch: {result.best_batch_path}")
         import pandas as pd
-        df = pd.read_parquet(best_path)
+        df = pd.read_parquet(result.best_batch_path)
         print(f"    {len(df)} rows, {len(df.columns)} columns")
+    print("=" * 62)
+
+
+# ── Command: screen ────────────────────────────────────────────────────────
+
+def _cmd_screen(args):
+    """Predict REGEN vs SMOTE win boundary for a dataset."""
+    from regen.api import screen as api_screen
+    rare_def = _build_rare_def(args)
+
+    print(f"[regen] Screening {args.data} ...", file=sys.stderr)
+
+    result = api_screen(
+        filepath=args.data,
+        label_col=args.label,
+        rare_def=rare_def,
+        seed=args.seed,
+        quick_campaign=args.quick_campaign,
+    )
+
+    print()
+    print("=" * 62)
+    print("  REGEN — WIN-BOUNDARY SCREEN")
+    print("=" * 62)
+    print(f"  Recommended method:  {result.recommended_method}")
+    print(f"  Heterogeneity score: {result.heterogeneity_score:.4f}")
+    print(f"  Confidence:          {result.confidence:.4f}")
+    print(f"  Predicted lift band: {result.predicted_lift_band}")
+    print()
+    print(f"  {result.rationale}")
+    print()
+    print(f"  Data: {result.n_rare} rare rows, {result.n_features} features")
+    print(f"  Prediction ~75% accurate (benchmark/RESULTS_BREADTH.md)")
+    print(f"  Two known misclassifications are conservative")
     print("=" * 62)
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 
-from contracts.types import RareEventDef, RareMode
+from contracts.types import RareEventDef, RareMode  # noqa: E402
 
 
 def _build_rare_def(args) -> RareEventDef:
@@ -282,6 +310,34 @@ def _build_rare_def(args) -> RareEventDef:
         return RareEventDef(mode=mode, imbalance_ratio=args.imbalance_ratio)
 
     return RareEventDef()
+
+
+def _cr_to_dict(result) -> dict:
+    """Convert CampaignResult to a plain JSON-serialisable dict."""
+    return {
+        "best_lift": result.best_lift,
+        "passes": [
+            {
+                "pass": p.pass_num,
+                "status": p.status,
+                "tail_lift": p.tail_lift,
+                "baseline_recall": p.baseline_recall,
+                "amplified_recall": p.amplified_recall,
+                "baseline_precision": p.baseline_precision,
+                "amplified_precision": p.amplified_precision,
+                "coverage": p.coverage,
+            }
+            for p in result.passes
+        ],
+        "n_accepted": result.n_accepted,
+        "n_rejected": result.n_rejected,
+        "n_normal": result.n_normal,
+        "n_rare": result.n_rare,
+        "n_features": result.n_features,
+        "n_rows_per_pass": result.n_rows_per_pass,
+        "output_dir": result.output_dir,
+        "best_batch_path": result.best_batch_path,
+    }
 
 
 def _repo_root() -> Path:
