@@ -115,10 +115,10 @@ Mapping:
 
 - **Orchestrator → the main the agent runtime loop.** It drives the cycle and schedules campaigns via the agent runtime's
   natural-language scheduling/cron.
-- **Engine stages → the agent runtime stages running Python RPC scripts.** Each stage (Prior, Amplifier,
-  Auditor, Examiner, Scout's R-EPIG) is a short-lived, isolated stages that shells into the
-  corresponding `engine/` script. This is the agent runtime's "contained stages / zero-context-cost pipeline"
-  pattern and it maps cleanly onto "one generation job = one isolated worker."
+- **Engine stages → `regen.api.run_campaign()`**. The API orchestrates the full
+  active-learning loop (Scout → Prior → Amplifier → Auditor → Examiner) by calling
+  `engine/` directly. The campaign is a single Python function call — testable without
+  the agent runtime present.
 - **Skills → agentskills.io skill files.** The top-level loop is a skill (`agent-runtime/skills/regen-loop/`).
   Domain recipes that prove out (e.g. fraud-tail amplification for transaction RDBs) crystallize into
   their own portable skill files. This is the self-improvement layer — do not hardcode recipes that
@@ -153,12 +153,6 @@ regen/
   agent-runtime/                    # the agent runtime Agent integration — the control plane
     skills/
       regen-loop/            # the top-level active-learning loop, as a the agent runtime skill
-    stages/               # Python RPC scripts the agent runtime stages invoke
-      run_prior.py
-      run_amplifier.py
-      run_auditor.py
-      run_examiner.py
-      run_scout.py
     config/
       agent-runtime.toml            # model provider, disabled gateways, terminal backend
   engine/                    # DETERMINISTIC. No LLM, no agent, no network imports.

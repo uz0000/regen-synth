@@ -158,23 +158,45 @@ def run_campaign(
     exam_cfg = ExaminerConfig(n_estimators=n_estimators)
     scout_cfg = ScoutConfig(num_candidates=num_candidates)
 
-    # 4. Multi-pass loop
+    # 4. Multi-pass active-learning loop
+    #
+    # Architecture (INVARIANTS.md §3):
+    #   Scout → Prior → Amplifier → Auditor → Examiner → (loop)
+    #
+    # Scout runs at the START of every pass. Its explored_points memory
+    # accumulates across passes so each pass targets a different region of
+    # the rare-event tail. This cross-pass targeting is what makes the loop
+    # active-learning rather than independent re-generation.
     passes: list[PassDetail] = []
     best_lift = 0.0
     n_accepted = 0
     n_rejected = 0
-    target_region: Dict[str, Any] = {}
+    explored_points: list = []
     best_batch_path: Optional[str] = None
 
     for pass_num in range(max_passes):
         rng = np.random.default_rng(seed + pass_num)
 
-        # Prior
+        # Prior + Amplifier (depend only on ingest data, not the generated batch)
         prior = fit_prior(result, prior_cfg, rng)
+        residual = fit_residuals(result, prior, amp_cfg)
+
+        # Scout: R-EPIG target selection with cross-pass memory.
+        # On pass 1 explored_points is empty so Scout picks the globally
+        # highest-scoring region. On passes 2+ the explored penalty
+        # down-weights already-mapped anchors so budget goes to new
+        # tail structure.
+        target_region = select_target(
+            residual, prior._feature_cols, rng, scout_cfg,
+            explored_points=explored_points or None,
+        )
+        if target_region.get("candidate_point"):
+            explored_points.append(target_region["candidate_point"])
+
+        # Prior Engine: generate base batch in the targeted region
         base = generate_base_batch(prior, n_rows, target_region, rng)
 
-        # Amplifier
-        residual = fit_residuals(result, prior, amp_cfg)
+        # Amplifier: ResidualGP tail correction
         rng2 = np.random.default_rng(seed + pass_num)
         _, _, X_res = sample_residuals(residual, base.values.astype(np.float64), rng2)
         amp_df = pd.DataFrame(base.values + X_res, columns=base.columns)
@@ -183,7 +205,7 @@ def run_campaign(
                 rare_def.label_value if rare_def.mode == RareMode.LABEL else 1
             )
 
-        # Auditor gate
+        # Auditor: fidelity gate
         report = audit(result, amp_df, aud_cfg)
 
         if not report.overall_passed:
@@ -193,10 +215,9 @@ def run_campaign(
                 status="rejected",
                 coverage=report.coverage_rate,
             ))
-            target_region = select_target(residual, prior._feature_cols, rng, scout_cfg)
             continue
 
-        # Examiner
+        # Examiner: measure detection lift
         lift = measure_lift(result, amp_df, exam_cfg)
         best_lift = max(best_lift, lift.tail_lift)
         n_accepted += 1
@@ -215,9 +236,6 @@ def run_campaign(
         batch_path = str(out_path / f"pass_{pass_num + 1}_accepted.parquet")
         amp_df.to_parquet(batch_path, index=False)
         best_batch_path = batch_path  # last accepted is best
-
-        # Scout
-        target_region = select_target(residual, prior._feature_cols, rng, scout_cfg)
 
     n_features = len(result.field_dict) - 1
 
