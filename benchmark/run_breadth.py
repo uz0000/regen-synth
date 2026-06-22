@@ -71,7 +71,7 @@ def run_regen_multipass(csv_path, label_col, rare_value, seed):
     exam_cfg = ExaminerConfig()
     scout_cfg = ScoutConfig()
 
-    target = {}
+    explored_points = []
     total_accepted = 0
     best_lift = 0.0
     all_lifts = []
@@ -84,8 +84,19 @@ def run_regen_multipass(csv_path, label_col, rare_value, seed):
     for pn in range(N_PASSES):
         rng = np.random.default_rng(seed + pn)
         prior = fit_prior(result, prior_cfg, rng)
-        base = generate_base_batch(prior, N_ROWS, target, rng)
         residual = fit_residuals(result, prior, amp_cfg)
+
+        # Scout: R-EPIG target selection with cross-pass memory.
+        # Pass 1: explored_points is empty, Scout picks globally best region.
+        # Passes 2+: explored penalty down-weights already-mapped anchors.
+        target = select_target(
+            residual, prior._feature_cols, rng, scout_cfg,
+            explored_points=explored_points or None,
+        )
+        if target.get("candidate_point"):
+            explored_points.append(target["candidate_point"])
+
+        base = generate_base_batch(prior, N_ROWS, target, rng)
         rng2 = np.random.default_rng(seed + pn)
         _, _, X_res = sample_residuals(residual, base.values.astype(np.float64), rng2)
         amp_df = pd.DataFrame(base.values + X_res, columns=base.columns)
@@ -96,7 +107,6 @@ def run_regen_multipass(csv_path, label_col, rare_value, seed):
         if not report.overall_passed:
             rejected_count += 1
             pass_details.append({"pass": pn, "status": "rejected", "coverage": report.coverage_rate})
-            target = select_target(residual, prior._feature_cols, rng, scout_cfg)
             scout_log.append({"pass": pn, "accepted": False, "target": str(target.get("feature_name", ""))})
             continue
 
@@ -119,7 +129,6 @@ def run_regen_multipass(csv_path, label_col, rare_value, seed):
             except Exception:
                 gp_ard_spread = None
 
-        target = select_target(residual, prior._feature_cols, rng, scout_cfg)
         scout_log.append({"pass": pn, "accepted": True, "target": str(target.get("feature_name", ""))})
 
     avg_lift = float(np.mean(all_lifts)) if all_lifts else 0.0
@@ -142,8 +151,21 @@ def run_smote(normal_df, rare_df, label_col, n_synthetic, seed):
     from imblearn.over_sampling import SMOTE
 
     feat = [c for c in normal_df.columns if c != label_col]
-    Xn = normal_df[feat].values.astype(np.float64)
-    Xr = rare_df[feat].values.astype(np.float64)
+
+    # Encode categorical columns to numeric (same approach as engine._encode_features)
+    def _encode(df):
+        out = df[feat].copy()
+        for col in out.columns:
+            if out[col].dtype == object or str(out[col].dtype) == "category":
+                out[col] = pd.Categorical(out[col]).codes.astype(np.float64)
+            elif out[col].dtype == bool:
+                out[col] = out[col].astype(np.float64)
+            else:
+                out[col] = out[col].astype(np.float64)
+        return out.values
+
+    Xn = _encode(normal_df)
+    Xr = _encode(rare_df)
     rng = np.random.RandomState(seed)
     if len(Xn) > 10000:
         Xn = Xn[rng.choice(len(Xn), 10000, replace=False)]
