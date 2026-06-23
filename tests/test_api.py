@@ -116,8 +116,9 @@ class TestRunCampaign:
             if result.best_batch_path:
                 df = pd.read_parquet(result.best_batch_path)
                 assert len(df) == 100
-                # Batch contains feature columns only, not the label
-                assert LABEL_COL not in df.columns
+                # Batch carries the label: every row is the amplified rare class
+                assert LABEL_COL in df.columns
+                assert set(df[LABEL_COL].unique()) == {RARE_DEF.label_value}
 
     def test_run_campaign_output_dir_exists(self):
         from regen.api import run_campaign
@@ -212,8 +213,9 @@ class TestLoadSynthetic:
             df = load_synthetic(cr.output_dir)
         assert isinstance(df, pd.DataFrame)
         assert len(df) > 0
-        # Batch contains feature columns only (label is inherent for rare events)
-        assert LABEL_COL not in df.columns
+        # Batch carries the rare label so it is usable as labeled training data
+        assert LABEL_COL in df.columns
+        assert set(df[LABEL_COL].unique()) == {RARE_DEF.label_value}
 
     def test_load_synthetic_raises_on_bad_dir(self):
         from regen.api import load_synthetic
@@ -261,3 +263,61 @@ def test_api_boundary():
         f"regen/api.py imports forbidden modules: {violations}. "
         "The API must be pure deterministic Python."
     )
+
+# ── generate(): label passthrough + domain constraints ────────────────────────
+
+def test_generate_attaches_rare_label():
+    """The synthetic batch must carry the label column, set to the rare class.
+
+    The Prior generates feature columns only, so the batch arrives unlabeled —
+    but every row is the amplified rare class and must say so to be usable
+    downstream. Regression test for the dropped-label bug.
+    """
+    from regen import generate, load_synthetic
+
+    with tempfile.TemporaryDirectory() as out:
+        summary = generate(
+            SAMPLE_CSV, label_col=LABEL_COL, rare_def=RARE_DEF,
+            n_rows=120, mode="balanced", auto=False, out_dir=out,
+        )
+        batch = load_synthetic(out)
+
+    assert LABEL_COL in batch.columns, "synthetic batch is missing the label column"
+    # All rows are the amplified rare class → label is the rare value, constant.
+    assert set(batch[LABEL_COL].unique()) == {RARE_DEF.label_value}
+
+
+def test_generate_clips_to_observed_support():
+    """Continuous columns must stay within the real data's observed [min, max].
+
+    The Gaussian Prior + residual GP can sample past the support (e.g. negative
+    amounts); _apply_domain_constraints clips them back. Regression test.
+    """
+    from regen import generate, load_synthetic
+
+    src = pd.read_csv(SAMPLE_CSV)
+    with tempfile.TemporaryDirectory() as out:
+        summary = generate(
+            SAMPLE_CSV, label_col=LABEL_COL, rare_def=RARE_DEF,
+            n_rows=200, mode="balanced", auto=False, out_dir=out,
+        )
+        batch = load_synthetic(out)
+
+    for col in ("amount", "n_prior_txns", "hour", "merchant_risk"):
+        lo, hi = float(src[col].min()), float(src[col].max())
+        assert batch[col].min() >= lo - 1e-9, f"{col} fell below observed min"
+        assert batch[col].max() <= hi + 1e-9, f"{col} rose above observed max"
+    # 'amount' is non-negative in the source, so the batch must be too.
+    assert batch["amount"].min() >= 0.0
+
+
+def test_generate_auto_detects_target():
+    """With label_col/rare_def left open, generate() reports what it auto-picked."""
+    from regen import generate
+
+    with tempfile.TemporaryDirectory() as out:
+        summary = generate(SAMPLE_CSV, n_rows=80, mode="balanced", out_dir=out)
+
+    det = summary["detection"]
+    assert det is not None and det["auto_label"] and det["auto_rare"]
+    assert det["label_col"] == LABEL_COL  # the one imbalanced low-cardinality column

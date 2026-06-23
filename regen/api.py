@@ -58,6 +58,28 @@ logger = logging.getLogger(__name__)
 # 0. CATEGORICAL DECODING
 # ═══════════════════════════════════════════════════════════════════════════════
 
+def _apply_domain_constraints(df: pd.DataFrame, ingest: IngestResult) -> pd.DataFrame:
+    """Clip continuous columns to the value range observed at ingest.
+
+    The Prior (Gaussian) and the residual GP both sample on an unbounded real
+    line, so a synthetic row can land outside a column's real support — e.g. a
+    negative transaction Amount or Time, which no real row can have. We clip each
+    continuous column to its ingest-observed [min_val, max_val] (field_dict spans
+    the full dataset, so the rare tail's extremes are preserved). This enforces
+    physical validity and, because out-of-support mass is folded back in, tightens
+    rather than loosens fidelity. Categorical/binary columns are handled elsewhere
+    (_decode_categoricals); the label is constant and skipped.
+    """
+    fd = ingest.field_dict
+    for col in df.columns:
+        meta = fd.get(col)
+        if meta is None or meta.field_type != FieldType.CONTINUOUS:
+            continue
+        if meta.min_val is not None and meta.max_val is not None:
+            df[col] = df[col].clip(meta.min_val, meta.max_val)
+    return df
+
+
 def _decode_categoricals(df: pd.DataFrame, ingest: IngestResult) -> pd.DataFrame:
     """Restore original categorical values in a synthetic batch.
 
@@ -179,10 +201,18 @@ def _run_one_pass(
     rng2 = np.random.default_rng(seed)
     _, _, X_res = sample_residuals(residual, base.values.astype(np.float64), rng2)
     amp_df = pd.DataFrame(base.values + X_res, columns=base.columns)
-    if label_col in amp_df.columns:
-        amp_df[label_col] = (
-            rare_def.label_value if rare_def.mode == RareMode.LABEL else 1
-        )
+
+    # Constrain to observed support: the Prior + residual GP can sample past the
+    # real range, producing impossible values for bounded columns (e.g. negative
+    # Amount/Time). Clip every continuous column to its ingest-observed [min,max].
+    amp_df = _apply_domain_constraints(amp_df, result)
+
+    # Attach the label. The Prior generates feature columns only (it excludes the
+    # label), so the batch arrives unlabeled — but every row is the amplified rare
+    # class, so it must carry the rare label to be usable downstream. Source the
+    # value from the real rare rows (robust to auto-detected rare values).
+    if label_col and label_col in result.rare_df.columns and len(result.rare_df):
+        amp_df[label_col] = result.rare_df[label_col].mode().iloc[0]
 
     # Decode categoricals back to real values so the Auditor compares apples to apples
     amp_df = _decode_categoricals(amp_df, result)
