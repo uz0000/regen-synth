@@ -56,6 +56,11 @@ class AuditorConfig:
     # categories (rest grouped into "other"). This prevents false rejections when
     # the synthetic batch (200 rows) cannot cover 1,000+ categories.
     high_card_threshold: int = 50
+    # Cross-column correlation gate: max mean-absolute difference between the real
+    # and synthetic correlation matrices. This is the check that stops a batch
+    # with correct marginals but broken joint structure (the gate's stated reason
+    # for existing). Needs >=2 numeric columns and a few rows to estimate.
+    correlation_threshold: float = 0.25
 
 
 # ── Public API ─────────────────────────────────────────────────────────────────
@@ -126,7 +131,23 @@ def audit(
         )
 
     col_failed    = any(not r.passed for r in col_results)
-    overall_passed = coverage_passed and not col_failed
+
+    # ── Cross-column correlation structure ───────────────────────────────────
+    # Marginals + coverage can all pass while the joint structure is scrambled
+    # (e.g. a column shuffled independently). This is the failure mode the gate
+    # exists to stop, so check it explicitly: compare the rare-reference and
+    # synthetic correlation matrices.
+    correlation_delta = _correlation_delta(reference_df, synthetic_df, field_dict, label_col)
+    correlation_passed = (
+        correlation_delta is None or correlation_delta <= config.correlation_threshold
+    )
+    if not correlation_passed:
+        logger.warning(
+            "Auditor: correlation structure FAILED %.3f > %.3f",
+            correlation_delta, config.correlation_threshold,
+        )
+
+    overall_passed = coverage_passed and not col_failed and correlation_passed
 
     report = FidelityReport(
         coverage_rate=coverage_rate,
@@ -136,9 +157,50 @@ def audit(
         n_real=len(reference_df),
         n_synthetic=len(synthetic_df),
         manifest=manifest,
+        correlation_delta=correlation_delta,
+        correlation_passed=correlation_passed,
     )
     _log_summary(report, config)
     return report
+
+
+# ── Correlation structure ──────────────────────────────────────────────────────
+
+def _correlation_delta(
+    reference_df: pd.DataFrame,
+    synthetic_df: pd.DataFrame,
+    field_dict: FieldDict,
+    label_col: str,
+) -> Optional[float]:
+    """Mean absolute difference between real and synthetic correlation matrices.
+
+    Restricted to numeric (continuous/binary) feature columns, excluding the
+    label. Returns None when there are fewer than two such columns or too few
+    rows to estimate correlations — in those cases there is no joint structure
+    to validate. A NaN result (constant column → undefined correlation) is
+    treated as "no signal" for that pair via nan-safe differencing.
+    """
+    numeric_cols = [
+        c for c in reference_df.columns
+        if c in synthetic_df.columns and c in field_dict and c != label_col
+        and field_dict[c].field_type in (FieldType.CONTINUOUS, FieldType.BINARY)
+    ]
+    if len(numeric_cols) < 2:
+        return None
+    if len(reference_df) < 3 or len(synthetic_df) < 3:
+        return None
+
+    real_corr = reference_df[numeric_cols].corr().to_numpy()
+    synth_corr = synthetic_df[numeric_cols].corr().to_numpy()
+
+    # Compare only the upper triangle (off-diagonal pairs). Where either matrix
+    # is NaN (a constant column), skip that pair rather than failing on it.
+    iu = np.triu_indices_from(real_corr, k=1)
+    diffs = np.abs(real_corr[iu] - synth_corr[iu])
+    diffs = diffs[np.isfinite(diffs)]
+    if diffs.size == 0:
+        return None
+    return float(diffs.mean())
 
 
 # ── Coverage rate ─────────────────────────────────────────────────────────────
@@ -306,9 +368,11 @@ def _log_summary(report: FidelityReport, config: AuditorConfig) -> None:
     status = "PASSED" if report.overall_passed else "FAILED"
     n_pass = sum(1 for r in report.column_results if r.passed)
     n_tot  = len(report.column_results)
+    corr = "n/a" if report.correlation_delta is None else f"{report.correlation_delta:.3f}"
     logger.info(
-        "Auditor %s | coverage=%.3f (thr=%.2f) | %d/%d columns passed",
+        "Auditor %s | coverage=%.3f (thr=%.2f) | %d/%d columns passed | corr_delta=%s (thr=%.2f)",
         status, report.coverage_rate, config.coverage_threshold, n_pass, n_tot,
+        corr, config.correlation_threshold,
     )
     worst = sorted(
         (r for r in report.column_results if r.tvd is not None),

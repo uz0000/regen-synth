@@ -429,3 +429,38 @@ def test_measure_lift_no_synth_means_zero_lift():
     rep = measure_lift(res, ExaminerConfig(n_estimators=20), generate_synth_fn=None)
     assert rep.tail_lift == 0.0
     assert rep.n_synthetic_used == 0
+
+
+# ── Batch B2: Auditor checks cross-column correlation structure ───────────────
+
+def test_auditor_rejects_scrambled_correlation():
+    """A batch with correct marginals but destroyed joint structure must FAIL,
+    even though every per-column check passes. This is the gate's reason to exist."""
+    from engine.auditor import audit, AuditorConfig
+    from engine.ingest.loader import _build_field_dict
+    from contracts.types import IngestResult, SchemaGraph
+
+    rng = np.random.RandomState(0)
+    x = rng.randn(400)
+    rare = pd.DataFrame({"a": x, "b": x * 0.9 + 0.1 * rng.randn(400),
+                         "c": -0.8 * x + 0.1 * rng.randn(400)})
+    fd = _build_field_dict(rare, "")
+    ing = IngestResult(normal_df=rare.copy(), rare_df=rare.copy(),
+                       schema_graph=SchemaGraph(), field_dict=fd, label_col="")
+    cfg = AuditorConfig(coverage_threshold=0.0)  # isolate the correlation gate
+
+    # Faithful batch (same dependence) passes.
+    xs = rng.randn(400)
+    good = pd.DataFrame({"a": xs, "b": xs * 0.9 + 0.1 * rng.randn(400),
+                         "c": -0.8 * xs + 0.1 * rng.randn(400)})
+    rep_good = audit(ing, good, cfg)
+    assert rep_good.correlation_passed and rep_good.overall_passed
+
+    # Shuffle each column independently → identical marginals, broken joint structure.
+    bad = good.copy()
+    for col in bad.columns:
+        bad[col] = bad[col].sample(frac=1, random_state=rng.randint(1_000_000)).values
+    rep_bad = audit(ing, bad, cfg)
+    assert all(c.passed for c in rep_bad.column_results), "marginals should still pass"
+    assert not rep_bad.correlation_passed, "scrambled correlation should fail"
+    assert not rep_bad.overall_passed

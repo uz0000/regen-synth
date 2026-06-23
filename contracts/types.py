@@ -203,6 +203,12 @@ class FidelityReport:
     n_real: int = 0
     n_synthetic: int = 0
     manifest: Optional[BatchManifest] = None
+    # Cross-column correlation structure: mean absolute difference between the
+    # real-rare and synthetic correlation matrices (0 = identical). None when
+    # too few numeric columns/rows to estimate. A batch with right marginals but
+    # scrambled dependence fails here even though every column passes.
+    correlation_delta: Optional[float] = None
+    correlation_passed: bool = True
 
 
 # ── Examiner output ───────────────────────────────────────────────────────────
