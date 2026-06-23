@@ -92,6 +92,7 @@ class PriorModel:
     _is_continuous: np.ndarray   # bool mask: which feature columns are continuous
     schema_graph: SchemaGraph
     _backend_used: str = "gaussian"  # 'gaussian' or 'pfn' — which backend actually ran
+    _field_dict: object = None   # ingest field_dict → canonical categorical encoding
 
     def score(self, df: pd.DataFrame) -> pd.Series:
         """
@@ -100,7 +101,7 @@ class PriorModel:
 
         Uses the fitted scorer (GaussianPrior by default).
         """
-        X = _encode_features(df[self._feature_cols])
+        X = _encode_features(df[self._feature_cols], self._field_dict)
         proba = self._scorer.predict_proba(X)
         # Returns [P(class=0), P(class=1)]; class 1 = normal
         normal_proba = proba[:, 1] if proba.shape[1] == 2 else proba[:, 0]
@@ -189,7 +190,8 @@ def fit_prior(
     schema_graph = ingest.schema_graph
 
     feature_cols = [c for c in normal_df.columns if c != label_col]
-    X = _encode_features(normal_df[feature_cols])
+    field_dict = ingest.field_dict
+    X = _encode_features(normal_df[feature_cols], field_dict)
 
     # Subsample normal rows for speed. The prior only needs to characterize
     # the average-case distribution — 5000 rows is plenty.
@@ -222,7 +224,7 @@ def fit_prior(
     # Encode the rare-event covariate support. This anchors base-batch
     # generation — every value is grounded in observed data.
     if len(ingest.rare_df) > 0:
-        X_rare = _encode_features(ingest.rare_df[feature_cols]).astype(np.float64)
+        X_rare = _encode_features(ingest.rare_df[feature_cols], field_dict).astype(np.float64)
     else:
         X_rare = X.astype(np.float64)
     X_rare_std = X_rare.std(axis=0)
@@ -248,6 +250,7 @@ def fit_prior(
         _X_rare_std=X_rare_std,
         _is_continuous=is_continuous,
         schema_graph=schema_graph,
+        _field_dict=field_dict,
     )
 
 
@@ -368,14 +371,28 @@ def _load_pfn_backend(
 
 # ── Internals ──────────────────────────────────────────────────────────────────
 
-def _encode_features(df: pd.DataFrame) -> np.ndarray:
-    """Convert DataFrame to float32 array. Categorical → label-encoded."""
+def _encode_features(df: pd.DataFrame, field_dict=None) -> np.ndarray:
+    """Convert DataFrame to float32 array. Categorical → label-encoded.
+
+    When field_dict is provided, categorical columns are encoded against their
+    canonical category order (computed once from the full dataset at ingest), so
+    the same string maps to the same code whether it appears in the normal rows,
+    the rare rows, or a synthetic batch. Without it, codes are derived per-call
+    from whatever values are present — fine for a single self-consistent frame,
+    but not comparable across subsets (the old categorical-decode bug).
+    """
     out = df.copy()
     for col in out.columns:
-        if out[col].dtype == object or str(out[col].dtype) == "category":
-            out[col] = pd.Categorical(out[col]).codes.astype(np.float32)
-        elif out[col].dtype == bool:
-            out[col] = out[col].astype(np.float32)
+        is_cat = out[col].dtype == object or str(out[col].dtype) == "category"
+        if is_cat:
+            cats = None
+            if field_dict is not None and col in field_dict:
+                cats = getattr(field_dict[col], "categories", None)
+            if cats is not None:
+                # Unseen values → code -1; the GP treats it as an out-of-vocab code.
+                out[col] = pd.Categorical(out[col], categories=cats).codes.astype(np.float32)
+            else:
+                out[col] = pd.Categorical(out[col]).codes.astype(np.float32)
         else:
             out[col] = out[col].astype(np.float32)
     return out.values.astype(np.float32)

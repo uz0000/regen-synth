@@ -125,6 +125,10 @@ class FieldMeta:
     cardinality: Optional[int] = None  # for categorical fields
     min_val: Optional[float] = None    # for continuous fields
     max_val: Optional[float] = None
+    is_integer: bool = False           # continuous field whose real values are all integral
+                                       # (counts, hour, Time) → round synthetic output back to int
+    categories: Optional[List[Any]] = None  # canonical category order (categorical fields),
+                                             # computed from the FULL dataset so encode/decode agree
 
 
 FieldDict = Dict[str, FieldMeta]

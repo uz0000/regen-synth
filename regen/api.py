@@ -59,24 +59,44 @@ logger = logging.getLogger(__name__)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def _apply_domain_constraints(df: pd.DataFrame, ingest: IngestResult) -> pd.DataFrame:
-    """Clip continuous columns to the value range observed at ingest.
+    """Coerce synthetic columns back onto their real-world support.
 
-    The Prior (Gaussian) and the residual GP both sample on an unbounded real
-    line, so a synthetic row can land outside a column's real support — e.g. a
-    negative transaction Amount or Time, which no real row can have. We clip each
-    continuous column to its ingest-observed [min_val, max_val] (field_dict spans
-    the full dataset, so the rare tail's extremes are preserved). This enforces
-    physical validity and, because out-of-support mass is folded back in, tightens
-    rather than loosens fidelity. Categorical/binary columns are handled elsewhere
-    (_decode_categoricals); the label is constant and skipped.
+    The Prior (Gaussian) and the residual GP both sample on an unbounded, real-
+    valued line, so a synthetic row can land outside what any real row could be.
+    Per column type we fix:
+
+      * CONTINUOUS — clip to the ingest-observed [min_val, max_val] (field_dict
+        spans the full dataset, so the rare tail's extremes are preserved). Kills
+        impossible values like a negative transaction Amount/Time. If the source
+        column was integer-valued (counts, hour, Time), round back to whole
+        numbers — emitting hour=11.97 or n_prior_txns=25.8 is visibly fake and
+        shifts the discrete marginal.
+      * BINARY — round to the nearest of the two observed values (the residual GP
+        perturbs these too, so a 0/1 column can drift to 0.7 / -0.3).
+
+    Categorical columns are handled in _decode_categoricals; the label is constant
+    and skipped. Folding out-of-support mass back in tightens fidelity, not loosens.
     """
     fd = ingest.field_dict
+    rare_df = ingest.rare_df
     for col in df.columns:
         meta = fd.get(col)
-        if meta is None or meta.field_type != FieldType.CONTINUOUS:
+        if meta is None or col == ingest.label_col:
             continue
-        if meta.min_val is not None and meta.max_val is not None:
-            df[col] = df[col].clip(meta.min_val, meta.max_val)
+        if meta.field_type == FieldType.CONTINUOUS:
+            if meta.min_val is not None and meta.max_val is not None:
+                df[col] = df[col].clip(meta.min_val, meta.max_val)
+            if meta.is_integer:
+                df[col] = df[col].round().astype("int64")
+        elif meta.field_type == FieldType.BINARY:
+            # Snap to the two real values (handles {0,1} and any other binary pair).
+            vals = pd.unique(rare_df[col].dropna()) if col in rare_df.columns else np.array([0, 1])
+            if len(vals) >= 2:
+                lo, hi = sorted(vals[:2])
+                mid = (float(lo) + float(hi)) / 2.0
+                df[col] = np.where(df[col].to_numpy() >= mid, hi, lo)
+            elif len(vals) == 1:
+                df[col] = vals[0]
     return df
 
 
@@ -91,7 +111,11 @@ def _decode_categoricals(df: pd.DataFrame, ingest: IngestResult) -> pd.DataFrame
     1. The Auditor compares apples to apples (synthetic strings vs real strings)
     2. The output is human-usable (clients need real values, not integer codes)
 
-    The decoding uses the same pd.Categorical() encoding as _encode_features.
+    Decoding uses the canonical category order stored in field_dict (computed
+    from the FULL dataset at ingest) — the same mapping _encode_features uses —
+    so a code always round-trips to the value the Prior encoded it from. Using
+    the rare subset's own categories (as before) silently mislabeled values
+    whenever the rare rows didn't cover every category.
     """
     field_dict = ingest.field_dict
     rare_df = ingest.rare_df
@@ -101,11 +125,12 @@ def _decode_categoricals(df: pd.DataFrame, ingest: IngestResult) -> pd.DataFrame
         ftype = field_dict[col].field_type
         if ftype not in (FieldType.CATEGORICAL,):
             continue
-        # Reconstruct the category mapping from the real data
-        cats = pd.Categorical(rare_df[col]).categories
-        # Round to nearest integer code and clip to valid range
+        cats = field_dict[col].categories
+        if cats is None:  # defensive fallback for an externally-built field_dict
+            cats = list(pd.Categorical(rare_df[col]).categories)
+        # Round to nearest integer code and clip to the valid range.
         codes = df[col].round().astype(int).clip(0, len(cats) - 1)
-        df[col] = cats[codes]
+        df[col] = pd.Categorical.from_codes(codes, categories=cats).astype(object)
     return df
 
 

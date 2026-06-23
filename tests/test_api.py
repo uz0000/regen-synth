@@ -321,3 +321,76 @@ def test_generate_auto_detects_target():
     det = summary["detection"]
     assert det is not None and det["auto_label"] and det["auto_rare"]
     assert det["label_col"] == LABEL_COL  # the one imbalanced low-cardinality column
+
+
+# ── Batch A: output-validity fixes (integer/binary/categorical/NaN) ───────────
+
+def _toy_csv(tmp):
+    """Dataset with an integer count, a binary flag, and a categorical whose
+    'kiosk' value appears ONLY in normal rows (exercises canonical decode)."""
+    import numpy as _np
+    rng = _np.random.RandomState(0)
+    n = 600
+    rare = rng.rand(n) < 0.06
+    df = pd.DataFrame({
+        "n_txns": rng.randint(0, 50, size=n),
+        "amount": _np.abs(rng.gamma(2, size=n)) * 10,
+        "is_weekend": rng.randint(0, 2, size=n),
+        "channel": _np.where(rng.rand(n) < 0.5, "web", "store"),
+        "label": rare.astype(int),
+    })
+    df.loc[df.index[df["label"] == 0][:30], "channel"] = "kiosk"
+    path = str(Path(tmp) / "toy.csv")
+    df.to_csv(path, index=False)
+    return path
+
+
+def test_generate_rounds_integer_columns():
+    """Integer-valued source columns must come back as whole numbers, not floats."""
+    from regen import generate, load_synthetic
+    rd = RareEventDef(mode=RareMode.LABEL, label_value=1)
+    with tempfile.TemporaryDirectory() as tmp:
+        path = _toy_csv(tmp)
+        out = str(Path(tmp) / "out")
+        generate(path, label_col="label", rare_def=rd, n_rows=150, auto=False, out_dir=out)
+        b = load_synthetic(out)
+    assert (b["n_txns"] == b["n_txns"].round()).all(), "integer column emitted fractional"
+
+
+def test_generate_snaps_binary_columns():
+    """Binary columns must be exactly the two observed values, not floats like 0.7."""
+    from regen import generate, load_synthetic
+    rd = RareEventDef(mode=RareMode.LABEL, label_value=1)
+    with tempfile.TemporaryDirectory() as tmp:
+        path = _toy_csv(tmp)
+        out = str(Path(tmp) / "out")
+        generate(path, label_col="label", rare_def=rd, n_rows=150, auto=False, out_dir=out)
+        b = load_synthetic(out)
+    assert set(b["is_weekend"].unique()) <= {0, 1}, "binary column drifted off {0,1}"
+
+
+def test_generate_decodes_categoricals_canonically():
+    """Decoded categoricals must be real categories — never a mislabel from using
+    only the rare subset's categories."""
+    from regen import generate, load_synthetic
+    rd = RareEventDef(mode=RareMode.LABEL, label_value=1)
+    with tempfile.TemporaryDirectory() as tmp:
+        path = _toy_csv(tmp)
+        out = str(Path(tmp) / "out")
+        generate(path, label_col="label", rare_def=rd, n_rows=150, auto=False, out_dir=out)
+        b = load_synthetic(out)
+    assert set(b["channel"].astype(str).unique()) <= {"web", "store", "kiosk"}
+
+
+def test_ingest_rejects_all_nan_column():
+    """A column with no observed values can't be imputed — fail loud, don't poison
+    the pipeline with NaN that the Auditor would silently pass."""
+    from regen.api import ingest
+    rd = RareEventDef(mode=RareMode.LABEL, label_value=1)
+    with tempfile.TemporaryDirectory() as tmp:
+        df = pd.read_csv(_toy_csv(tmp))
+        df["dead"] = np.nan
+        path = str(Path(tmp) / "withnan.csv")
+        df.to_csv(path, index=False)
+        with pytest.raises(ValueError, match="entirely missing"):
+            ingest(path, "label", rd)

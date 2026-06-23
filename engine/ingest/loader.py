@@ -377,6 +377,17 @@ def _impute_missing(df: pd.DataFrame, label_col: str) -> pd.DataFrame:
         counts[col] = n_missing
     if counts:
         logger.info("Imputed missing values: %s", counts)
+
+    # Fail loud on any column still all-NaN: a numeric column with no observed
+    # values has median NaN, so fillna is a no-op and the NaN silently poisons
+    # the Prior/GP (NaN scores → NaN residuals → a batch the Auditor passes
+    # because `NaN > threshold` is False). Reject it at the door instead.
+    still_nan = [c for c in df.columns if df[c].isna().all()]
+    if still_nan:
+        raise ValueError(
+            f"Columns are entirely missing and cannot be imputed: {still_nan}. "
+            "Drop them or supply data before ingesting."
+        )
     return df
 
 
@@ -448,6 +459,18 @@ def _build_field_dict(df: pd.DataFrame, label_col: str) -> FieldDict:
             ftype = FieldType.BINARY if s.nunique() == 2 else FieldType.CONTINUOUS
         else:
             ftype = FieldType.CATEGORICAL
+        # A continuous column whose real values are all whole numbers (counts,
+        # hour, Time) must come back as integers — the Prior/GP emit floats.
+        is_integer = False
+        if ftype == FieldType.CONTINUOUS:
+            nona = s.dropna()
+            is_integer = bool(len(nona)) and bool(np.all(nona == np.floor(nona)))
+        # Canonical category order from the FULL dataset (df is normal+rare here),
+        # so the Prior's encode and the output decode share one code mapping.
+        categories = (
+            list(pd.Categorical(s.dropna()).categories)
+            if ftype == FieldType.CATEGORICAL else None
+        )
         field_dict[col] = FieldMeta(
             name=col,
             field_type=ftype,
@@ -455,5 +478,7 @@ def _build_field_dict(df: pd.DataFrame, label_col: str) -> FieldDict:
             cardinality=int(s.nunique()) if ftype == FieldType.CATEGORICAL else None,
             min_val=float(s.min()) if ftype == FieldType.CONTINUOUS else None,
             max_val=float(s.max()) if ftype == FieldType.CONTINUOUS else None,
+            is_integer=is_integer,
+            categories=categories,
         )
     return field_dict
