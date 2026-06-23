@@ -40,88 +40,103 @@ class ExaminerConfig:
 
 def measure_lift(
     ingest: IngestResult,
-    synthetic_df: pd.DataFrame,
     config: ExaminerConfig,
+    generate_synth_fn=None,
     manifest: Optional[BatchManifest] = None,
 ) -> LiftReport:
     """
-    Train baseline and amplified detectors; return the lift report.
+    Train baseline and amplified detectors on a held-out split; return the lift.
+
+    The estimate is leakage-free: the real rare rows are split into a train fold
+    and a held-out test fold FIRST, then the amplified model's synthetic data is
+    generated from the train fold only (via `generate_synth_fn`). Both detectors
+    are evaluated on the same held-out real test set. This is the whole point —
+    generating synthetic from all rare rows and then testing on a subset of them
+    (the previous behavior) tests the amplified model on near-copies of its own
+    training data and inflates lift, worst when noise_scale is small.
 
     Args:
-        ingest:       IngestResult — supplies real normal + rare rows.
-        synthetic_df: Accepted synthetic batch (Auditor must have passed it).
-        config:       ExaminerConfig.
-        manifest:     BatchManifest to embed in the report.
+        ingest:            IngestResult — supplies real normal + rare rows.
+        config:            ExaminerConfig.
+        generate_synth_fn: callable(train_ingest: IngestResult) -> synthetic
+                           DataFrame. Receives an IngestResult restricted to the
+                           TRAIN fold (no held-out rare rows), so the synthetic it
+                           returns is leakage-free. If None, no augmentation is
+                           done (amplified == baseline) and lift is 0.
+        manifest:          BatchManifest to embed in the report.
 
     Returns:
         LiftReport with tail_lift = amplified_recall - baseline_recall.
     """
     label_col    = ingest.label_col
     feature_cols = [c for c in ingest.normal_df.columns if c != label_col]
+    field_dict   = ingest.field_dict
 
     normal_df = ingest.normal_df
     rare_df   = ingest.rare_df
 
-    # Build real dataset with binary rare label
-    real_df = pd.concat([normal_df, rare_df], ignore_index=True)
-    X_normal_all = _encode_features(normal_df[feature_cols])
-    X_rare_all   = _encode_features(rare_df[feature_cols])
+    # Subsample normal rows for speed (representative sample is enough). Done on
+    # the raw frame, before the split, so it doesn't bias baseline-vs-amplified.
+    if len(normal_df) > config.max_train_rows:
+        normal_df = normal_df.sample(config.max_train_rows, random_state=config.random_state)
 
-    # Subsample normal training rows for speed. The Examiner only needs a
-    # representative sample to estimate lift — 10K rows is plenty and keeps
-    # RandomForest training under 10s instead of 2+ minutes on 284K rows.
-    if len(X_normal_all) > config.max_train_rows:
-        rng_state = np.random.RandomState(config.random_state)
-        idx = rng_state.choice(len(X_normal_all), size=config.max_train_rows, replace=False)
-        X_normal_all = X_normal_all[idx]
+    if len(rare_df) < 4:
+        logger.warning("Too few rare events (%d) for reliable lift estimate", len(rare_df))
 
-    if len(X_rare_all) < 4:
-        logger.warning("Too few rare events (%d) for reliable lift estimate", len(X_rare_all))
-
-    # Hold out BOTH normal and rare rows. The test set must contain negatives
-    # so precision genuinely penalizes false positives — otherwise a model that
-    # simply predicts "rare" everywhere would score perfect recall and the lift
-    # number would be meaningless.
-    Xn_train, Xn_test = train_test_split(
-        X_normal_all, test_size=config.test_size, random_state=config.random_state,
+    # Split the RAW frames into train/test. Holding out both normal and rare rows
+    # keeps negatives in the test set so precision penalizes false positives.
+    n_train, n_test = train_test_split(
+        normal_df, test_size=config.test_size, random_state=config.random_state,
     )
-    Xr_train, Xr_test = train_test_split(
-        X_rare_all, test_size=config.test_size, random_state=config.random_state,
+    r_train, r_test = train_test_split(
+        rare_df, test_size=config.test_size, random_state=config.random_state,
     )
 
-    # Real training set: normal_train (label 0) + rare_train (label 1)
+    Xn_train = _encode_features(n_train[feature_cols], field_dict)
+    Xn_test  = _encode_features(n_test[feature_cols], field_dict)
+    Xr_train = _encode_features(r_train[feature_cols], field_dict)
+    Xr_test  = _encode_features(r_test[feature_cols], field_dict)
+
     X_train_real = np.vstack([Xn_train, Xr_train])
     y_train_real = np.concatenate([
         np.zeros(len(Xn_train), dtype=np.int64),
         np.ones(len(Xr_train), dtype=np.int64),
     ])
-
-    # Test set: held-out normal (0) + held-out rare (1)
     X_test = np.vstack([Xn_test, Xr_test])
     y_test = np.concatenate([
         np.zeros(len(Xn_test), dtype=np.int64),
         np.ones(len(Xr_test), dtype=np.int64),
     ])
-    X_rare_train = Xr_train  # used below for the augmented training set
 
-    # Baseline: train on real only
+    # Baseline: train on real train fold only
     baseline = _train(X_train_real, y_train_real, config)
     base_recall, base_prec = _evaluate(baseline, X_test, y_test)
 
-    # Amplified: train on real + synthetic
-    synth_cols = [c for c in feature_cols if c in synthetic_df.columns]
-    if synth_cols:
-        X_synth = _encode_features(synthetic_df[synth_cols]).astype(np.float32)
-        # Pad missing columns with zeros if needed
-        if X_synth.shape[1] < len(feature_cols):
-            pad = np.zeros((len(X_synth), len(feature_cols) - X_synth.shape[1]), dtype=np.float32)
-            X_synth = np.hstack([X_synth, pad])
-        y_synth = np.ones(len(X_synth), dtype=np.int64)
+    # Amplified: real train fold + synthetic generated FROM THE TRAIN FOLD ONLY.
+    X_synth = None
+    if generate_synth_fn is not None:
+        train_ingest = IngestResult(
+            normal_df=n_train.reset_index(drop=True),
+            rare_df=r_train.reset_index(drop=True),
+            schema_graph=ingest.schema_graph,
+            field_dict=field_dict,
+            label_col=label_col,
+            detection=ingest.detection,
+        )
+        synth_df = generate_synth_fn(train_ingest)
+        if synth_df is not None and len(synth_df):
+            # Align to feature_cols by NAME (missing → 0); never right-pad, which
+            # would shift values onto the wrong feature axis.
+            synth_feats = synth_df.reindex(columns=feature_cols)
+            X_synth = _encode_features(synth_feats, field_dict).astype(np.float32)
+            X_synth = np.nan_to_num(X_synth, nan=0.0)
+
+    if X_synth is not None:
         X_train_aug = np.vstack([X_train_real, X_synth])
-        y_train_aug = np.concatenate([y_train_real, y_synth])
+        y_train_aug = np.concatenate([y_train_real, np.ones(len(X_synth), dtype=np.int64)])
+        n_synth_used = len(X_synth)
     else:
-        X_train_aug = X_train_real
-        y_train_aug = y_train_real
+        X_train_aug, y_train_aug, n_synth_used = X_train_real, y_train_real, 0
 
     augmented = _train(X_train_aug, y_train_aug, config)
     amp_recall, amp_prec = _evaluate(augmented, X_test, y_test)
@@ -129,7 +144,7 @@ def measure_lift(
     tail_lift = amp_recall - base_recall
 
     logger.info(
-        "Examiner: baseline recall=%.3f, amplified recall=%.3f, lift=%.3f",
+        "Examiner: baseline recall=%.3f, amplified recall=%.3f, lift=%.3f (held-out, leakage-free)",
         base_recall, amp_recall, tail_lift,
     )
 
@@ -139,7 +154,7 @@ def measure_lift(
         amplified_recall=amp_recall,
         amplified_precision=amp_prec,
         tail_lift=tail_lift,
-        n_synthetic_used=len(synthetic_df),
+        n_synthetic_used=n_synth_used,
         manifest=manifest,
     )
 

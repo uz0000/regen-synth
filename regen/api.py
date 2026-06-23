@@ -197,10 +197,58 @@ def _run_one_pass(
     Returns:
         (amp_df, fidelity_report, lift_report_or_None, target_region)
     """
-    from engine.prior import fit_prior, generate_base_batch
-    from engine.amplifier import fit_residuals, sample_residuals
     from engine.auditor import audit
     from engine.examiner import measure_lift
+
+    # Deliverable batch: generated from ALL rare rows (the product should use
+    # every rare example available).
+    amp_df, target_region = _generate_amp_batch(
+        result, prior_cfg, amp_cfg, scout_cfg, seed, n_rows, label_col, rare_def,
+        explored_points,
+    )
+
+    # Auditor: fidelity gate
+    report = audit(result, amp_df, aud_cfg)
+
+    # Examiner: honest lift, only on a passing batch (Invariant 3). The lift
+    # synthetic is regenerated from the rare TRAIN fold inside measure_lift (via
+    # this closure) so it never contains perturbations of the held-out rare test
+    # rows — otherwise the amplified detector is tested on near-copies of its own
+    # training data and the lift is inflated. A fresh seed offset decorrelates it
+    # from the deliverable draw.
+    def _gen_from_train(train_ingest):
+        batch, _ = _generate_amp_batch(
+            train_ingest, prior_cfg, amp_cfg, scout_cfg, seed + 12345, n_rows,
+            label_col, rare_def, [],
+        )
+        return batch
+
+    lift = (
+        measure_lift(result, exam_cfg, generate_synth_fn=_gen_from_train)
+        if report.overall_passed else None
+    )
+    return amp_df, report, lift, target_region
+
+
+def _generate_amp_batch(
+    result: IngestResult,
+    prior_cfg,
+    amp_cfg,
+    scout_cfg,
+    seed: int,
+    n_rows: int,
+    label_col: str,
+    rare_def: RareEventDef,
+    explored_points: list,
+):
+    """Generation core: Prior → Scout → Amplifier → constraints → label → decode.
+
+    Returns (amp_df, target_region). Shared by the deliverable path and the
+    honest-lift path (which calls it on a train-only IngestResult), so neither
+    duplicates the generation logic. Pure function of (result, configs, seed).
+    """
+    from engine.prior import fit_prior, generate_base_batch
+    from engine.amplifier import fit_residuals, sample_residuals
     from engine.scout import select_target
 
     rng = np.random.default_rng(seed)
@@ -227,9 +275,8 @@ def _run_one_pass(
     _, _, X_res = sample_residuals(residual, base.values.astype(np.float64), rng2)
     amp_df = pd.DataFrame(base.values + X_res, columns=base.columns)
 
-    # Constrain to observed support: the Prior + residual GP can sample past the
-    # real range, producing impossible values for bounded columns (e.g. negative
-    # Amount/Time). Clip every continuous column to its ingest-observed [min,max].
+    # Constrain to observed support + dtype (clip continuous, round integers, snap
+    # binaries); see _apply_domain_constraints.
     amp_df = _apply_domain_constraints(amp_df, result)
 
     # Attach the label. The Prior generates feature columns only (it excludes the
@@ -241,13 +288,7 @@ def _run_one_pass(
 
     # Decode categoricals back to real values so the Auditor compares apples to apples
     amp_df = _decode_categoricals(amp_df, result)
-
-    # Auditor: fidelity gate
-    report = audit(result, amp_df, aud_cfg)
-
-    # Examiner: lift, only on a passing batch (Invariant 3)
-    lift = measure_lift(result, amp_df, exam_cfg) if report.overall_passed else None
-    return amp_df, report, lift, target_region
+    return amp_df, target_region
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -764,36 +805,29 @@ def screen(
     n_synthetic = 200
 
     if quick_campaign:
-        # --- REGEN 1-pass ---
+        # --- REGEN 1-pass --- (uses the shared generation core + leakage-free lift)
         try:
             prior_cfg = PriorConfig()
             amp_cfg = AmplifierConfig(
                 gp_noise_variance=0.1,
                 max_features=min(10, len(result.field_dict) - 1) if (len(result.field_dict) - 1) > 10 else 0,
             )
-            rng = np.random.default_rng(seed)
-            prior = fit_prior(result, prior_cfg, rng)
-            residual = fit_residuals(result, prior, amp_cfg)
-
-            target = select_target(
-                residual, prior._feature_cols, rng, ScoutConfig(),
-                explored_points=None,
+            scout_cfg = ScoutConfig()
+            amp_df, _ = _generate_amp_batch(
+                result, prior_cfg, amp_cfg, scout_cfg, seed, n_synthetic,
+                label_col, rare_def, [],
             )
-            base = generate_base_batch(prior, n_synthetic, target, rng,
-                                        noise_scale=prior_cfg.noise_scale)
-            rng2 = np.random.default_rng(seed + 1)
-            _, _, X_res = sample_residuals(residual, base.values.astype(np.float64), rng2)
-            amp_df = pd.DataFrame(base.values + X_res, columns=base.columns)
-            if label_col in amp_df.columns:
-                amp_df[label_col] = (
-                    rare_def.label_value if rare_def.mode == RareMode.LABEL else 1
-                )
-            amp_df = _decode_categoricals(amp_df, result)
             aud_cfg = AuditorConfig(coverage_threshold=0.50)
             report = audit(result, amp_df, aud_cfg)
             if report.overall_passed:
                 exam_cfg = ExaminerConfig(n_estimators=50)
-                lift = measure_lift(result, amp_df, exam_cfg)
+                lift = measure_lift(
+                    result, exam_cfg,
+                    generate_synth_fn=lambda ti: _generate_amp_batch(
+                        ti, prior_cfg, amp_cfg, scout_cfg, seed + 12345,
+                        n_synthetic, label_col, rare_def, [],
+                    )[0],
+                )
                 regen_lift = lift.tail_lift
         except Exception:
             regen_lift = 0.0

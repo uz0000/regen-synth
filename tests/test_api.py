@@ -394,3 +394,38 @@ def test_ingest_rejects_all_nan_column():
         df.to_csv(path, index=False)
         with pytest.raises(ValueError, match="entirely missing"):
             ingest(path, "label", rd)
+
+
+# ── Batch B1: leakage-free lift measurement ───────────────────────────────────
+
+def test_measure_lift_generates_synth_from_train_fold_only():
+    """The synthetic used for lift must come from a strict subset of rare rows
+    (the train fold) — the held-out rare test rows must never reach generation."""
+    from engine.examiner import measure_lift, ExaminerConfig
+    from regen.api import ingest as api_ingest
+
+    res = api_ingest(SAMPLE_CSV, LABEL_COL, RARE_DEF)
+    full_rare = len(res.rare_df)
+    seen = {}
+
+    def fake_gen(train_ingest):
+        seen["n_rare_train"] = len(train_ingest.rare_df)
+        return train_ingest.rare_df.copy()  # any DataFrame with the feature cols
+
+    cfg = ExaminerConfig(n_estimators=20)
+    measure_lift(res, cfg, generate_synth_fn=fake_gen)
+
+    assert 0 < seen["n_rare_train"] < full_rare, (
+        "generation saw the full rare set — held-out test rows leaked in"
+    )
+
+
+def test_measure_lift_no_synth_means_zero_lift():
+    """With no augmentation the amplified model == baseline, so lift is exactly 0."""
+    from engine.examiner import measure_lift, ExaminerConfig
+    from regen.api import ingest as api_ingest
+
+    res = api_ingest(SAMPLE_CSV, LABEL_COL, RARE_DEF)
+    rep = measure_lift(res, ExaminerConfig(n_estimators=20), generate_synth_fn=None)
+    assert rep.tail_lift == 0.0
+    assert rep.n_synthetic_used == 0
