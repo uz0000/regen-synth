@@ -82,6 +82,21 @@ class CampaignRequest(BaseModel):
     max_features: int = 0
 
 
+class GenerateRequest(BaseModel):
+    """Minimal user-facing request: data + how much + intent.
+
+    All technical knobs (noise, target column, gate strictness) are auto-decided
+    by regen.api.generate()'s auto-tuner; the user only owns the irreducible
+    inputs (their data, how many rows, what they want it for).
+    """
+    label_col: str = ""
+    rare_def: RareEventDefModel
+    n_rows: int = 300
+    mode: str = "balanced"        # "faithful" | "balanced" | "boost"
+    seed: int = 42
+    auto: bool = True
+
+
 class HealthResponse(BaseModel):
     status: str
     version: str
@@ -283,6 +298,47 @@ async def run_campaign_endpoint(req: CampaignRequest):
     response = result.to_dict()
     response["run_id"] = run_id
     return response
+
+
+@app.post("/api/generate")
+async def generate_data(req: GenerateRequest):
+    """The simple primary path: generate a synthetic dataset, auto-configured.
+
+    The user supplies data (already uploaded) + how many rows + an intent
+    (faithful copy / balanced / boost). The auto-tuner picks noise and target;
+    the response includes both quality numbers (fidelity + lift) and the
+    candidate trail (for the fidelity-vs-lift frontier chart). The batch is
+    saved in campaign layout so /download and /preview work with the run_id.
+    """
+    from regen.api import generate
+
+    uploads = sorted(DATA_DIR.glob("upload_*"), key=lambda p: p.stat().st_mtime, reverse=True)
+    if not uploads:
+        raise HTTPException(status_code=404, detail="No uploaded dataset found. Upload first via /api/ingest or /api/demo.")
+
+    filepath = str(uploads[0])
+    rare_def = _rare_def_from_model(req.rare_def)
+    run_id = uuid.uuid4().hex[:12]
+    out_dir = str(CAMPAIGN_DIR / run_id)
+
+    try:
+        summary = generate(
+            filepath,
+            label_col=req.label_col,
+            rare_def=rare_def,
+            n_rows=req.n_rows,
+            mode=req.mode,
+            seed=req.seed,
+            auto=req.auto,
+            out_dir=out_dir,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Generate failed: {str(e)}")
+
+    summary["run_id"] = run_id
+    return summary
 
 
 @app.get("/api/campaign/{run_id}")

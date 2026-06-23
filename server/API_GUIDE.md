@@ -18,26 +18,48 @@ The server runs at `http://localhost:8000`. Interactive docs (Swagger UI)
 are available at `http://localhost:8000/docs`.
 
 **Web UI:** open `http://localhost:8000/` in a browser for the built-in
-single-page frontend (upload or demo data → screen → run campaign → view
-per-pass recall chart + download synthetic rows). No build step; it's one
-self-contained `server/static/index.html`.
+single-page frontend. It's a three-step flow — (1) data, (2) how many rows +
+what for, (3) generate — with REGEN auto-tuning all technical parameters and
+showing both quality numbers (distribution fidelity + detection lift). No build
+step; it's one self-contained `server/static/index.html`.
 
 ## Endpoints
 
-### 0. Web UI
+### 0. Web UI + demo data
 ```
 GET /                    → the single-page frontend (index.html)
 GET /api/demo            → generate + ingest the built-in fraud demo dataset
 ```
 
-### 1. Health Check
+### 1. Generate (simple, auto-configured) — the primary path
+```
+POST /api/generate       → auto-tune + generate a synthetic dataset
+```
+Body: `{ label_col, rare_def: {mode, label_value}, n_rows, mode, seed, auto }`
+where `mode` is `"faithful"` | `"balanced"` (default) | `"boost"`.
+
+The user supplies only what only they know (their data, how many rows, what
+it's for); the auto-tuner picks `noise_scale` and the target region. Returns:
+`fidelity` (per-column distribution match), `lift` (detection lift, or null),
+`config_used` (the chosen noise/mode), and `candidates` (the auto-tune trail —
+one entry per noise candidate, for the fidelity-vs-lift frontier chart). The
+batch is saved in campaign layout, so `/api/campaign/{run_id}/download` and
+`/preview` retrieve it with the returned `run_id`.
+
+**Modes:** `faithful` maximizes distributional fidelity (model-agnostic — a
+faithful copy for any model); `balanced` maximizes detection-lift subject to
+the fidelity gate; `boost` is the same with a looser gate (more lift, more
+distortion). Detection lift is measured by the internal Examiner, a Random
+Forest used as a generic tabular-classifier proxy.
+
+### 2. Health Check
 ```
 GET /api/health
 ```
 Returns `{"status": "ok", "version": "0.1.0"}`. Use this to check if the
 server is running.
 
-### 2. Upload & Profile Data
+### 3. Upload & Profile Data
 ```
 POST /api/ingest
 Content-Type: multipart/form-data
@@ -68,7 +90,7 @@ Returns:
 }
 ```
 
-### 3. Screen Data (Win Predictor)
+### 4. Screen Data (Win Predictor)
 ```
 POST /api/screen
 Content-Type: application/json
@@ -94,7 +116,7 @@ Returns:
 }
 ```
 
-### 4. Run Campaign
+### 5. Run Campaign
 ```
 POST /api/campaign
 Content-Type: application/json
@@ -132,13 +154,13 @@ Returns:
 }
 ```
 
-### 5. Get Campaign Results
+### 6. Get Campaign Results
 ```
 GET /api/campaign/{run_id}
 ```
 Retrieves a previously saved campaign result (same shape as the POST response).
 
-### 6. Preview Synthetic Data
+### 7. Preview Synthetic Data
 ```
 GET /api/campaign/{run_id}/preview?n=10
 ```
@@ -153,7 +175,7 @@ Returns the first N rows as JSON records:
 }
 ```
 
-### 7. Download Synthetic Data
+### 8. Download Synthetic Data
 ```
 GET /api/campaign/{run_id}/download?format=csv
 GET /api/campaign/{run_id}/download?format=parquet
@@ -162,18 +184,18 @@ Returns a file download (CSV or Parquet).
 
 ## Frontend Flow
 
-A typical user session maps to these API calls:
+The built-in UI (`GET /`) is a three-step session:
 
 ```
-1. User uploads CSV          → POST /api/ingest
-2. Show dataset profile      → (display response)
-3. User clicks "Screen"      → POST /api/screen
-4. Show REGEN vs SMOTE rec   → (display response)
-5. User clicks "Run Campaign"→ POST /api/campaign
-6. Show pass-by-pass results → (display response, poll if needed)
-7. User clicks "Download"    → GET /api/campaign/{run_id}/download
-8. User clicks "Preview"     → GET /api/campaign/{run_id}/preview
+1. Data:  "Use demo dataset" → GET /api/demo   (or upload → POST /api/ingest)
+2. Pick:  rows + intent (faithful/balanced/boost); label auto-detected, editable
+3. Go:    "Generate"         → POST /api/generate
+         show fidelity + lift + frontier, then:
+         "Download CSV"      → GET  /api/campaign/{run_id}/download?format=csv
 ```
+
+The full campaign / screen endpoints (sections 4–5) remain available for
+power users and the API, but the simple path is `/api/generate`.
 
 ## Key Types for Frontend Objects
 
@@ -240,6 +262,25 @@ interface ColumnInfo {
   cardinality?: number;  // categorical only
   min?: number;          // continuous only
   max?: number;          // continuous only
+}
+```
+
+### GenerateResult  (POST /api/generate — the primary path)
+```typescript
+interface GenerateResult {
+  run_id: string;
+  n_rows: number;              // rows generated
+  label_col: string;
+  n_normal: number; n_rare: number; n_features: number;
+  fidelity: {
+    score: number;             // 0-1, fraction of columns matching
+    passed: boolean;           // cleared the Auditor gate
+    coverage: number;
+    columns: { col: string; passed: boolean; metric: "wasserstein"|"tvd"; value: number }[];
+  };
+  lift: { tail_lift: number; baseline_recall: number; amplified_recall: number } | null;
+  config_used: { mode: string; noise_scale: number; coverage_threshold: number; auto: boolean };
+  candidates: { noise: number; fidelity: number; lift: number | null; passed: boolean }[]; // frontier
 }
 ```
 

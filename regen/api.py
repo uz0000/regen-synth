@@ -118,6 +118,84 @@ def ingest(
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# 1b. ONE GENERATION PASS  (shared by run_campaign and generate)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _run_one_pass(
+    result: IngestResult,
+    prior_cfg,
+    amp_cfg,
+    aud_cfg,
+    exam_cfg,
+    scout_cfg,
+    seed: int,
+    n_rows: int,
+    label_col: str,
+    rare_def: RareEventDef,
+    explored_points: list,
+):
+    """Run one full generation pass: Prior → Scout → Amplifier → Auditor → Examiner.
+
+    This is the atomic unit of both the multi-pass campaign loop and the
+    single-shot generate() path. It is a pure function of (ingest, configs,
+    seed) — same inputs → identical batch (INVARIANTS.md Invariant 2).
+
+    The Auditor is a hard gate: the Examiner runs only on a passing batch
+    (Invariant 3), so `lift` is None when fidelity fails.
+
+    Args:
+        explored_points: mutated in place — Scout appends its target anchor so
+            cross-pass memory accumulates for the caller (empty for single-shot).
+
+    Returns:
+        (amp_df, fidelity_report, lift_report_or_None, target_region)
+    """
+    from engine.prior import fit_prior, generate_base_batch
+    from engine.amplifier import fit_residuals, sample_residuals
+    from engine.auditor import audit
+    from engine.examiner import measure_lift
+    from engine.scout import select_target
+
+    rng = np.random.default_rng(seed)
+
+    # Prior + Amplifier are fit on the ingest data (not the generated batch)
+    prior = fit_prior(result, prior_cfg, rng)
+    residual = fit_residuals(result, prior, amp_cfg)
+
+    # Scout: R-EPIG target selection. explored_points lets multi-pass runs
+    # down-weight already-mapped anchors so budget goes to new tail structure.
+    target_region = select_target(
+        residual, prior._feature_cols, rng, scout_cfg,
+        explored_points=explored_points or None,
+    )
+    if target_region.get("candidate_point"):
+        explored_points.append(target_region["candidate_point"])
+
+    # Prior Engine: base batch in the targeted region
+    base = generate_base_batch(prior, n_rows, target_region, rng,
+                               noise_scale=prior_cfg.noise_scale)
+
+    # Amplifier: ResidualGP tail correction
+    rng2 = np.random.default_rng(seed)
+    _, _, X_res = sample_residuals(residual, base.values.astype(np.float64), rng2)
+    amp_df = pd.DataFrame(base.values + X_res, columns=base.columns)
+    if label_col in amp_df.columns:
+        amp_df[label_col] = (
+            rare_def.label_value if rare_def.mode == RareMode.LABEL else 1
+        )
+
+    # Decode categoricals back to real values so the Auditor compares apples to apples
+    amp_df = _decode_categoricals(amp_df, result)
+
+    # Auditor: fidelity gate
+    report = audit(result, amp_df, aud_cfg)
+
+    # Examiner: lift, only on a passing batch (Invariant 3)
+    lift = measure_lift(result, amp_df, exam_cfg) if report.overall_passed else None
+    return amp_df, report, lift, target_region
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # 2. RUN CAMPAIGN
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -210,43 +288,10 @@ def run_campaign(
     best_batch_path: Optional[str] = None
 
     for pass_num in range(max_passes):
-        rng = np.random.default_rng(seed + pass_num)
-
-        # Prior + Amplifier (depend only on ingest data, not the generated batch)
-        prior = fit_prior(result, prior_cfg, rng)
-        residual = fit_residuals(result, prior, amp_cfg)
-
-        # Scout: R-EPIG target selection with cross-pass memory.
-        # On pass 1 explored_points is empty so Scout picks the globally
-        # highest-scoring region. On passes 2+ the explored penalty
-        # down-weights already-mapped anchors so budget goes to new
-        # tail structure.
-        target_region = select_target(
-            residual, prior._feature_cols, rng, scout_cfg,
-            explored_points=explored_points or None,
+        amp_df, report, lift, _ = _run_one_pass(
+            result, prior_cfg, amp_cfg, aud_cfg, exam_cfg, scout_cfg,
+            seed + pass_num, n_rows, label_col, rare_def, explored_points,
         )
-        if target_region.get("candidate_point"):
-            explored_points.append(target_region["candidate_point"])
-
-        # Prior Engine: generate base batch in the targeted region
-        base = generate_base_batch(prior, n_rows, target_region, rng,
-                                   noise_scale=prior_cfg.noise_scale)
-
-        # Amplifier: ResidualGP tail correction
-        rng2 = np.random.default_rng(seed + pass_num)
-        _, _, X_res = sample_residuals(residual, base.values.astype(np.float64), rng2)
-        amp_df = pd.DataFrame(base.values + X_res, columns=base.columns)
-        if label_col in amp_df.columns:
-            amp_df[label_col] = (
-                rare_def.label_value if rare_def.mode == RareMode.LABEL else 1
-            )
-
-        # Decode categorical columns back to original values so the Auditor
-        # compares real values, not encoded integer codes.
-        amp_df = _decode_categoricals(amp_df, result)
-
-        # Auditor: fidelity gate
-        report = audit(result, amp_df, aud_cfg)
 
         if not report.overall_passed:
             n_rejected += 1
@@ -257,8 +302,7 @@ def run_campaign(
             ))
             continue
 
-        # Examiner: measure detection lift
-        lift = measure_lift(result, amp_df, exam_cfg)
+        # lift was measured inside _run_one_pass (only on Auditor-passing batches)
         best_lift = max(best_lift, lift.tail_lift)
         n_accepted += 1
 
@@ -325,6 +369,273 @@ def _save_campaign_summary(cr: CampaignResult, out_path: Path) -> None:
     }
     with open(out_path / "campaign_summary.json", "w") as f:
         json.dump(summary, f, indent=2)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 2b. GENERATE — simple primary path with auto-tuning
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Noise candidates the auto-tuner searches. noise_scale is the highest-leverage
+# knob (a 0.25→0.10 tune swung results ~23% in the breadth benchmark), so the
+# search is concentrated there. Which column/region to amplify is left to Scout,
+# which already ranks features by rarity-relevance automatically.
+_NOISE_CANDIDATES = (0.05, 0.08, 0.10, 0.13, 0.16, 0.20)
+
+# Objective modes. fidelity = make the closest statistical copy (model-agnostic).
+# balanced = maximize detection-lift subject to passing the fidelity gate.
+# boost    = same objective, looser gate (more amplification, more lift, more distortion).
+_GENERATE_MODES = ("faithful", "balanced", "boost")
+
+
+def _fidelity_score(report) -> float:
+    """Scalar fidelity in [0,1]: fraction of columns whose distribution matches.
+
+    Higher = the synthetic batch preserves more of the real per-column
+    distributions. This is the objective for 'faithful' mode and a tie-breaker
+    signal otherwise. (Distinct from coverage_rate, which measures rare-region
+    coverage, not distributional match.)
+    """
+    cols = report.column_results
+    if not cols:
+        return 0.0
+    return sum(1 for c in cols if c.passed) / len(cols)
+
+
+def _autotune(
+    result: IngestResult,
+    rare_def: RareEventDef,
+    mode: str,
+    seed: int,
+    coverage_threshold: float,
+    n_rows: int,
+):
+    """Search noise_scale against the mode's objective; return (best_noise, trail).
+
+    Each candidate is one generation pass evaluated at the *target* n_rows.
+    This is nearly free relative to a tiny eval batch because the GP fit (the
+    expensive part) scales with the rare-training-set size, not n_rows — so we
+    rank configs at the same size they'll actually run at, avoiding the
+    classic tune-cheap/run-full mismatch.
+
+    Scoring:
+      faithful → fidelity score (closest statistical copy)
+      balanced → detection lift, rejecting any config that fails the gate
+      boost    → detection lift, same as balanced (the looser gate is the lever)
+
+    The trail (one entry per candidate) lets the UI draw the fidelity-vs-lift
+    frontier so the user can see *why* a config was chosen.
+
+    Returns:
+        (best_noise_scale, [{'noise', 'fidelity', 'lift', 'passed'}, ...])
+    """
+    from engine.prior import PriorConfig
+    from engine.amplifier import AmplifierConfig
+    from engine.auditor import AuditorConfig
+    from engine.examiner import ExaminerConfig
+    from engine.scout import ScoutConfig
+
+    amp_cfg = AmplifierConfig(gp_noise_variance=0.1)
+    aud_cfg = AuditorConfig(coverage_threshold=coverage_threshold)
+    exam_cfg = ExaminerConfig(n_estimators=60)
+    scout_cfg = ScoutConfig(num_candidates=80)
+    label_col = result.label_col
+
+    trail = []
+    best = None
+    for i, noise in enumerate(_NOISE_CANDIDATES):
+        prior_cfg = PriorConfig(noise_scale=noise)
+        try:
+            _, report, lift, _ = _run_one_pass(
+                result, prior_cfg, amp_cfg, aud_cfg, exam_cfg, scout_cfg,
+                seed + 7000 + i, n_rows, label_col, rare_def, [],
+            )
+        except Exception:
+            # A candidate that errors is treated as a failure, not a crash.
+            trail.append({"noise": noise, "fidelity": 0.0, "lift": None, "passed": False})
+            continue
+
+        fid = round(_fidelity_score(report), 4)
+        passed = bool(report.overall_passed)
+        lift_v = round(lift.tail_lift, 4) if lift is not None else None
+        trail.append({"noise": noise, "fidelity": fid, "lift": lift_v, "passed": passed})
+
+        if mode == "faithful":
+            score = fid
+        else:  # balanced / boost: lift subject to the fidelity floor
+            score = lift.tail_lift if passed else -1.0
+
+        if best is None or score > best[0]:
+            best = (score, noise)
+
+    best_noise = best[1] if best else 0.10
+    return best_noise, trail
+
+
+def generate(
+    filepath: str,
+    label_col: str = "",
+    rare_def: Optional[RareEventDef] = None,
+    n_rows: int = 300,
+    mode: str = "balanced",
+    seed: int = 42,
+    auto: bool = True,
+    noise_scale: Optional[float] = None,
+    coverage_threshold: Optional[float] = None,
+    out_dir: Optional[str] = None,
+) -> Dict[str, Any]:
+    """The simple primary path: generate a synthetic dataset as a CSV-ready batch.
+
+    This is the user-facing entry point that hides REGEN's technical knobs.
+    The user supplies data + how many rows they want (+ an optional intent);
+    the system auto-detects the rare class, auto-tunes noise and target region,
+    and returns a fidelity-checked synthetic batch plus both quality numbers
+    (fidelity + detection lift).
+
+    Two operating points (INVARIANTS.md §4 / design notes):
+      * faithful — maximize distributional fidelity. Model-agnostic: the result
+        is just a faithful synthetic copy, useful for any downstream model.
+      * balanced / boost — maximize detection-lift subject to the fidelity gate.
+        The internal Examiner (a Random Forest) is a generic tabular-classifier
+        proxy; lift optimized for it transfers well to tree/linear models.
+
+    Args:
+        filepath: Input CSV/JSON/Parquet.
+        label_col: Label column. "" → auto-detect.
+        rare_def: How rare events are identified. None → auto (minority class).
+        n_rows: How many synthetic rows to generate. The one knob the user owns.
+        mode: "faithful" | "balanced" | "boost". Default "balanced".
+        seed: RNG seed (full reproducibility).
+        auto: If True, auto-tune noise via a small search. If False, use noise_scale.
+        noise_scale: Manual prior-noise (used when auto=False; default 0.10).
+        coverage_threshold: Auditor gate strictness. None → 0.30 for boost, else 0.50.
+        out_dir: Where to persist the batch + summary. Auto-tempdir if None.
+
+    Returns:
+        Dict with: run_id, n_rows, label_col, rare info, fidelity (per-column +
+        score), lift (or None), config_used, and the auto-tune candidate trail.
+        The batch itself is saved to out_dir/pass_1_accepted.parquet and is
+        retrievable via get_results()/load_synthetic().
+    """
+    import tempfile
+    from engine.prior import PriorConfig
+    from engine.amplifier import AmplifierConfig
+    from engine.auditor import AuditorConfig
+    from engine.examiner import ExaminerConfig
+    from engine.scout import ScoutConfig
+
+    if mode not in _GENERATE_MODES:
+        raise ValueError(f"mode must be one of {_GENERATE_MODES}, got {mode!r}")
+
+    # 1. Ingest + auto-detect the rare class if the caller didn't specify
+    rare_def = rare_def or _auto_rare_def()
+    result = ingest(filepath, label_col, rare_def)
+
+    if coverage_threshold is None:
+        coverage_threshold = 0.30 if mode == "boost" else 0.50
+
+    out_path = Path(out_dir) if out_dir else Path(tempfile.mkdtemp(prefix="regen_generate_"))
+    out_path.mkdir(parents=True, exist_ok=True)
+
+    # 2. Auto-tune (or use the manual noise)
+    if auto:
+        best_noise, trail = _autotune(result, rare_def, mode, seed, coverage_threshold, n_rows)
+    else:
+        best_noise = 0.10 if noise_scale is None else noise_scale
+        trail = []
+
+    # 3. Final generation at the requested size with the chosen config
+    prior_cfg = PriorConfig(noise_scale=best_noise)
+    amp_cfg = AmplifierConfig(gp_noise_variance=0.1)
+    aud_cfg = AuditorConfig(coverage_threshold=coverage_threshold)
+    exam_cfg = ExaminerConfig(n_estimators=100)
+    scout_cfg = ScoutConfig(num_candidates=100)
+
+    amp_df, report, lift, _ = _run_one_pass(
+        result, prior_cfg, amp_cfg, aud_cfg, exam_cfg, scout_cfg,
+        seed + 9000, n_rows, result.label_col, rare_def, [],
+    )
+
+    # 4. Persist the batch (reuses the campaign on-disk layout so the existing
+    #    get_results / load_synthetic / download endpoints work unchanged).
+    batch_path = str(out_path / "pass_1_accepted.parquet")
+    amp_df.to_parquet(batch_path, index=False)
+
+    fidelity = {
+        "score": round(_fidelity_score(report), 4),
+        "passed": bool(report.overall_passed),
+        "coverage": round(report.coverage_rate, 4),
+        "columns": [
+            {
+                "col": c.col,
+                "passed": bool(c.passed),
+                "metric": "wasserstein" if c.wasserstein is not None else "tvd",
+                "value": round(c.wasserstein, 4) if c.wasserstein is not None
+                else (round(c.tvd, 4) if c.tvd is not None else None),
+            }
+            for c in report.column_results
+        ],
+    }
+    lift_out = None
+    if lift is not None:
+        lift_out = {
+            "tail_lift": round(lift.tail_lift, 4),
+            "baseline_recall": round(lift.baseline_recall, 4),
+            "amplified_recall": round(lift.amplified_recall, 4),
+        }
+
+    summary = {
+        "run_id": out_path.name,
+        "n_rows": len(amp_df),
+        "label_col": result.label_col,
+        "n_normal": len(result.normal_df),
+        "n_rare": len(result.rare_df),
+        "n_features": len(result.field_dict) - (1 if result.label_col else 0),
+        "fidelity": fidelity,
+        "lift": lift_out,
+        "config_used": {
+            "mode": mode,
+            "noise_scale": round(best_noise, 4),
+            "coverage_threshold": coverage_threshold,
+            "auto": auto,
+        },
+        "candidates": trail,
+        "output_dir": str(out_path),
+        "best_batch_path": batch_path,
+    }
+    # Write a minimal campaign_summary.json so get_results()/download work.
+    _save_generate_summary(summary, out_path)
+    return summary
+
+
+def _save_generate_summary(summary: Dict[str, Any], out_path: Path) -> None:
+    """Persist a campaign-shaped summary so get_results()/load_synthetic() work."""
+    cr_like = {
+        "best_lift": (summary["lift"]["tail_lift"] if summary["lift"] else 0.0),
+        "passes": [{
+            "pass_num": 1,
+            "status": "accepted" if summary["fidelity"]["passed"] else "rejected",
+            "tail_lift": summary["lift"]["tail_lift"] if summary["lift"] else 0.0,
+            "coverage": summary["fidelity"]["coverage"],
+        }],
+        "n_accepted": 1 if summary["fidelity"]["passed"] else 0,
+        "n_rejected": 0 if summary["fidelity"]["passed"] else 1,
+        "n_normal": summary["n_normal"],
+        "n_rare": summary["n_rare"],
+        "n_features": summary["n_features"],
+        "n_rows_per_pass": summary["n_rows"],
+        "best_batch_path": summary["best_batch_path"],
+    }
+    with open(out_path / "campaign_summary.json", "w") as f:
+        json.dump(cr_like, f, indent=2)
+
+
+def _auto_rare_def() -> RareEventDef:
+    """Default rare definition: label mode with the minority class as rare.
+
+    The actual minority value is resolved at ingest time from the data; here we
+    return a label-mode def that lets the loader auto-detect the rare class.
+    """
+    return RareEventDef(mode=RareMode.LABEL, label_value=1)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
