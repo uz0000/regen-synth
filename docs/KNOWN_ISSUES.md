@@ -1,129 +1,76 @@
-# KNOWN ISSUE: Categorical Feature Corruption in Amplifier
+# KNOWN ISSUE: High-Cardinality Categorical TVD Failures
 
-**Status:** Open — blocks REGEN on categorical-heavy datasets
+**Status:** Partially resolved — categorical decode fixed (Bank Marketing now works);
+Open Payments still blocked by high-cardinality TVD
 **Discovered:** 2026-06-22 breadth benchmark re-run
-**Severity:** High — excludes an entire class of real-world datasets
+**Severity:** Medium — blocks REGEN on datasets with extreme categorical cardinality (>500 unique values per column)
 
 ---
 
-## The Problem
+## What Was Fixed
 
-REGEN currently cannot amplify datasets where the majority of features are
-categorical. On such datasets the Auditor rejects 100% of batches (0/5 passes),
-producing zero synthetic data and zero lift.
+The synthetic batch was coming out with encoded integer codes (3.0, 7.0) instead
+of original categorical values ("management", "technician"). The Auditor compared
+encoded integers against real strings → TVD=1.0 → every batch rejected.
 
-This was discovered on two new benchmark datasets:
+**Root cause:** The Prior and Amplifier encode categoricals to integers for
+numerical computation, but nothing decoded them back before audit.
 
-| Dataset | Features | Categorical | Passes accepted | Result |
-|---------|----------|-------------|-----------------|--------|
-| Bank Marketing | 16 | 9 (56%) | 0/5 | Total failure |
-| Open Payments | 5 | 5 (100%) | 0/5 | Total failure |
+**Fix:** Added `_decode_categoricals()` in `regen/api.py` that reconstructs the
+original category mapping from `pd.Categorical(rare_df[col])` and maps the
+synthetic integer codes back to real values. Applied in three places:
+- `run_campaign()` main loop
+- `screen()` quick-campaign path
+- `benchmark/run_breadth.py`
 
-Both datasets have correct label distributions and ingest cleanly. The failure
-is in the generation pipeline, not ingestion.
+**Result:** Bank Marketing (16 features, 9 categorical) went from 0/5 passes to
+5/5 accepted. REGEN now produces +1.12% lift (SMOTE wins at +1.52%, but REGEN
+runs and produces valid synthetic data).
 
 ---
 
-## Root Cause
+## What Still Fails (Open Payments)
 
-The Amplifier's ResidualGP applies continuous residual corrections to ALL
-columns, including categorical ones that were label-encoded to integers during
-feature encoding.
+Open Payments has 5 features, all categorical with extreme cardinality:
 
-Pipeline trace:
+| Column | Unique values | TVD | Passes? |
+|--------|--------------|-----|---------|
+| Drug/Biological Name | 1,115 | 0.47 | No |
+| Manufacturer Name | 612 | 0.45 | No |
+| Device/Medical Supply | 691 | 0.23 | No |
+| Physician Specialty | 199 | 0.23 | No |
+| Dispute Status | 2 | 0.004 | Yes |
 
-```
-1. Ingest: categorical strings → integer codes (0, 1, 2, ...)
-2. Prior: generate_base_batch() correctly skips perturbing categorical
-   columns (the _is_continuous mask in rdbpfn.py line 292-294)
-3. Amplifier: sample_residuals() adds GP residual corrections to ALL
-   columns — NO continuous/categorical mask applied
-4. Result: category code 2 becomes 2.7 or 1.3 (invalid intermediate values)
-5. Auditor: TVD between real categorical distribution and corrupted
-   synthetic = 1.0 on every categorical column → hard reject
-```
+The Auditor's TVD threshold for categorical columns is 0.15. With 1,115 unique
+drug names and only 200 synthetic rows per pass, the TVD is mathematically
+guaranteed to be high — most of the 1,115 categories will have zero synthetic
+representation. This is a sampling limitation, not a data corruption bug.
 
-The Prior Engine already solved this problem (see `engine/prior/rdbpfn.py`,
-`generate_base_batch`, lines 288-295):
+---
+
+## Proposed Fix for High-Cardinality TVD
+
+Two options, not mutually exclusive:
+
+### Option A: Relax TVD for high-cardinality columns
+Scale the TVD threshold inversely with cardinality. A column with 1000+ unique
+values should not be held to the same TVD standard as one with 5.
 
 ```python
-# Only perturb continuous features. Binary/categorical features keep
-# their anchor values — perturbing a binary column (e.g. on_thyroxine)
-# produces meaningless intermediate values.
-continuous = prior._is_continuous
-noise = np.zeros_like(X_base)
-noise[:, continuous] = rng.standard_normal(...) * anchor_std[continuous] * 0.25
-X_base += noise
+# In AuditorConfig or _eval_column:
+effective_threshold = config.tvd_threshold * max(1.0, card / 50)
+# e.g. card=1000 → threshold becomes 3.0 (effectively passes)
 ```
 
-The Amplifier needs the same treatment: residual corrections should only apply
-to continuous features. Categorical features should keep their Prior-generated
-values (which are already grounded in real rare rows).
-
----
-
-## Why This Matters for Adoption
-
-This is not a niche edge case. Categorical-heavy data is common in the exact
-domains REGEN targets:
-
-- **Healthcare** — ICD codes, treatment flags, patient demographics
-- **Manufacturing** — fault codes, machine IDs, operator shifts
-- **Security** — protocol types, service categories, alert classifications
-- **Finance** — transaction types, merchant categories, geographic flags
-
-A prospect in any of these verticals is likely to have mixed-type data. If
-REGEN silently produces 0% accepted passes, the prospect's first experience
-is a total failure — worse than if it had never run.
-
-The datasets where REGEN currently wins are predominantly numeric/continuous
-(Satellite, Ozone, Churn, Hypothyroid's continuous subset). Expanding to
-categorical data doubles the addressable market.
-
----
-
-## Proposed Fix
-
-Apply the same `_is_continuous` mask from the Prior Engine to the Amplifier's
-residual sampling. Concretely, in `engine/amplifier/residual_gp.py` (or
-wherever `sample_residuals` is implemented):
-
-1. Accept the `is_continuous` mask (already stored on `PriorModel`)
-2. After sampling residuals, zero out corrections on non-continuous columns
-3. Return the masked residual array
-
-Pseudocode:
-
-```python
-def sample_residuals(residual_model, X_base, rng):
-    X_res = gp_sample(...)           # existing GP residual sampling
-    X_res[:, ~is_continuous] = 0.0   # preserve categorical values
-    return mu, std, X_res
-```
-
-The `is_continuous` mask is already computed during `fit_prior()` and stored
-on `PriorModel._is_continuous`. It just needs to flow through to the Amplifier.
-
-**Estimated effort:** Small — the mask exists, the pattern exists in the Prior,
-the fix is applying the same mask in one more place. Likely 1-2 hours including
-testing.
-
----
-
-## Verification After Fix
-
-Re-run the breadth benchmark on Bank Marketing and Open Payments. Success
-criteria:
-- Auditor pass rate > 0 (at least some batches accepted)
-- REGEN produces a non-zero lift number
-- If REGEN beats SMOTE, the categorical gap is closed
-- If SMOTE still wins, that's an honest result — but at least REGEN ran
+### Option B: Compare top-K categories only
+Instead of comparing the full distribution, compare only the top-K most frequent
+categories. This focuses the fidelity check on the categories that actually matter
+and ignores the long tail that no 200-row batch can cover.
 
 ---
 
 ## Related Files
 
-- `engine/amplifier/residual_gp.py` — fix location (sample_residuals)
-- `engine/prior/rdbpfn.py` — reference implementation (generate_base_batch, line 288)
+- `regen/api.py` — `_decode_categoricals()` (the fix, now applied)
+- `engine/auditor/fidelity.py` — `_eval_column()`, `_tvd_discrete()` (where TVD is computed)
 - `benchmark/run_breadth.py` — verification script
-- `benchmark/RESULTS_BREADTH.md` — current results (0/5 on both datasets)

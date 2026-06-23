@@ -103,6 +103,10 @@ def run_regen_multipass(csv_path, label_col, rare_value, seed):
         if label_col in amp_df.columns:
             amp_df[label_col] = rare_value
 
+        # Decode categorical columns so the Auditor compares real values
+        from regen.api import _decode_categoricals
+        amp_df = _decode_categoricals(amp_df, result)
+
         report = audit(result, amp_df, aud_cfg)
         if not report.overall_passed:
             rejected_count += 1

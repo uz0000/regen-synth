@@ -727,13 +727,13 @@
     "n_normal": 39922,
     "n_rare": 5289,
     "n_features": 16,
-    "regen_best_lift": 0.0,
-    "regen_avg_lift": 0.0,
-    "regen_accepted": 0,
-    "regen_rejected": 5,
-    "smote_lift": 0.0,
+    "regen_best_lift": 0.012602394454946486,
+    "regen_avg_lift": 0.009073724007561434,
+    "regen_accepted": 5,
+    "regen_rejected": 0,
+    "smote_lift": 0.013232514177693777,
     "baseline_recall": 0.7857592942659105,
-    "gp_ard_spread": null
+    "gp_ard_spread": 0.0
   },
   {
     "dataset": "Bank Marketing",
@@ -743,13 +743,13 @@
     "n_normal": 39922,
     "n_rare": 5289,
     "n_features": 16,
-    "regen_best_lift": 0.0,
-    "regen_avg_lift": 0.0,
-    "regen_accepted": 0,
-    "regen_rejected": 5,
-    "smote_lift": 0.0,
+    "regen_best_lift": 0.011972274732199084,
+    "regen_avg_lift": 0.0084436042848141,
+    "regen_accepted": 5,
+    "regen_rejected": 0,
+    "smote_lift": 0.016383112791430343,
     "baseline_recall": 0.7895400126023945,
-    "gp_ard_spread": null
+    "gp_ard_spread": 0.0
   },
   {
     "dataset": "Bank Marketing",
@@ -759,13 +759,13 @@
     "n_normal": 39922,
     "n_rare": 5289,
     "n_features": 16,
-    "regen_best_lift": 0.0,
-    "regen_avg_lift": 0.0,
-    "regen_accepted": 0,
-    "regen_rejected": 5,
-    "smote_lift": 0.0,
+    "regen_best_lift": 0.011972274732199084,
+    "regen_avg_lift": 0.007813484562066786,
+    "regen_accepted": 5,
+    "regen_rejected": 0,
+    "smote_lift": 0.0201638311279142,
     "baseline_recall": 0.7731568998109641,
-    "gp_ard_spread": null
+    "gp_ard_spread": 0.0
   },
   {
     "dataset": "Bank Marketing",
@@ -775,13 +775,13 @@
     "n_normal": 39922,
     "n_rare": 5289,
     "n_features": 16,
-    "regen_best_lift": 0.0,
-    "regen_avg_lift": 0.0,
-    "regen_accepted": 0,
-    "regen_rejected": 5,
-    "smote_lift": 0.0,
+    "regen_best_lift": 0.009451795841209809,
+    "regen_avg_lift": 0.005923125393824824,
+    "regen_accepted": 5,
+    "regen_rejected": 0,
+    "smote_lift": 0.013862633900441068,
     "baseline_recall": 0.7611846250787649,
-    "gp_ard_spread": null
+    "gp_ard_spread": 0.0
   },
   {
     "dataset": "Bank Marketing",
@@ -791,13 +791,13 @@
     "n_normal": 39922,
     "n_rare": 5289,
     "n_features": 16,
-    "regen_best_lift": 0.0,
-    "regen_avg_lift": 0.0,
-    "regen_accepted": 0,
-    "regen_rejected": 5,
-    "smote_lift": 0.0,
+    "regen_best_lift": 0.010081915563957211,
+    "regen_avg_lift": 0.0060491493383743045,
+    "regen_accepted": 5,
+    "regen_rejected": 0,
+    "smote_lift": 0.012602394454946375,
     "baseline_recall": 0.7844990548204159,
-    "gp_ard_spread": null
+    "gp_ard_spread": 0.0
   },
   {
     "dataset": "Open Payments",

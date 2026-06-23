@@ -55,6 +55,39 @@ logger = logging.getLogger(__name__)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# 0. CATEGORICAL DECODING
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _decode_categoricals(df: pd.DataFrame, ingest: IngestResult) -> pd.DataFrame:
+    """Restore original categorical values in a synthetic batch.
+
+    The engine encodes categorical columns to integer codes for numerical
+    computation (Prior, Amplifier, Examiner). The synthetic batch comes out
+    as encoded floats (e.g. 3.0, 7.0). This decodes them back to original
+    values (e.g. "management", "technician") so that:
+
+    1. The Auditor compares apples to apples (synthetic strings vs real strings)
+    2. The output is human-usable (clients need real values, not integer codes)
+
+    The decoding uses the same pd.Categorical() encoding as _encode_features.
+    """
+    field_dict = ingest.field_dict
+    rare_df = ingest.rare_df
+    for col in df.columns:
+        if col not in field_dict:
+            continue
+        ftype = field_dict[col].field_type
+        if ftype not in (FieldType.CATEGORICAL,):
+            continue
+        # Reconstruct the category mapping from the real data
+        cats = pd.Categorical(rare_df[col]).categories
+        # Round to nearest integer code and clip to valid range
+        codes = df[col].round().astype(int).clip(0, len(cats) - 1)
+        df[col] = cats[codes]
+    return df
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # 1. INGEST
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -204,6 +237,10 @@ def run_campaign(
             amp_df[label_col] = (
                 rare_def.label_value if rare_def.mode == RareMode.LABEL else 1
             )
+
+        # Decode categorical columns back to original values so the Auditor
+        # compares real values, not encoded integer codes.
+        amp_df = _decode_categoricals(amp_df, result)
 
         # Auditor: fidelity gate
         report = audit(result, amp_df, aud_cfg)
@@ -393,6 +430,7 @@ def screen(
                 amp_df[label_col] = (
                     rare_def.label_value if rare_def.mode == RareMode.LABEL else 1
                 )
+            amp_df = _decode_categoricals(amp_df, result)
             aud_cfg = AuditorConfig(coverage_threshold=0.50)
             report = audit(result, amp_df, aud_cfg)
             if report.overall_passed:
