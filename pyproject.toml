@@ -44,7 +44,7 @@ Documentation = "https://github.com/your-org/regen-synth/docs"
 regen = "cli.main:main"
 
 [tool.setuptools.packages.find]
-include = ["engine*", "contracts*", "agent-runtime*", "cli*"]
+include = ["engine*", "contracts*", "agent-runtime*", "cli*", "regen*"]
 exclude = ["tests*", "examples*"]
 
 [tool.pytest.ini_options]

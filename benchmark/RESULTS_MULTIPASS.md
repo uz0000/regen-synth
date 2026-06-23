@@ -1,5 +1,8 @@
 # REGEN Multi-Pass Benchmark Results
 
+> **⚠ SUPERSEDED** — These are early multi-pass results from 2026-06-18 (3 datasets).
+> Current results: [`RESULTS_BREADTH.md`](RESULTS_BREADTH.md) (11 datasets, multi-pass, 5 seeds each, fixed active-learning loop).
+
 **Date:** 2026-06-18
 **Engine:** GaussianPrior backend, GP with ARD RBF kernel + L-BFGS optimization, Scout R-EPIG targeting
 **Method:** 5-pass active-learning loop, 5 seeds per dataset, SMOTE with matched synthetic row budget

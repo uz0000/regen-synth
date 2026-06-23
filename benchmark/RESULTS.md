@@ -1,5 +1,8 @@
 # REGEN Benchmark Results
 
+> **⚠ SUPERSEDED** — These are single-pass results from 2026-06-18.
+> Current results: [`RESULTS_BREADTH.md`](RESULTS_BREADTH.md) (11 datasets, multi-pass, 5 seeds each).
+
 **Date:** 2026-06-18
 **Engine:** GaussianPrior (default), GP with ARD RBF kernel + L-BFGS optimization
 **Seeds per dataset:** 5 (42–46)

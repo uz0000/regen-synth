@@ -120,3 +120,89 @@ def test_auditor_report_has_manifest_when_provided():
     )
     report = audit(ingest, synth, config, manifest=manifest)
     assert report.manifest is manifest
+
+
+def test_auditor_high_cardinality_tvd_topk():
+    """High-cardinality categoricals should use top-K TVD, not fail on full distribution."""
+    rng = np.random.default_rng(42)
+
+    # Simulate Open Payments scale: 500 categories, 1000 rare rows, 200 synthetic
+    n_rare = 1000
+    n_synth = 200
+    categories = [f"cat_{i}" for i in range(500)]
+
+    # Power-law distribution (top categories dominate)
+    probs = np.array([1.0 / (i + 1) for i in range(500)])
+    probs = probs / probs.sum()
+
+    # Both real and synthetic follow the same distribution (Prior samples from rare)
+    real_cats = rng.choice(categories, size=n_rare, p=probs)
+    synth_cats = rng.choice(categories, size=n_synth, p=probs)
+
+    real_df = pd.DataFrame({"cat_col": real_cats})
+    synth_df = pd.DataFrame({"cat_col": synth_cats})
+    normal_df = pd.DataFrame({"cat_col": rng.choice(categories[:10], size=2000)})
+
+    field_dict: FieldDict = {
+        "cat_col": FieldMeta(name="cat_col", field_type=FieldType.CATEGORICAL),
+    }
+
+    ingest = IngestResult(
+        normal_df=normal_df,
+        rare_df=real_df,
+        schema_graph=SchemaGraph(),
+        field_dict=field_dict,
+        label_col="",
+    )
+
+    config = AuditorConfig(coverage_threshold=0.0)  # skip coverage (categorical only)
+    report = audit(ingest, synth_df, config)
+
+    # With top-K TVD, matching distributions should pass
+    cat_result = [r for r in report.column_results if r.col == "cat_col"][0]
+    assert cat_result.passed, (
+        f"High-cardinality categorical should pass with top-K TVD when distributions match. "
+        f"TVD={cat_result.tvd:.4f}, threshold={config.tvd_threshold}"
+    )
+
+
+def test_auditor_high_cardinality_rejects_mismatched():
+    """High-cardinality top-K TVD should still reject genuinely corrupted batches."""
+    rng = np.random.default_rng(42)
+
+    n_rare = 1000
+    n_synth = 200
+    categories = [f"cat_{i}" for i in range(500)]
+
+    # Real: power-law (top categories dominate)
+    probs = np.array([1.0 / (i + 1) for i in range(500)])
+    probs = probs / probs.sum()
+    real_cats = rng.choice(categories, size=n_rare, p=probs)
+
+    # Synthetic: uniform over ALL categories (completely wrong distribution)
+    synth_cats = rng.choice(categories, size=n_synth)
+
+    real_df = pd.DataFrame({"cat_col": real_cats})
+    synth_df = pd.DataFrame({"cat_col": synth_cats})
+    normal_df = pd.DataFrame({"cat_col": rng.choice(categories[:10], size=2000)})
+
+    field_dict: FieldDict = {
+        "cat_col": FieldMeta(name="cat_col", field_type=FieldType.CATEGORICAL),
+    }
+
+    ingest = IngestResult(
+        normal_df=normal_df,
+        rare_df=real_df,
+        schema_graph=SchemaGraph(),
+        field_dict=field_dict,
+        label_col="",
+    )
+
+    config = AuditorConfig(coverage_threshold=0.0)
+    report = audit(ingest, synth_df, config)
+
+    cat_result = [r for r in report.column_results if r.col == "cat_col"][0]
+    assert not cat_result.passed, (
+        f"Corrupted high-cardinality batch should be rejected. "
+        f"TVD={cat_result.tvd:.4f}, threshold={config.tvd_threshold}"
+    )

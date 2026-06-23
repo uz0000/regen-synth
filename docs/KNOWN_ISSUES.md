@@ -1,13 +1,12 @@
 # KNOWN ISSUE: High-Cardinality Categorical TVD Failures
 
-**Status:** Partially resolved — categorical decode fixed (Bank Marketing now works);
-Open Payments still blocked by high-cardinality TVD
+**Status:** Resolved — top-K TVD comparison implemented for high-cardinality columns
 **Discovered:** 2026-06-22 breadth benchmark re-run
-**Severity:** Medium — blocks REGEN on datasets with extreme categorical cardinality (>500 unique values per column)
+**Severity:** Was Medium — blocked REGEN on datasets with extreme categorical cardinality (>500 unique values per column)
 
 ---
 
-## What Was Fixed
+## What Was Fixed (Categorical Decode)
 
 The synthetic batch was coming out with encoded integer codes (3.0, 7.0) instead
 of original categorical values ("management", "technician"). The Auditor compared
@@ -29,48 +28,42 @@ runs and produces valid synthetic data).
 
 ---
 
-## What Still Fails (Open Payments)
+## What Was Fixed (High-Cardinality TVD)
 
 Open Payments has 5 features, all categorical with extreme cardinality:
 
-| Column | Unique values | TVD | Passes? |
-|--------|--------------|-----|---------|
-| Drug/Biological Name | 1,115 | 0.47 | No |
-| Manufacturer Name | 612 | 0.45 | No |
-| Device/Medical Supply | 691 | 0.23 | No |
-| Physician Specialty | 199 | 0.23 | No |
-| Dispute Status | 2 | 0.004 | Yes |
+| Column | Unique values | TVD (old) | TVD (top-K) | Passes? |
+|--------|--------------|-----------|-------------|---------|
+| Drug/Biological Name | 1,115 | 0.47 | ~0.14 | Yes |
+| Manufacturer Name | 612 | 0.45 | ~0.12 | Yes |
+| Device/Medical Supply | 691 | 0.23 | ~0.10 | Yes |
+| Physician Specialty | 199 | 0.23 | ~0.08 | Yes |
+| Dispute Status | 2 | 0.004 | 0.004 | Yes |
 
-The Auditor's TVD threshold for categorical columns is 0.15. With 1,115 unique
-drug names and only 200 synthetic rows per pass, the TVD is mathematically
-guaranteed to be high — most of the 1,115 categories will have zero synthetic
-representation. This is a sampling limitation, not a data corruption bug.
+**Root cause:** The Auditor's TVD check compared the full distribution over all
+unique categories. With 1,115 unique drug names and only 200 synthetic rows per
+pass, the TVD was mathematically guaranteed to be high — most of the 1,115
+categories had zero synthetic representation. This was a sampling limitation,
+not a data corruption bug.
 
----
+**Fix:** Implemented top-K TVD comparison in `_tvd_discrete()`:
+- When a column has >50 unique values (configurable via `AuditorConfig.high_card_threshold`),
+  TVD is computed over only the top-K most frequent categories from the reference
+  distribution, with all remaining categories grouped into an "other" bucket.
+- K scales with the synthetic batch size: `K = min(n_unique, max(20, n_synthetic // 5))`.
+  This ensures ~5 synthetic rows per compared category for stable proportion estimates.
+- The "other" bucket captures whether the synthetic data covers the long tail at
+  the right rate, without requiring it to represent every individual category.
 
-## Proposed Fix for High-Cardinality TVD
-
-Two options, not mutually exclusive:
-
-### Option A: Relax TVD for high-cardinality columns
-Scale the TVD threshold inversely with cardinality. A column with 1000+ unique
-values should not be held to the same TVD standard as one with 5.
-
-```python
-# In AuditorConfig or _eval_column:
-effective_threshold = config.tvd_threshold * max(1.0, card / 50)
-# e.g. card=1000 → threshold becomes 3.0 (effectively passes)
-```
-
-### Option B: Compare top-K categories only
-Instead of comparing the full distribution, compare only the top-K most frequent
-categories. This focuses the fidelity check on the categories that actually matter
-and ignores the long tail that no 200-row batch can cover.
+**Result:** At Open Payments scale (1000 real rows, 200 synthetic), matching
+distributions now produce TVD ≈ 0.14 (passes the 0.15 threshold), while
+mismatched distributions produce TVD ≈ 0.60 (correctly rejected).
 
 ---
 
 ## Related Files
 
-- `regen/api.py` — `_decode_categoricals()` (the fix, now applied)
-- `engine/auditor/fidelity.py` — `_eval_column()`, `_tvd_discrete()` (where TVD is computed)
+- `regen/api.py` — `_decode_categoricals()` (categorical decode fix)
+- `engine/auditor/fidelity.py` — `_tvd_discrete()` (top-K TVD), `AuditorConfig.high_card_threshold`
+- `tests/test_fidelity.py` — `test_auditor_high_cardinality_tvd_topk`, `test_auditor_high_cardinality_rejects_mismatched`
 - `benchmark/run_breadth.py` — verification script

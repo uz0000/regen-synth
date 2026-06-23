@@ -51,6 +51,11 @@ class AuditorConfig:
     # which is scale-free so one threshold works across features of any unit.
     wasserstein_threshold: float = 0.50   # max normalized Wasserstein per continuous column
     coverage_threshold: float = 0.80      # min rare event coverage rate
+    # High-cardinality categorical handling: when a column has more unique values
+    # than this threshold, TVD is computed over only the top-K most frequent
+    # categories (rest grouped into "other"). This prevents false rejections when
+    # the synthetic batch (200 rows) cannot cover 1,000+ categories.
+    high_card_threshold: int = 50
 
 
 # ── Public API ─────────────────────────────────────────────────────────────────
@@ -207,7 +212,7 @@ def _eval_column(
         result.tvd = _tvd_continuous(real, synth)
 
     elif ftype in (FieldType.CATEGORICAL, FieldType.BINARY):
-        t = _tvd_discrete(real, synth)
+        t = _tvd_discrete(real, synth, config)
         result.tvd = t
         if t > config.tvd_threshold:
             result.passed = False
@@ -217,12 +222,53 @@ def _eval_column(
 
 # ── TVD ───────────────────────────────────────────────────────────────────────
 
-def _tvd_discrete(real: pd.Series, synth: pd.Series) -> float:
-    all_vals = set(real.dropna().unique()) | set(synth.dropna().unique())
-    nr, ns = len(real.dropna()), len(synth.dropna())
+def _tvd_discrete(real: pd.Series, synth: pd.Series, config: AuditorConfig) -> float:
+    """
+    Total Variation Distance between two discrete distributions.
+
+    For high-cardinality columns (> config.high_card_threshold unique values
+    in the reference), TVD is computed over only the top-K most frequent
+    categories from the reference, with all remaining categories grouped into
+    an "other" bucket. This prevents false rejections when a 200-row synthetic
+    batch cannot cover 1,000+ categories — the check focuses on whether the
+    synthetic data represents the categories that actually matter.
+    """
+    real_clean = real.dropna()
+    synth_clean = synth.dropna()
+    nr, ns = len(real_clean), len(synth_clean)
     if nr == 0 or ns == 0:
         return 1.0
-    total = sum(abs((real == v).sum() / nr - (synth == v).sum() / ns) for v in all_vals)
+
+    real_vals = real_clean.unique()
+    n_unique = len(real_vals)
+
+    if n_unique <= config.high_card_threshold:
+        # Low cardinality — compare full distributions.
+        all_vals = set(real_vals) | set(synth_clean.unique())
+        total = sum(
+            abs((real_clean == v).sum() / nr - (synth_clean == v).sum() / ns)
+            for v in all_vals
+        )
+        return 0.5 * total
+
+    # High cardinality — compare top-K categories, group rest into "other".
+    # K scales with synthetic batch size: ~5 rows per category for stable
+    # proportion estimates.
+    k = min(n_unique, max(20, ns // 5))
+    top_k = set(real_clean.value_counts().nlargest(k).index)
+
+    real_top_mass = (real_clean.isin(top_k)).sum() / nr
+    synth_top_mass = (synth_clean.isin(top_k)).sum() / ns
+
+    total = sum(
+        abs((real_clean == v).sum() / nr - (synth_clean == v).sum() / ns)
+        for v in top_k
+    )
+    # Add the "other" bucket contribution.
+    real_other = 1.0 - real_top_mass
+    synth_other = 1.0 - synth_top_mass
+    total += abs(real_other - synth_other)
+
     return 0.5 * total
 
 

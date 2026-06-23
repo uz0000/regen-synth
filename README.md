@@ -17,41 +17,44 @@ regen run my_data.csv --label is_fraud --rare-mode label --rare-value 1
 # Inspect a dataset first
 regen ingest my_data.csv
 
+# Screen: predict whether REGEN or SMOTE will win on your data
+regen screen my_data.csv --label is_fraud --rare-mode label --rare-value 1
+
 # Run tests
 regen test
 ```
 
-## Demo
-
-```bash
-pip install streamlit
-streamlit run demo/app.py
-```
-
 ## Benchmark
 
-On the Kaggle Credit Card Fraud Detection dataset (284,807 rows, 492 fraud):
+On 10 datasets across diverse feature types (5 seeds each, multi-pass active-learning):
 
-| Metric | Value |
-|--------|-------|
-| Best tail lift | **+2.03%** recall |
-| Baseline recall | 83.8% |
-| Amplified recall | 85.8% |
-| Passes accepted | 5/5 |
-| Campaign time | ~21s |
+**REGEN wins 6/10 datasets.** Where it wins, the lift is 1.5–4.5× SMOTE:
+
+| Dataset | REGEN lift | SMOTE lift | Ratio |
+|---------|-----------|-----------|-------|
+| Satellite | +33.0% | +10.4% | **3.17×** |
+| Hypothyroid | +10.9% | +6.1% | **1.79×** |
+| Churn | +9.8% | +6.5% | **1.51×** |
+| Ozone | +0.7% | +0.3% | **2.27×** |
+| Amazon | +0.1% | +0.0% | **4.50×** |
+| Solar Flare | ~0% | -8.0% | REGEN doesn't hurt |
+
+**SMOTE wins on PCA-compressed data** (Credit Card Fraud, CreditCard Subset) and on 2 mixed-type datasets (Wilt, Bank Marketing). SMOTE's nearest-neighbor interpolation is competitive when features are redundant or homogeneous.
+
+Full results: [`benchmark/RESULTS_BREADTH.md`](benchmark/RESULTS_BREADTH.md)
 
 ## How It Works
 
 ```
 Scout (R-EPIG) → Prior → Amplifier (ResidualGP) → Auditor → Examiner
      ↑                                                     |
-     └───────────── lift signal ────────────────────────────┘
+     └───────────── lift signal + explored memory ─────────┘
 ```
 
-1. **Scout** picks the most informative tail region
+1. **Scout** picks the most informative tail region (cross-pass memory avoids re-exploration)
 2. **Prior** generates a base batch anchored on real rare rows
-3. **Amplifier** corrects the tail via ResidualGP (faster on residuals than raw outcomes)
-4. **Auditor** gates the batch against real data statistics
+3. **Amplifier** corrects the tail via ResidualGP with ARD kernel
+4. **Auditor** gates the batch against real data statistics (hard reject on failure)
 5. **Examiner** measures the lift and feeds back to Scout
 
 ## Documentation
