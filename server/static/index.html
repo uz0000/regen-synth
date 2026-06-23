@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>REGEN — Rare-Event Amplification</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --panel-2: #1e222b;
+    --border: #2a2f3a;
+    --text: #e6e8ee;
+    --muted: #9aa3b2;
+    --accent: #6ea8fe;
+    --accent-2: #7ee2a8;
+    --danger: #ff6b6b;
+    --warn: #f0c674;
+    --radius: 12px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+  }
+  header {
+    padding: 28px 32px 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  header h1 { margin: 0; font-size: 1.6rem; letter-spacing: -0.02em; }
+  header h1 .dot { color: var(--accent); }
+  header p { margin: 6px 0 0; color: var(--muted); font-size: 0.95rem; }
+  main { max-width: 980px; margin: 0 auto; padding: 24px 20px 80px; }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px 22px;
+    margin-bottom: 18px;
+  }
+  .card h2 {
+    margin: 0 0 4px;
+    font-size: 1.05rem;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .step {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 22px; height: 22px; border-radius: 50%;
+    background: var(--accent); color: #0f1115; font-size: 0.78rem; font-weight: 700;
+  }
+  .hint { color: var(--muted); font-size: 0.85rem; margin: 0 0 14px; }
+  .row { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-end; }
+  .field { display: flex; flex-direction: column; gap: 5px; }
+  label { font-size: 0.8rem; color: var(--muted); }
+  input, select {
+    background: var(--panel-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 8px;
+    padding: 9px 11px; font-size: 0.92rem; width: 150px;
+  }
+  input:focus, select:focus { outline: none; border-color: var(--accent); }
+  input[type="file"] { width: auto; padding: 7px; }
+  button {
+    background: var(--accent); color: #0f1115; border: none; border-radius: 8px;
+    padding: 9px 18px; font-size: 0.92rem; font-weight: 600; cursor: pointer;
+    transition: opacity .15s, transform .05s;
+  }
+  button:hover { opacity: .9; }
+  button:active { transform: translateY(1px); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button.secondary { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); }
+  button.ghost { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+  .stats { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 6px; }
+  .stat {
+    background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px;
+    padding: 12px 16px; min-width: 110px;
+  }
+  .stat .k { font-size: 0.75rem; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  .stat .v { font-size: 1.3rem; font-weight: 700; margin-top: 2px; }
+  .stat .v.good { color: var(--accent-2); }
+  .stat .v.warn { color: var(--warn); }
+  table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 0.9rem; }
+  th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; font-size: 0.78rem; text-transform: uppercase; letter-spacing: .03em; }
+  td.num { font-variant-numeric: tabular-nums; }
+  .pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 0.74rem; font-weight: 600; }
+  .pill.ok { background: rgba(126,226,168,.16); color: var(--accent-2); }
+  .pill.no { background: rgba(255,107,107,.16); color: var(--danger); }
+  .arrow { color: var(--muted); margin: 0 4px; }
+  .lift-up { color: var(--accent-2); font-weight: 700; }
+  .lift-down { color: var(--danger); font-weight: 700; }
+  .verdict {
+    display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
+    background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; margin-top: 8px;
+  }
+  .verdict .big { font-size: 1.5rem; font-weight: 800; }
+  .chart-wrap { position: relative; height: 300px; margin-top: 12px; }
+  .preview-scroll { overflow-x: auto; margin-top: 10px; }
+  .error {
+    background: rgba(255,107,107,.1); border: 1px solid rgba(255,107,107,.4);
+    color: #ffd5d5; padding: 11px 14px; border-radius: 8px; margin-top: 12px; font-size: 0.88rem;
+    display: none;
+  }
+  .error.show { display: block; }
+  .spinner {
+    display: none; width: 16px; height: 16px; border: 2px solid rgba(255,255,255,.3);
+    border-top-color: #0f1115; border-radius: 50%; animation: spin .7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .loading .spinner { display: inline-block; }
+  .loading .label { opacity: .6; }
+  .muted { color: var(--muted); }
+  .hidden { display: none !important; }
+  footer { color: var(--muted); font-size: 0.78rem; text-align: center; padding: 10px; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>REGEN<span class="dot">.</span> synthetic</h1>
+  <p>Statistically grounded rare-event amplification. Upload data, screen REGEN vs SMOTE, run a campaign, and download amplified synthetic rows.</p>
+</header>
+
+<main>
+  <!-- STEP 1: DATA -->
+  <div class="card">
+    <h2><span class="step">1</span> Data</h2>
+    <p class="hint">Bring your own CSV, or use the built-in fraud demo dataset.</p>
+    <div class="row">
+      <div class="field">
+        <label>Upload CSV</label>
+        <input type="file" id="file" accept=".csv,.json,.parquet" />
+      </div>
+      <button class="secondary" id="demoBtn">Use demo dataset</button>
+    </div>
+    <div id="profile" class="hidden">
+      <div class="stats" id="profileStats"></div>
+      <div class="preview-scroll">
+        <table id="colTable"><thead><tr><th>column</th><th>type</th><th>details</th></tr></thead><tbody></tbody></table>
+      </div>
+    </div>
+  </div>
+
+  <!-- STEP 2: CONFIGURE -->
+  <div class="card">
+    <h2><span class="step">2</span> Configure</h2>
+    <p class="hint">How rare events are defined and how hard the loop runs.</p>
+    <div class="row">
+      <div class="field">
+        <label>Label column</label>
+        <input id="labelCol" value="is_fraud" />
+      </div>
+      <div class="field">
+        <label>Rare mode</label>
+        <select id="rareMode">
+          <option value="label">label</option>
+          <option value="percentile">percentile</option>
+          <option value="imbalance_ratio">imbalance ratio</option>
+        </select>
+      </div>
+      <div class="field" id="labelValField">
+        <label>Rare label value</label>
+        <input id="labelValue" value="1" />
+      </div>
+      <div class="field hidden" id="percField">
+        <label>Percentile (≤)</label>
+        <input id="percentile" value="0.05" />
+      </div>
+      <div class="field hidden" id="ratioField">
+        <label>Imbalance ratio (≤)</label>
+        <input id="imbalanceRatio" value="0.01" />
+      </div>
+    </div>
+    <div class="row" style="margin-top:14px">
+      <div class="field"><label>Seed</label><input id="seed" value="42" /></div>
+      <div class="field"><label>Passes</label><input id="maxPasses" value="3" /></div>
+      <div class="field"><label>Coverage gate</label><input id="coverage" value="0.50" /></div>
+      <div class="field"><label>Prior noise</label><input id="noise" value="0.10" /></div>
+    </div>
+  </div>
+
+  <!-- STEP 3: SCREEN -->
+  <div class="card">
+    <h2><span class="step">3</span> Screen — REGEN vs SMOTE</h2>
+    <p class="hint">Quick 1-pass head-to-head predicts which method wins on this data.</p>
+    <button id="screenBtn">Run screen</button>
+    <div id="screenResult" class="hidden"></div>
+  </div>
+
+  <!-- STEP 4: CAMPAIGN -->
+  <div class="card">
+    <h2><span class="step">4</span> Amplification campaign</h2>
+    <p class="hint">Multi-pass loop: Scout → Prior → Amplifier → Auditor → Examiner.</p>
+    <div class="row">
+      <button id="runBtn">Run campaign</button>
+      <button class="ghost hidden" id="downloadBtn">Download synthetic (CSV)</button>
+    </div>
+    <div id="campaignResult" class="hidden">
+      <div class="stats" id="campStats" style="margin-top:16px"></div>
+      <div class="chart-wrap"><canvas id="recallChart"></canvas></div>
+      <table id="passTable" style="margin-top:14px">
+        <thead><tr><th>pass</th><th>status</th><th>baseline recall</th><th>amplified recall</th><th>tail lift</th><th>precision (base→amp)</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <h2 style="margin-top:20px;font-size:1rem">Synthetic preview (first 10 rows)</h2>
+      <div class="preview-scroll">
+        <table id="previewTable"><thead></thead><tbody></tbody></table>
+      </div>
+    </div>
+  </div>
+
+  <div class="error" id="error"></div>
+  <footer>Deterministic engine produces every value. Same seed → same output.</footer>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let state = { profile: null, screen: null, runId: null, chart: null };
+
+// ── helpers ──────────────────────────────────────────────────────────────
+function showError(msg) {
+  const e = $("error");
+  e.textContent = msg || "Something went wrong.";
+  e.classList.add("show");
+}
+function clearError() { $("error").classList.remove("show"); }
+
+function setLoading(btn, on, label) {
+  const orig = btn.dataset.label || (btn.textContent.trim());
+  btn.dataset.label = orig;
+  btn.disabled = on;
+  if (on) {
+    btn.classList.add("loading");
+    btn.innerHTML = '<span class="spinner"></span><span class="label">' + (label || "Working…") + '</span>';
+  } else {
+    btn.classList.remove("loading");
+    btn.textContent = orig;
+  }
+}
+
+async function api(method, url, body, isForm) {
+  const opts = { method };
+  if (body !== undefined) {
+    opts.headers = isForm ? {} : { "Content-Type": "application/json" };
+    opts.body = isForm ? body : JSON.stringify(body);
+  }
+  const res = await fetch(url, opts);
+  if (!res.ok) {
+    let detail = res.status + " " + res.statusText;
+    try { const j = await res.json(); if (j.detail) detail = j.detail; } catch (_) {}
+    throw new Error(detail);
+  }
+  const ct = res.headers.get("content-type") || "";
+  return ct.includes("application/json") ? res.json() : res;
+}
+
+function rareDef() {
+  const mode = $("rareMode").value;
+  const d = { mode };
+  if (mode === "label") d.label_value = Number($("labelValue").value);
+  if (mode === "percentile") d.percentile = Number($("percentile").value);
+  if (mode === "imbalance_ratio") d.imbalance_ratio = Number($("imbalanceRatio").value);
+  return d;
+}
+
+// ── step 1: data ─────────────────────────────────────────────────────────
+function renderProfile(p) {
+  state.profile = p;
+  $("labelCol").value = p.label_col || $("labelCol").value;
+  const stats = [
+    ["rows", p.n_rows], ["normal", p.n_normal], ["rare", p.n_rare],
+    ["rare %", (p.rare_ratio * 100).toFixed(2) + "%"], ["features", p.n_features],
+  ];
+  $("profileStats").innerHTML = stats.map(([k, v]) =>
+    `<div class="stat"><div class="k">${k}</div><div class="v">${v}</div></div>`).join("");
+  const tb = $("colTable").querySelector("tbody");
+  tb.innerHTML = (p.columns || []).map(c => {
+    let det = "";
+    if (c.cardinality != null) det = `cardinality ${c.cardinality}`;
+    if (c.min != null) det = `${Number(c.min).toFixed(2)} … ${Number(c.max).toFixed(2)}`;
+    if (c.nullable) det += (det ? " · " : "") + "nullable";
+    return `<tr><td>${c.name}</td><td>${c.type}</td><td class="muted">${det}</td></tr>`;
+  }).join("");
+  $("profile").classList.remove("hidden");
+}
+
+$("demoBtn").addEventListener("click", async () => {
+  clearError(); setLoading($("demoBtn"), true, "Loading…");
+  try {
+    const p = await api("GET", "/api/demo?label_col=" + encodeURIComponent($("labelCol").value));
+    renderProfile(p);
+  } catch (e) { showError("Demo failed: " + e.message); }
+  setLoading($("demoBtn"), false);
+});
+
+$("file").addEventListener("change", async (ev) => {
+  const f = ev.target.files[0]; if (!f) return;
+  clearError();
+  const fd = new FormData();
+  fd.append("file", f);
+  fd.append("label_col", $("labelCol").value);
+  fd.append("rare_mode", $("rareMode").value);
+  if ($("rareMode").value === "label") fd.append("label_value", $("labelValue").value);
+  try {
+    const p = await api("POST", "/api/ingest", fd, true);
+    renderProfile(p);
+  } catch (e) { showError("Upload failed: " + e.message); }
+});
+
+// ── rare-mode field toggling ──────────────────────────────────────────────
+$("rareMode").addEventListener("change", () => {
+  const m = $("rareMode").value;
+  $("labelValField").classList.toggle("hidden", m !== "label");
+  $("percField").classList.toggle("hidden", m !== "percentile");
+  $("ratioField").classList.toggle("hidden", m !== "imbalance_ratio");
+});
+
+// ── step 3: screen ───────────────────────────────────────────────────────
+$("screenBtn").addEventListener("click", async () => {
+  clearError(); setLoading($("screenBtn"), true, "Screening…");
+  try {
+    const s = await api("POST", "/api/screen", {
+      label_col: $("labelCol").value, rare_def: rareDef(),
+      seed: Number($("seed").value), quick_campaign: true,
+    });
+    state.screen = s;
+    const regen = s.recommended_method === "REGEN";
+    $("screenResult").innerHTML = `
+      <div class="verdict">
+        <div><div class="muted" style="font-size:.8rem">RECOMMENDED</div>
+          <div class="big" style="color:${regen ? "var(--accent)" : "var(--warn)"}">${s.recommended_method}</div></div>
+        <div><div class="muted" style="font-size:.8rem">CONFIDENCE</div><div class="big">${(s.confidence * 100).toFixed(0)}%</div></div>
+        <div><div class="muted" style="font-size:.8rem">FISHER CV</div><div class="big">${s.heterogeneity_score.toFixed(2)}</div></div>
+        <div style="flex:1;min-width:220px"><div class="muted" style="font-size:.8rem">PREDICTED LIFT</div><div>${s.predicted_lift_band}</div></div>
+      </div>
+      <p class="hint" style="margin-top:10px">${s.rationale}</p>`;
+    $("screenResult").classList.remove("hidden");
+  } catch (e) { showError("Screen failed: " + e.message); }
+  setLoading($("screenBtn"), false);
+});
+
+// ── step 4: campaign ─────────────────────────────────────────────────────
+function liftClass(v) { return v >= 0 ? "lift-up" : "lift-down"; }
+function fmt(v, d = 3) { return (v == null || isNaN(v)) ? "—" : Number(v).toFixed(d); }
+
+$("runBtn").addEventListener("click", async () => {
+  clearError(); setLoading($("runBtn"), true, "Running…");
+  $("campaignResult").classList.add("hidden");
+  try {
+    const r = await api("POST", "/api/campaign", {
+      label_col: $("labelCol").value, rare_def: rareDef(),
+      seed: Number($("seed").value), n_rows: 200,
+      max_passes: Number($("maxPasses").value),
+      coverage_threshold: Number($("coverage").value),
+      noise_scale: Number($("noise").value), gp_noise: 0.1, max_features: 0,
+    });
+    state.runId = r.run_id;
+    renderCampaign(r);
+    loadPreview(r.run_id);
+    $("downloadBtn").classList.remove("hidden");
+    $("downloadBtn").onclick = () => { window.location.href = `/api/campaign/${r.run_id}/download?format=csv`; };
+  } catch (e) { showError("Campaign failed: " + e.message); }
+  setLoading($("runBtn"), false);
+});
+
+function renderCampaign(r) {
+  const acc = r.n_accepted, tot = r.n_accepted + r.n_rejected;
+  const lift = r.best_lift;
+  $("campStats").innerHTML = `
+    <div class="stat"><div class="k">best tail lift</div><div class="v ${lift >= 0 ? "good" : "warn"}">${(lift * 100).toFixed(1)}%</div></div>
+    <div class="stat"><div class="k">accepted</div><div class="v">${acc}/${tot}</div></div>
+    <div class="stat"><div class="k">rows / pass</div><div class="v">${r.n_rows_per_pass}</div></div>
+    <div class="stat"><div class="k">features</div><div class="v">${r.n_features}</div></div>`;
+
+  const tb = $("passTable").querySelector("tbody");
+  tb.innerHTML = (r.passes || []).map(p => {
+    if (p.status !== "accepted") {
+      return `<tr><td>${p.pass_num}</td><td><span class="pill no">rejected</span></td>
+        <td class="muted" colspan="4">coverage ${fmt(p.coverage)}</td></tr>`;
+    }
+    const lc = liftClass(p.tail_lift);
+    return `<tr>
+      <td>${p.pass_num}</td>
+      <td><span class="pill ok">accepted</span></td>
+      <td class="num">${fmt(p.baseline_recall)}</td>
+      <td class="num">${fmt(p.amplified_recall)}</td>
+      <td class="num ${lc}">${p.tail_lift >= 0 ? "+" : ""}${(p.tail_lift * 100).toFixed(1)}%</td>
+      <td class="num">${fmt(p.baseline_precision)} <span class="arrow">→</span> ${fmt(p.amplified_precision)}</td>
+    </tr>`;
+  }).join("");
+
+  drawChart(r.passes || []);
+  $("campaignResult").classList.remove("hidden");
+}
+
+function drawChart(passes) {
+  const accepted = passes.filter(p => p.status === "accepted");
+  const labels = accepted.map(p => "pass " + p.pass_num);
+  const base = accepted.map(p => p.baseline_recall);
+  const amp = accepted.map(p => p.amplified_recall);
+  if (state.chart) state.chart.destroy();
+  state.chart = new Chart($("recallChart"), {
+    type: "bar",
+    data: {
+      labels,
+      datasets: [
+        { label: "baseline recall", data: base, backgroundColor: "#4a5568", borderRadius: 4 },
+        { label: "amplified recall", data: amp, backgroundColor: "#6ea8fe", borderRadius: 4 },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        title: { display: true, text: "Rare-event recall: baseline vs amplified", color: "#9aa3b2" },
+        legend: { labels: { color: "#e6e8ee" } },
+      },
+      scales: {
+        x: { ticks: { color: "#9aa3b2" }, grid: { color: "#2a2f3a" } },
+        y: { min: 0, max: 1, ticks: { color: "#9aa3b2" }, grid: { color: "#2a2f3a" } },
+      },
+    },
+  });
+}
+
+async function loadPreview(runId) {
+  try {
+    const p = await api("GET", `/api/campaign/${runId}/preview?n=10`);
+    const cols = p.columns || [];
+    $("previewTable").querySelector("thead").innerHTML =
+      "<tr>" + cols.map(c => `<th>${c}</th>`).join("") + "</tr>";
+    $("previewTable").querySelector("tbody").innerHTML =
+      (p.data || []).map(row =>
+        "<tr>" + cols.map(c => `<td>${row[c] == null ? "" : row[c]}</td>`).join("") + "</tr>"
+      ).join("");
+  } catch (e) { /* preview is best-effort */ }
+}
+</script>
+</body>
+</html>

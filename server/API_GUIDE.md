@@ -17,7 +17,18 @@ uvicorn server.app:app --port 8000 --reload
 The server runs at `http://localhost:8000`. Interactive docs (Swagger UI)
 are available at `http://localhost:8000/docs`.
 
+**Web UI:** open `http://localhost:8000/` in a browser for the built-in
+single-page frontend (upload or demo data → screen → run campaign → view
+per-pass recall chart + download synthetic rows). No build step; it's one
+self-contained `server/static/index.html`.
+
 ## Endpoints
+
+### 0. Web UI
+```
+GET /                    → the single-page frontend (index.html)
+GET /api/demo            → generate + ingest the built-in fraud demo dataset
+```
 
 ### 1. Health Check
 ```

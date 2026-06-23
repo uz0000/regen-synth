@@ -26,7 +26,7 @@ from typing import Optional
 import pandas as pd
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.responses import StreamingResponse, JSONResponse, FileResponse
 from pydantic import BaseModel
 
 warnings.filterwarnings("ignore")
@@ -114,7 +114,44 @@ def _save_upload(file: UploadFile) -> str:
     return str(path)
 
 
+def _profile(result, filepath: str) -> dict:
+    """Build the dataset-profile JSON returned by /api/ingest and /api/demo."""
+    columns = []
+    for name, meta in result.field_dict.items():
+        col_info = {
+            "name": name,
+            "type": meta.field_type.value,
+            "nullable": meta.nullable,
+        }
+        if meta.field_type.value == "categorical" and meta.cardinality is not None:
+            col_info["cardinality"] = meta.cardinality
+        if meta.field_type.value == "continuous":
+            if meta.min_val is not None:
+                col_info["min"] = meta.min_val
+            if meta.max_val is not None:
+                col_info["max"] = meta.max_val
+        columns.append(col_info)
+
+    n_total = len(result.normal_df) + len(result.rare_df)
+    return {
+        "filepath": filepath,
+        "n_rows": n_total,
+        "n_normal": len(result.normal_df),
+        "n_rare": len(result.rare_df),
+        "rare_ratio": round(len(result.rare_df) / n_total, 4) if n_total else 0.0,
+        "n_features": len(result.field_dict) - (1 if result.label_col else 0),
+        "label_col": result.label_col,
+        "columns": columns,
+    }
+
+
 # ── Endpoints ─────────────────────────────────────────────────────────────────
+
+@app.get("/")
+async def root():
+    """Serve the single-page web UI."""
+    return FileResponse(str(Path(__file__).parent / "static" / "index.html"))
+
 
 @app.get("/api/health", response_model=HealthResponse)
 async def health():
@@ -149,33 +186,45 @@ async def ingest_data(
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Ingest failed: {str(e)}")
 
-    # Build column profile
-    columns = []
-    for name, meta in result.field_dict.items():
-        col_info = {
-            "name": name,
-            "type": meta.field_type.value,
-            "nullable": meta.nullable,
-        }
-        if meta.field_type.value == "categorical" and meta.cardinality is not None:
-            col_info["cardinality"] = meta.cardinality
-        if meta.field_type.value == "continuous":
-            if meta.min_val is not None:
-                col_info["min"] = meta.min_val
-            if meta.max_val is not None:
-                col_info["max"] = meta.max_val
-        columns.append(col_info)
+    return _profile(result, filepath)
 
-    return {
-        "filepath": filepath,
-        "n_rows": len(result.normal_df) + len(result.rare_df),
-        "n_normal": len(result.normal_df),
-        "n_rare": len(result.rare_df),
-        "rare_ratio": round(len(result.rare_df) / (len(result.normal_df) + len(result.rare_df)), 4),
-        "n_features": len(result.field_dict) - (1 if result.label_col else 0),
-        "label_col": result.label_col,
-        "columns": columns,
-    }
+
+@app.get("/api/demo")
+async def demo_dataset(
+    label_col: str = "is_fraud",
+    rare_mode: str = "label",
+    label_value: Optional[int] = 1,
+    percentile: Optional[float] = None,
+    imbalance_ratio: Optional[float] = None,
+):
+    """Generate the built-in sample fraud dataset, ingest it, return a profile.
+
+    Lets the UI work with zero setup — no manual upload required.
+    """
+    from regen.api import ingest
+    from contracts.types import RareEventDef, RareMode
+    from examples.make_sample_data import make_dataset
+
+    file_id = uuid.uuid4().hex[:12]
+    filepath = str(DATA_DIR / f"upload_{file_id}.csv")
+    df = make_dataset(n=2000, fraud_rate=0.03)
+    df.to_csv(filepath, index=False)
+
+    mode_map = {"label": RareMode.LABEL, "percentile": RareMode.PERCENTILE,
+                "imbalance_ratio": RareMode.IMBALANCE}
+    rare_def = RareEventDef(
+        mode=mode_map.get(rare_mode, RareMode.LABEL),
+        label_value=label_value,
+        percentile=percentile,
+        imbalance_ratio=imbalance_ratio,
+    )
+
+    try:
+        result = ingest(filepath, label_col, rare_def)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Ingest failed: {str(e)}")
+
+    return _profile(result, filepath)
 
 
 @app.post("/api/screen")
