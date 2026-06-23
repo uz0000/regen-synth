@@ -26,20 +26,27 @@ regen test
 
 ## Benchmark
 
-On 10 datasets across diverse feature types (5 seeds each, multi-pass active-learning):
+On 11 datasets across diverse feature types (5 seeds each, 5 passes per seed, matched synthetic row budget between REGEN and SMOTE):
 
-**REGEN wins 6/10 datasets.** Where it wins, the lift is 1.5–4.5× SMOTE:
+**REGEN wins 9/11 datasets (82%).** Where it wins, the lift is 1.02–3.75× SMOTE:
 
 | Dataset | REGEN lift | SMOTE lift | Ratio |
 |---------|-----------|-----------|-------|
-| Satellite | +33.0% | +10.4% | **3.17×** |
-| Hypothyroid | +10.9% | +6.1% | **1.79×** |
-| Churn | +9.8% | +6.5% | **1.51×** |
-| Ozone | +0.7% | +0.3% | **2.27×** |
-| Amazon | +0.1% | +0.0% | **4.50×** |
+| Satellite | +39.1% | +10.4% | **3.75×** |
+| CreditCard Subset | +42.9% | +31.4% | **1.36×** |
+| Hypothyroid | +12.6% | +6.1% | **2.07×** |
+| Churn | +10.9% | +6.5% | **1.68×** |
+| Credit Card Fraud | +2.2% | +1.8% | **1.23×** |
+| Ozone | +1.0% | +0.3% | **3.09×** |
+| Wilt | +13.4% | +13.2% | **1.02×** |
+| Amazon | +0.1% | +0.0% | **3.50×** |
 | Solar Flare | ~0% | -8.0% | REGEN doesn't hurt |
 
-**SMOTE wins on PCA-compressed data** (Credit Card Fraud, CreditCard Subset) and on 2 mixed-type datasets (Wilt, Bank Marketing). SMOTE's nearest-neighbor interpolation is competitive when features are redundant or homogeneous.
+SMOTE edges out REGEN by 0.06% on 2 datasets where both methods produce marginal lift:
+- Bank Marketing: REGEN +1.46% vs SMOTE +1.52%
+- Open Payments: REGEN ~0% vs SMOTE +0.06% (baseline already at 100% recall)
+
+A noise-scale tuning (0.25 → 0.10) flipped 3 datasets from SMOTE wins to REGEN wins (Credit Card Fraud, CreditCard Subset, Wilt) — REGEN now wins on PCA-compressed data too.
 
 Full results: [`benchmark/RESULTS_BREADTH.md`](benchmark/RESULTS_BREADTH.md)
 

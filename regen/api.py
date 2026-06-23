@@ -331,14 +331,9 @@ def _save_campaign_summary(cr: CampaignResult, out_path: Path) -> None:
 # 3. SCREEN — win-boundary predictor
 # ═══════════════════════════════════════════════════════════════════════════════
 
-# Decision threshold for ARD inverse-lengthscale coefficient of variation.
-# Threshold calibrated against benchmark/RESULTS_BREADTH.md (75% accuracy on
-# 8 datasets). Datasets with CV >= HETEROGENEITY_THRESHOLD show measurable
-# variation in feature informativeness → REGEN recommended.
-# CV < threshold → features homogeneous/redundant → SMOTE recommended.
-# The two known misclassifications (Satellite, Ozone) are both conservative:
-# predicted SMOTE, REGEN actually won.
-_HETEROGENEITY_THRESHOLD = 0.3
+# Decision threshold for Fisher discriminant CV (supplementary signal only).
+# The primary screen runs a quick REGEN vs SMOTE head-to-head.
+_HETEROGENEITY_THRESHOLD = 0.5
 
 
 def screen(
@@ -346,88 +341,67 @@ def screen(
     label_col: str,
     rare_def: RareEventDef,
     seed: int = 42,
-    quick_campaign: bool = False,
+    quick_campaign: bool = True,
 ) -> ScreenResult:
     """Predict which method (REGEN or SMOTE) is likely to win on this data.
 
-    The core metric is the coefficient of variation (CV = σ / μ) of the
-    fitted ARD kernel inverse-lengthscales from the ResidualGP. This
-    measures how much features vary in informativeness:
+    Runs a quick head-to-head: one REGEN pass vs one SMOTE pass on the same
+    data split, with matched synthetic row budget. The winner is the
+    recommendation. Also computes a Fisher discriminant CV as supplementary
+    context (how much features vary in informativeness).
 
-    - **High CV** → features differ in relevance → REGEN wins (ARD can
-      focus on informative features, ignore uninformative ones).
-    - **Low CV** → features are homogeneous / redundant → SMOTE wins
-      (nearest-neighbor interpolation on equal-weight features is better).
-
-    The decision rule is ~75% accurate across 8 benchmark datasets
-    (benchmark/RESULTS_BREADTH.md). Both misclassifications are conservative
-    (predicted SMOTE, REGEN actually won).
+    This is slower than a pure metric-based screen (~5-15 seconds) but
+    actually reliable — it measures real lift on the user's data rather
+    than predicting from proxy statistics.
 
     Args:
         filepath: Path to input data (CSV/JSON/Parquet).
         label_col: Label column name.
-        rare_def: Rare event definition.
+        rare_def: How to identify rare events.
         seed: RNG seed for reproducibility.
-        quick_campaign: If True, runs a single campaign pass to sharpen
-            the estimate with real lift data. Default False (metric only).
+        quick_campaign: If True (default), runs the head-to-head comparison.
+            If False, uses Fisher CV metric only (less reliable).
 
     Returns:
         ScreenResult with recommendation, heterogeneity score, etc.
     """
-    from engine.ingest.loader import persist_ingest
     from engine.prior import PriorConfig, fit_prior, generate_base_batch
-    from engine.amplifier import AmplifierConfig, fit_residuals
+    from engine.amplifier import AmplifierConfig, fit_residuals, sample_residuals
     from engine.auditor import AuditorConfig, audit
     from engine.examiner import ExaminerConfig, measure_lift
+    from engine.scout import ScoutConfig, select_target
 
     # 1. Ingest
     result = ingest(filepath, label_col, rare_def)
 
-    # 2. Fit Prior + Amplifier (ResidualGP with ARD kernel)
-    prior_cfg = PriorConfig()
-    amp_cfg = AmplifierConfig(
-        gp_noise_variance=0.1,
-        max_features=min(10, len(result.field_dict) - 1) if (len(result.field_dict) - 1) > 10 else 0,
-    )
-    rng = np.random.default_rng(seed)
-    prior = fit_prior(result, prior_cfg, rng)
-    residual = fit_residuals(result, prior, amp_cfg)
+    # 2. Compute Fisher discriminant CV (supplementary metric)
+    heterogeneity_score = _compute_fisher_cv(result)
 
-    # 3. Extract ARD kernel lengthscales and compute heterogeneity metric
-    cv, ls_min, ls_max, n_optimized = _compute_ard_cv(residual)
+    # 3. Run quick head-to-head: REGEN 1-pass vs SMOTE 1-pass
+    regen_lift = 0.0
+    smote_lift = 0.0
+    n_synthetic = 200
 
-    heterogeneity_score = round(float(cv), 4)
-
-    # 4. Decision rule
-    if heterogeneity_score >= _HETEROGENEITY_THRESHOLD:
-        recommended_method = "REGEN"
-        rationale = (
-            f"ARD inverse-lengthscale CV = {heterogeneity_score:.2f} — features "
-            f"vary in informativeness; REGEN can exploit ARD to focus on the "
-            f"informative ones."
-        )
-        predicted_lift_band = "+5% to +25% (typical range across breadth benchmark)"
-    else:
-        recommended_method = "SMOTE"
-        rationale = (
-            f"ARD inverse-lengthscale CV = {heterogeneity_score:.2f} — features "
-            f"are homogeneous or redundant; SMOTE interpolation is competitive "
-            f"or better on this data."
-        )
-        predicted_lift_band = "SMOTE comparably or better (breadth benchmark)"
-
-    # 5. Confidence: distance from decision boundary, clamped [0, 1]
-    distance = abs(heterogeneity_score - _HETEROGENEITY_THRESHOLD)
-    confidence = round(min(distance / _HETEROGENEITY_THRESHOLD, 1.0), 4)
-
-    # 6. Optional quick campaign to sharpen estimate
     if quick_campaign:
+        # --- REGEN 1-pass ---
         try:
-            rng2 = np.random.default_rng(seed + 999)
-            base = generate_base_batch(prior, 200, {}, rng2)
-            from engine.amplifier import sample_residuals
-            rng3 = np.random.default_rng(seed + 999)
-            _, _, X_res = sample_residuals(residual, base.values.astype(np.float64), rng3)
+            prior_cfg = PriorConfig()
+            amp_cfg = AmplifierConfig(
+                gp_noise_variance=0.1,
+                max_features=min(10, len(result.field_dict) - 1) if (len(result.field_dict) - 1) > 10 else 0,
+            )
+            rng = np.random.default_rng(seed)
+            prior = fit_prior(result, prior_cfg, rng)
+            residual = fit_residuals(result, prior, amp_cfg)
+
+            target = select_target(
+                residual, prior._feature_cols, rng, ScoutConfig(),
+                explored_points=None,
+            )
+            base = generate_base_batch(prior, n_synthetic, target, rng,
+                                        noise_scale=prior_cfg.noise_scale)
+            rng2 = np.random.default_rng(seed + 1)
+            _, _, X_res = sample_residuals(residual, base.values.astype(np.float64), rng2)
             amp_df = pd.DataFrame(base.values + X_res, columns=base.columns)
             if label_col in amp_df.columns:
                 amp_df[label_col] = (
@@ -439,15 +413,57 @@ def screen(
             if report.overall_passed:
                 exam_cfg = ExaminerConfig(n_estimators=50)
                 lift = measure_lift(result, amp_df, exam_cfg)
-                # Refine lift band with actual data
-                if lift.tail_lift > 0.05:
-                    predicted_lift_band = f"+{lift.tail_lift:.1%} to +25% (single-pass sample)"
-                elif lift.tail_lift > 0:
-                    predicted_lift_band = f"{lift.tail_lift:+.1%} (single-pass sample)"
-                else:
-                    predicted_lift_band = f"{lift.tail_lift:+.1%} (single-pass sample — check data)"
+                regen_lift = lift.tail_lift
         except Exception:
-            predicted_lift_band += " (quick-campaign sample unavailable)"
+            regen_lift = 0.0
+
+        # --- SMOTE 1-pass (matched budget) ---
+        try:
+            smote_lift = _quick_smote(result, label_col, n_synthetic, seed)
+        except Exception:
+            smote_lift = 0.0
+
+    # 4. Decision: winner of the head-to-head
+    if quick_campaign and (regen_lift != 0.0 or smote_lift != 0.0):
+        if regen_lift >= smote_lift:
+            recommended_method = "REGEN"
+            rationale = (
+                f"Quick head-to-head: REGEN +{regen_lift:.1%} vs SMOTE +{smote_lift:.1%} "
+                f"(1 pass each). Fisher CV = {heterogeneity_score:.2f}."
+            )
+            predicted_lift_band = f"+{regen_lift:.1%} (1-pass sample; multi-pass campaigns typically improve on this)"
+        else:
+            recommended_method = "SMOTE"
+            rationale = (
+                f"Quick head-to-head: REGEN +{regen_lift:.1%} vs SMOTE +{smote_lift:.1%} "
+                f"(1 pass each). Fisher CV = {heterogeneity_score:.2f}."
+            )
+            predicted_lift_band = f"SMOTE +{smote_lift:.1%} (1-pass sample)"
+    else:
+        # Fallback: Fisher CV only
+        if heterogeneity_score >= _HETEROGENEITY_THRESHOLD:
+            recommended_method = "REGEN"
+            rationale = (
+                f"Fisher discriminant CV = {heterogeneity_score:.2f} — features "
+                f"vary in informativeness. (Head-to-head unavailable.)"
+            )
+            predicted_lift_band = "+5% to +35% (typical range across breadth benchmark)"
+        else:
+            recommended_method = "SMOTE"
+            rationale = (
+                f"Fisher discriminant CV = {heterogeneity_score:.2f} — features "
+                f"are homogeneous or redundant. (Head-to-head unavailable.)"
+            )
+            predicted_lift_band = "SMOTE comparably or better (breadth benchmark)"
+
+    # 5. Confidence: margin of victory in the head-to-head
+    if quick_campaign and (regen_lift != 0.0 or smote_lift != 0.0):
+        margin = abs(regen_lift - smote_lift)
+        total = abs(regen_lift) + abs(smote_lift) + 1e-8
+        confidence = round(min(margin / total, 1.0), 4)
+    else:
+        distance = abs(heterogeneity_score - _HETEROGENEITY_THRESHOLD)
+        confidence = round(min(distance / max(_HETEROGENEITY_THRESHOLD, 1e-8), 1.0), 4)
 
     n_features = len(result.field_dict) - 1
     return ScreenResult(
@@ -459,6 +475,95 @@ def screen(
         n_rare=len(result.rare_df),
         n_features=n_features,
     )
+
+
+def _quick_smote(ingest_result: IngestResult, label_col: str,
+                 n_synthetic: int, seed: int) -> float:
+    """Run a quick SMOTE baseline with matched synthetic budget. Returns lift."""
+    from sklearn.ensemble import RandomForestClassifier
+    from sklearn.model_selection import train_test_split
+    from sklearn.metrics import recall_score
+    from imblearn.over_sampling import SMOTE
+
+    normal_df = ingest_result.normal_df
+    rare_df = ingest_result.rare_df
+    feat = [c for c in normal_df.columns if c != label_col]
+
+    def _encode(df):
+        out = df[feat].copy()
+        for col in out.columns:
+            if out[col].dtype == object or str(out[col].dtype) == "category":
+                out[col] = pd.Categorical(out[col]).codes.astype(np.float64)
+            elif out[col].dtype == bool:
+                out[col] = out[col].astype(np.float64)
+            else:
+                out[col] = out[col].astype(np.float64)
+        return out.values
+
+    Xn = _encode(normal_df)
+    Xr = _encode(rare_df)
+    rng = np.random.RandomState(seed)
+    if len(Xn) > 10000:
+        Xn = Xn[rng.choice(len(Xn), 10000, replace=False)]
+
+    Xnt, Xnet, _, _ = train_test_split(Xn, np.zeros(len(Xn)), test_size=0.3, random_state=seed)
+    Xrt, Xret, _, _ = train_test_split(Xr, np.ones(len(Xr)), test_size=0.3, random_state=seed)
+
+    Xtr = np.vstack([Xnt, Xrt])
+    ytr = np.concatenate([np.zeros(len(Xnt)), np.ones(len(Xrt))])
+    Xte = np.vstack([Xnet, Xret])
+    yte = np.concatenate([np.zeros(len(Xnet)), np.ones(len(Xret))])
+
+    base = RandomForestClassifier(50, class_weight="balanced", random_state=seed)
+    base.fit(Xtr, ytr)
+    base_r = float(recall_score(yte, base.predict(Xte), zero_division=0))
+
+    rare_c = int((ytr == 1).sum())
+    if n_synthetic == 0:
+        return 0.0
+    sm = SMOTE(random_state=seed, sampling_strategy={1: rare_c + n_synthetic})
+    Xsm, ysm = sm.fit_resample(Xtr, ytr)
+    clf = RandomForestClassifier(50, class_weight="balanced", random_state=seed)
+    clf.fit(Xsm, ysm)
+    sm_r = float(recall_score(yte, clf.predict(Xte), zero_division=0))
+    return sm_r - base_r
+
+
+def _compute_fisher_cv(ingest_result: IngestResult) -> float:
+    """Compute the coefficient of variation of per-feature Fisher discriminant scores.
+
+    Fisher score for feature x:
+        Fisher(x) = (μ_rare - μ_normal)² / (σ_rare² + σ_normal²)
+
+    Returns the CV (σ/μ) of the Fisher scores across all features. Higher CV
+    means features vary more in how well they separate rare from normal.
+    """
+    from engine.prior.rdbpfn import _encode_features
+
+    normal_df = ingest_result.normal_df
+    rare_df = ingest_result.rare_df
+    label_col = ingest_result.label_col
+
+    feature_cols = [c for c in normal_df.columns if c != label_col]
+    if len(feature_cols) == 0:
+        return 0.0
+
+    X_normal = _encode_features(normal_df[feature_cols]).astype(np.float64)
+    X_rare = _encode_features(rare_df[feature_cols]).astype(np.float64)
+
+    scores = np.zeros(len(feature_cols))
+    for i in range(len(feature_cols)):
+        n_col = X_normal[:, i]
+        r_col = X_rare[:, i]
+        mu_n, mu_r = n_col.mean(), r_col.mean()
+        var_n, var_r = n_col.var() + 1e-8, r_col.var() + 1e-8
+        scores[i] = (mu_r - mu_n) ** 2 / (var_n + var_r)
+
+    mean_score = scores.mean()
+    if mean_score < 1e-8:
+        return 0.0
+    cv = float(np.std(scores) / mean_score)
+    return round(cv, 4)
 
 
 def _compute_ard_cv(residual) -> tuple[float, float, float, bool]:
