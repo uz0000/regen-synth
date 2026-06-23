@@ -230,7 +230,6 @@ class TestLoadSynthetic:
 FORBIDDEN = {
     "openai", "anthropic", "langchain", "llama_index",
     "httpx", "requests", "aiohttp", "boto3", "google.cloud",
-    "agent-runtime", "agentskills",
 }
 
 

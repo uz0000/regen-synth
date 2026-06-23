@@ -2,7 +2,7 @@
 Shared dataclasses for all REGEN components.
 
 All data contracts between engine stages and the control plane live here.
-No imports from engine/, agent-runtime/, or any LLM/network library.
+No imports from engine/, regen/, or any LLM/network library.
 """
 
 from __future__ import annotations

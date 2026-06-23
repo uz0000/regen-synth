@@ -1,9 +1,9 @@
 """
-Contracts — shared types and schemas that cross the engine/control-plane boundary.
+Contracts — shared types and schemas that cross the engine/API boundary.
 
 Anything in this package must be importable by both engine/ (pure Python, no LLM)
-and agent-runtime/ (control plane). Keep it to dataclasses, enums, and type aliases.
-No LLM clients, no networking, no agent framework imports.
+and regen/ (the API/orchestration layer). Keep it to dataclasses, enums, and type
+aliases. No LLM clients, no networking, no agent framework imports.
 """
 
 from .types import (

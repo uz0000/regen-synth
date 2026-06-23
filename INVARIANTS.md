@@ -3,26 +3,29 @@
 This file is the source of truth for building REGEN. Read it before writing code. If a change
 contradicts the **Invariants** section, stop and flag it rather than working around it.
 
-REGEN is a staged system that generates **statistically grounded synthetic data** and
-**amplifies rare events** so downstream ML models and LLMs get better at detecting them. It is
-built on three research components and orchestrated by the agent runtime from Nous Research.
+REGEN is a **deterministic pipeline** that generates **statistically grounded synthetic data** and
+**amplifies rare events** so downstream ML models get better at detecting them. It is built on three
+research components. Every value comes out of the deterministic engine; there is no agent runtime and
+no LLM in the loop today. An optional model-driven layer (narration, reasoning-Scout) is deferred —
+see §4 and §7.
 
 ---
 
 ## 1. The one rule that cannot be broken
 
-> **The deterministic engine produces every number. The agents only decide, measure, and narrate.**
+> **The deterministic engine produces every number. Nothing an LLM/model emits ever becomes a data value.**
 
-No LLM and no agent ever invents a synthetic data value. Agents choose *what* to generate, *where*
-to spend the generation budget, *whether* to keep a batch, and *how* to describe results. The actual
-values come out of the Prior Engine, the residual GP, and the acquisition math. This is what makes
-REGEN output defensible rather than plausible-looking fabrication.
+No model ever invents a synthetic data value. If/when a model is added (§4), its output is metadata,
+control flow, or narration only. The actual values come out of the Prior Engine, the residual GP, and
+the acquisition math. This is what makes REGEN output defensible rather than plausible-looking
+fabrication.
 
 Concretely:
 
 - `engine/` is pure Python. It must not import any LLM client, agent framework, or network library.
   A test enforces this (see `tests/test_boundary.py`).
-- the agent runtime / LLM output is metadata, control flow, and narration. It is never written into a synthetic row.
+- Any model output (when a model is used at all) is metadata, control flow, and narration. It is never
+  written into a synthetic row.
 - Every batch is reproducible from its manifest (seed + config + code version). Same manifest → same data.
 
 This is the "fineprint discipline": deterministic core, narration layer on top, full reproducibility.
@@ -38,7 +41,7 @@ in code comments; do not paste paper text.
 |------------------|--------------------------------------------------------------|---------------|
 | Prior Engine     | RDB-PFN — relational in-context learning via synthetic prior | Statistically grounded base data generator. Relational prior + ICL produces structurally consistent rows (correct FK topology, block-diagonal correlation, temporal structure). |
 | Amplifier        | R-Design — active residual learning (R-EPIG, ResidualGP)     | Corrects the *tail*. Models the residual (gap between the prior's tail predictions and truth) because the residual is smoother and far cheaper to learn than regenerating the full distribution. |
-| Stylist (opt.)   | Structured semantic control                                  | Only if generating LLM-grounded narrated content (personas, attack-step text). Control vectors + drift penalty keep narration on-distribution. **Deferred — see §7.** |
+| Stylist (opt.)   | Structured semantic control                                  | Only if generating model-grounded narrated content (personas, attack-step text). Control vectors + drift penalty keep narration on-distribution. **Deferred — see §7.** |
 
 RDB-PFN reference implementation: `https://github.com/MuLabPKU/RDBPFN`. Wrap it; do not reimplement it.
 
@@ -46,11 +49,12 @@ RDB-PFN reference implementation: `https://github.com/MuLabPKU/RDBPFN`. Wrap it;
 
 ## 3. Architecture
 
-Three layers. The boundary between the control plane and the engine is the rule from §1.
+The system is a deterministic active-learning loop. There is no agent runtime and no separate
+"control plane" process — the loop is a single Python function (`regen.api.run_campaign()`).
 
 ```
-Control plane (LLM-driven — decides, targets, measures)
-    Orchestrator   runs the active-learning loop, spawns stages, schedules
+regen.api  (deterministic orchestration — sequences passes, gates batches, reports lift)
+    Orchestrator   run_campaign(): runs the active-learning loop, owns pass sequencing
     Scout          R-EPIG targeting: which rare region most improves the detector?
     Examiner       trains/evaluates the downstream detector, measures rare-event lift
 
@@ -59,10 +63,10 @@ Deterministic engine (pure Python — produces all numbers)
     Amplifier      ResidualGP correction over Scout's target region
     Auditor        fidelity gate (marginal calibration, tail dependence, correlation structure)
 
-Substrate & shared services
-    SpacetimeDB    live run state, batch lineage, target log (Rust reducers, Python clients)
-    Neo4j          post-hoc analysis / threat-graph ingestion
-    the agent runtime memory + skills   procedural memory and crystallized generation recipes
+Entry points
+    cli/           `regen` CLI (run / ingest / screen / results)
+    server/        FastAPI server for frontend integration
+    examples/      runnable demo scripts
 ```
 
 ### The active-learning loop (one pass)
@@ -81,12 +85,12 @@ Examiner measures detection lift
 [lift signal] → Scout selects next target   (loop)
 ```
 
-### Agent responsibilities
+### Stage responsibilities
 
-- **Orchestrator** — sequences the loop, spawns one isolated stages per stage job, writes run
-  state to SpacetimeDB, owns scheduling. Computes nothing statistical.
-- **Scout** — runs R-EPIG over a candidate pool, reads the last lift signal and the memory of
-  explored regions, emits a target (covariate region / event type / tail percentile). Picks the
+- **Orchestrator** (`regen.api.run_campaign`) — sequences the loop, gates batches on the Auditor,
+  tracks the best lift across passes, owns output. Computes nothing statistical beyond aggregation.
+- **Scout** — runs R-EPIG over a candidate pool, reads the last lift signal and the within-run memory
+  of explored regions, emits a target (covariate region / event type / tail percentile). Picks the
   question; the engine answers it.
 - **Prior Engine** — RDB-PFN. Given a schema and a Scout target, generates a structurally consistent
   base batch. Strong on average-case, weak on the tail (that is the Amplifier's job).
@@ -97,102 +101,90 @@ Examiner measures detection lift
   data — this gate exists to stop exactly that.
 - **Examiner** — trains/evaluates the downstream detector on accepted data and measures recall/
   precision lift on the tail. That number is Scout's reward signal.
-- **Memory + skills** — the agent runtime persists what was explored and which fidelity stats held; successful
-  recipes crystallize into reusable skill files so the system improves across runs.
+- **Within-run memory** — each pass records its target anchor; Scout biases the next selection away
+  from already-explored regions so budget goes to new tail structure. This lives in the engine
+  (`engine/scout/repig.py`), threaded through the loop's `explored_points` accumulator.
 
 ---
 
-## 4. the agent runtime Agent integration (Nous Research)
+## 4. Optional model integration (deferred)
 
-the agent runtime is the orchestration runtime. REGEN's control plane runs *as* the agent runtime; the deterministic
-engine runs *outside* it as Python invoked by the agent runtime stages.
+The loop runs end-to-end with **no model and no agent runtime** today. A model only earns a place
+for one of:
 
-> the agent runtime Agent launched Feb 2026 and is moving fast. Verify exact CLI/API/skill-format details
-> against `https://agent-runtime-agent.nousresearch.com/docs` before depending on them — treat the mappings
-> below as intent, not a frozen contract.
+- **Reasoning-Scout** — an LLM that *proposes novel rare scenarios* outside the fixed candidate pool,
+  which are then scored by deterministic R-EPIG (it never sets values — §1 still holds).
+- **Stylist / narration** — model-grounded narrated content (personas, attack-step text).
+- **Result narration** — human-language summaries of a campaign.
 
-Mapping:
+If/when any of these is wanted, call a plain hosted model directly (e.g. **GLM 5.2**, Claude, or any
+OpenAI-compatible endpoint) from a thin module **outside `engine/`**. Do **not** introduce an agent
+runtime (the agent runtime or otherwise): REGEN previously carried a agent skill layer and removed it — it was a
+no-op wrapper around `regen.api` that added token cost and zero functionality. A single model call per
+decision is all that's required.
 
-- **Orchestrator → the main the agent runtime loop.** It drives the cycle and schedules campaigns via the agent runtime's
-  natural-language scheduling/cron.
-- **Engine stages → `regen.api.run_campaign()`**. The API orchestrates the full
-  active-learning loop (Scout → Prior → Amplifier → Auditor → Examiner) by calling
-  `engine/` directly. The campaign is a single Python function call — testable without
-  the agent runtime present.
-- **Skills → agentskills.io skill files.** The top-level loop is a skill (`agent-runtime/skills/regen-loop/`).
-  Domain recipes that prove out (e.g. fraud-tail amplification for transaction RDBs) crystallize into
-  their own portable skill files. This is the self-improvement layer — do not hardcode recipes that
-  belong here.
-- **Memory split.** Structured run state (batch lineage, target log, fidelity stats) lives in
-  SpacetimeDB, the system of record. the agent runtime memory holds the higher-level procedural/"what worked"
-  layer that informs Scout and skill creation. Do not duplicate structured state into the agent runtime memory.
-- **Model provider** — configure via the agent runtime setup (Nous Portal / OpenRouter / own endpoint). The
-  engine never calls a model, so the only model consumers are narration, the optional Stylist, and
-  (if promoted) a reasoning-Scout.
+Rules if a model is added:
 
-### Run the agent runtime constrained
-
-This system has no reason to expose a messaging surface. Run the agent runtime headless:
-
-- Disable the messaging gateways (Telegram/Discord/Slack/WhatsApp/etc.) — REGEN uses CLI + scheduler only.
-- Use the local or Docker terminal backend.
-- Keep the engine as out-of-agent compute. The agent's trust boundary should be as small as possible.
-
-(The the agent runtime gateway as a single trust boundary across messaging platforms is precisely the kind of
-attack surface worth scrutinizing in a security context. Keep it closed unless a feature needs it.)
+- The call site lives outside `engine/` (the boundary test still passes).
+- Model output is metadata/proposals/narration only — never a synthetic data value (Invariant 4).
+- Every statistical decision that depends on a model proposal must still be reproducible: persist the
+  raw proposal text in the manifest so a re-run can replay it deterministically.
+- Token cost is a first-class constraint (this is why the agent runtime was dropped). Default to the cheapest
+  model that does the job; cache proposals; never call a model inside a tight loop.
 
 ---
 
 ## 5. Repository layout
 
 ```
-regen/
+regen-synth/
   INVARIANTS.md                  # this file
+  README.md
   docs/
     papers/                  # the three source PDFs (reference only)
-  agent-runtime/                    # the agent runtime Agent integration — the control plane
-    skills/
-      regen-loop/            # the top-level active-learning loop, as a the agent runtime skill
-    config/
-      agent-runtime.toml            # model provider, disabled gateways, terminal backend
+    REGEN.md                 # architecture overview
+    REGEN_DOCUMENTATION.md   # full API + stage reference
   engine/                    # DETERMINISTIC. No LLM, no agent, no network imports.
     prior/                   # RDB-PFN wrapper (Prior Engine)
     amplifier/               # ResidualGP + correction (Rare Event Amplifier)
-    scout/                   # R-EPIG acquisition (targeting math only)
+    scout/                   # R-EPIG acquisition + explored-region penalty (targeting math only)
     auditor/                 # fidelity statistics + accept/reject
     examiner/                # downstream detector train/eval + lift metric
+    ingest/                  # load/clean/split normal vs rare + on-disk persistence
     manifest.py              # batch manifest: seed, schema hash, configs, code version
-  stylist/                   # OPTIONAL semantic control — only if narrating (deferred)
-  state/                     # SpacetimeDB
-    worlds/                  # Rust reducers: run state, batch lineage, target log
-    clients/                 # Python SDK clients (the only SpacetimeDB I/O)
-  graph/                     # Neo4j post-hoc analysis ingestion
-  contracts/                 # shared schemas/types that cross the boundary
+  contracts/                 # shared dataclasses/enums crossing the engine↔API boundary
+  regen/                     # unified API layer (run_campaign, screen, get_results, load_synthetic)
+  cli/                       # `regen` CLI entry point
+  server/                    # FastAPI server for frontend integration
+  examples/                  # sample data + runnable demo
+  benchmark/                 # breadth/multipass benchmark runners + results
   tests/
     test_boundary.py         # enforces: no forbidden imports inside engine/
     test_fidelity.py         # Auditor catches a deliberately corrupted batch
     test_reproducibility.py  # same manifest → identical data
+    test_api.py              # API + regen/api.py boundary check
+    test_memory.py           # Scout within-run explored-region penalty
 ```
+
+Deferred / not yet built (see §7): a structured run-state store (was "SpacetimeDB"), Neo4j
+post-hoc analysis, the Stylist. None are required for the loop to run.
 
 ---
 
 ## 6. Build order
 
-Each milestone delivers standalone value. Do not start a milestone before the previous one is green.
+Each milestone delivers standalone value. M0–M4 are complete and green.
 
-| # | Milestone        | Deliverable |
-|---|------------------|-------------|
-| M0 | Engine skeleton + boundary test | Wrap RDB-PFN Prior Engine. Generate a reproducible base batch from a fixed schema. `test_boundary.py` passes. |
-| M1 | Auditor          | Fidelity stats + gate. It must reject a deliberately corrupted batch and accept a clean one. |
-| M2 | Amplifier        | ResidualGP correction on a hardcoded target region. Measurable density increase in the tail with fidelity preserved. |
-| M3 | Examiner         | Train a simple detector; report tail recall/precision lift of amplified vs base data. Produces a single lift number. |
-| M4 | Scout (thin)     | R-EPIG picks the next target from a candidate pool using the Examiner signal. One full cycle runs automatically. |
-| M5 | agent runtime   | Wrap the loop as a the agent runtime skill; engine stages become Python-RPC stages; persistent memory of explored regions; scheduled unattended runs. |
-| M6 | SpacetimeDB state| Move batch lineage / target log into reducers; cross-run observability. |
-| M7 | (optional)       | Stylist (semantic control) if narrating; Neo4j ingestion for analysis. |
-
-Build the loop in plain Python first (M0–M4), then put the agent runtime on top (M5). Do not couple engine code
-to the agent runtime — the engine must run and be testable with no agent runtime present.
+| # | Milestone        | Deliverable | Status |
+|---|------------------|-------------|--------|
+| M0 | Engine skeleton + boundary test | Wrap RDB-PFN Prior Engine. Generate a reproducible base batch from a fixed schema. `test_boundary.py` passes. | ✅ |
+| M1 | Auditor          | Fidelity stats + gate. It must reject a deliberately corrupted batch and accept a clean one. | ✅ |
+| M2 | Amplifier        | ResidualGP correction on a hardcoded target region. Measurable density increase in the tail with fidelity preserved. | ✅ |
+| M3 | Examiner         | Train a simple detector; report tail recall/precision lift of amplified vs base data. Produces a single lift number. | ✅ |
+| M4 | Scout (thin)     | R-EPIG picks the next target from a candidate pool using the Examiner signal. One full cycle runs automatically. | ✅ |
+| M5 | API + entry points | `regen.api.run_campaign()` unifies the loop; CLI, FastAPI server, and demo wrap it. (The earlier "agent runtime" milestone was removed — the loop is plain Python.) | ✅ |
+| M6 | Structured run-state store | (Deferred) Persist batch lineage / target log / fidelity stats to a queryable store for cross-run observability. | ⏳ |
+| M7 | (optional)       | (Deferred) Reasoning-Scout or Stylist via a plain model call (§4); Neo4j ingestion for analysis. | ⏳ |
 
 ---
 
@@ -200,16 +192,20 @@ to the agent runtime — the engine must run and be testable with no agent runti
 
 These are intentionally unresolved. Do not pick a default silently — surface the choice and ask.
 
-- **Stylist in or out.** The semantic-control layer earns a place only if REGEN produces LLM-grounded
+- **Stylist in or out.** The semantic-control layer earns a place only if REGEN produces model-grounded
   narrated content (personas, attack-step text). If output is purely tabular/relational, omit it
   entirely. Default assumption until told otherwise: **out**.
 - **Scout: thin vs reasoning.** Thin = a wrapper that only runs R-EPIG over a fixed candidate pool
-  (fully reproducible). Reasoning = an LLM stages that *proposes novel rare scenarios* outside the
-  pool, which are then scored by deterministic R-EPIG. Build **thin** first; promote only after the
-  loop closes. Even the reasoning version feeds deterministic scoring — it never sets values.
+  (fully reproducible, current state). Reasoning = a model that *proposes novel rare scenarios* outside
+  the pool, which are then scored by deterministic R-EPIG. Build **thin** first; promote only after the
+  loop closes. Even the reasoning version feeds deterministic scoring — it never sets values, and it
+  would use a plain model call (§4), not an agent runtime.
 - **Auditor: hard gate vs soft penalty.** Default is **hard gate** (reject failing batches). The soft
   alternative feeds a fidelity penalty back into Scout's reward so the system learns which regions are
   hard to fake faithfully. Switch only deliberately.
+- **Structured run-state store (M6).** Not built. Today run state lives in tempdirs + a campaign
+  summary JSON. If cross-run observability becomes a requirement, pick a store deliberately — do not
+  default to one silently.
 
 ---
 
@@ -219,15 +215,15 @@ These are intentionally unresolved. Do not pick a default silently — surface t
 2. Every synthetic batch carries a manifest (seed, schema hash, prior config, target, amplifier params,
    Auditor stats, code version) and is bit-reproducible from it. Verified by `test_reproducibility.py`.
 3. No batch reaches the Examiner or is persisted without passing the Auditor.
-4. Agent/LLM output never becomes a synthetic data value — only decisions, metrics, and narration.
-5. SpacetimeDB is the system of record for structured run state. the agent runtime memory does not duplicate it.
-6. the agent runtime runs with messaging gateways disabled unless a feature explicitly requires one.
+4. Model/LLM output never becomes a synthetic data value — only decisions, metrics, and narration.
+5. The active-learning loop is a single deterministic Python function call (`regen.api.run_campaign`),
+   runnable and testable with no runtime, no model, and no network.
 
 ---
 
 ## 9. Conventions
 
-- Python for the engine and orchestration glue; Rust for SpacetimeDB reducers.
+- Python for the engine, API, CLI, and server.
 - Type hints and dataclasses for everything crossing `contracts/`.
 - Every engine stage is a pure function of `(input batch, config, seed)` where practical.
 - Fail loud: a fidelity failure or a missing manifest is an error, not a warning.

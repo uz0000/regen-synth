@@ -7,7 +7,7 @@ forbidden module names appear at import level. It catches both direct
 imports and transitive re-exports through __init__.py files.
 
 Forbidden: openai, anthropic, langchain, llama_index, httpx, requests,
-           aiohttp, boto3, google.cloud, agent-runtime, agentskills.
+           aiohttp, boto3, google.cloud.
 """
 
 import ast
@@ -29,8 +29,6 @@ FORBIDDEN = {
     "aiohttp",
     "boto3",
     "google.cloud",
-    "agent-runtime",
-    "agentskills",
 }
 
 ENGINE_ROOT = Path(__file__).parent.parent / "engine"

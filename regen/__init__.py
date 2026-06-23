@@ -1,7 +1,7 @@
 """
 REGEN — Unified Python API layer.
 
-All consumers (CLI, Streamlit demo, the agent runtime stages) call through here.
+All consumers (CLI, server, demo scripts) call through here.
 Pure deterministic Python — no LLM client, no agent runtime, no network.
 
 This is the consolidation layer the project needed: one source of truth for

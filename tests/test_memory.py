@@ -1,68 +1,21 @@
 """
-M5 — persistent memory of explored regions.
+Scout within-run memory — the explored-region diversity penalty.
 
-Two things must hold:
-  1. The store round-trips across processes: regions written in one run are
-     visible to the next (this is what makes scheduled unattended runs improve
-     over time instead of repeating themselves).
-  2. Scout's R-EPIG selection is biased away from already-explored anchors when
-     that memory is supplied — without it, selection is unchanged.
+The active-learning loop tracks every target Scout has already amplified this
+campaign and biases the next selection away from those anchors. Three things
+must hold:
+
+  1. A candidate sitting on an already-explored anchor loses score.
+  2. A candidate far from every explored anchor is left ~unchanged.
+  3. The penalty is a no-op when no memory is supplied, and never crashes on
+     a schema/shape mismatch (e.g. a re-run after the feature set changed).
+
+This is the within-run memory that lives in the engine (engine.scout.repig),
+threaded through regen.api.run_campaign()'s `explored_points` accumulator.
 """
 
 import numpy as np
 import pytest
-
-from agent-runtime.memory import ExploredRegion, ExploredRegionMemory
-
-
-# ── Memory persistence ────────────────────────────────────────────────────────
-
-def _region(anchor, lift=0.5, accepted=True, idx=0):
-    return ExploredRegion(
-        feature_idx=idx,
-        feature_name="amount",
-        percentile_low=0.9,
-        percentile_high=1.0,
-        anchor_point=list(anchor),
-        accepted=accepted,
-        coverage_rate=0.8,
-        tail_lift=lift,
-        pass_index=0,
-    )
-
-
-def test_memory_round_trips_across_processes(tmp_path):
-    path = str(tmp_path / "explored.json")
-
-    mem = ExploredRegionMemory.load(path)
-    assert mem.regions == []
-    mem.record(_region([1.0, 2.0, 3.0], lift=0.4))
-    mem.record(_region([5.0, 6.0, 7.0], lift=0.7))
-    mem.save()
-
-    # Fresh load simulates a separate process / a later scheduled run
-    reloaded = ExploredRegionMemory.load(path)
-    assert len(reloaded.regions) == 2
-    assert reloaded.best().tail_lift == 0.7
-    assert reloaded.anchor_points() == [[1.0, 2.0, 3.0], [5.0, 6.0, 7.0]]
-
-
-def test_record_dedups_on_anchor(tmp_path):
-    mem = ExploredRegionMemory(path=tmp_path / "m.json")
-    mem.record(_region([1.0, 1.0, 1.0], lift=0.2))
-    mem.record(_region([1.0, 1.0, 1.0], lift=0.9))  # same anchor, newer outcome
-    assert len(mem.regions) == 1
-    assert mem.regions[0].tail_lift == 0.9
-
-
-def test_summary_counts_accepted(tmp_path):
-    mem = ExploredRegionMemory(path=tmp_path / "m.json")
-    mem.record(_region([1.0, 0.0], lift=0.5, accepted=True))
-    mem.record(_region([2.0, 0.0], lift=0.0, accepted=False))
-    s = mem.summary()
-    assert s["n_explored"] == 2
-    assert s["n_accepted"] == 1
-    assert s["best_lift"] == 0.5
 
 
 # ── Scout diversity penalty ───────────────────────────────────────────────────

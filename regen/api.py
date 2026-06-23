@@ -1,5 +1,5 @@
 """
-REGEN API — unified entry point for CLI, UI, and the agent runtime stages.
+REGEN API — unified entry point for CLI, server, and demo scripts.
 
 Pure deterministic Python. No LLM client, no agent runtime, no network lib.
 Engine boundary (INVARIANTS.md §1/§4): the API orchestrates the engine but does

@@ -1,4 +1,4 @@
-"""Add repo root to sys.path so engine/, contracts/, agent-runtime/ are importable."""
+"""Add repo root to sys.path so engine/, contracts/, regen/ are importable."""
 import sys
 from pathlib import Path
 

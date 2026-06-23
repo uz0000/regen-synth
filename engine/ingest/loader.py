@@ -15,7 +15,7 @@ Edge cases are handled loudly (fail-loud convention, INVARIANTS.md §9):
   4. Missing values          → impute (median / mode), log counts
   5. All rows flagged rare    → raise (misconfigured definition)
 
-persist_ingest() writes the on-disk layout the the agent runtime stages consume:
+persist_ingest() writes the on-disk layout the API and CLI consume:
   <base>.normal.parquet, <base>.rare.parquet, <base>.fields.json
 """
 

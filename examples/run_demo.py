@@ -1,18 +1,23 @@
 """
-End-to-end REGEN demo.
+End-to-end REGEN demo (CLI, no UI framework).
 
-Runs the full active-learning loop on the sample fraud dataset and prints
-the per-pass tail-lift history. This is the runnable proof that the loop
-closes: ingest → (Scout → Prior → Amplifier → Auditor → Examiner) × N.
+This is the runnable proof that the loop closes:
+    ingest → (Scout → Prior → Amplifier → Auditor → Examiner) × N
+
+It is fully self-contained: if the sample dataset is missing it generates one,
+then runs a multi-pass amplification campaign and a quick REGEN-vs-SMOTE screen.
+Everything is deterministic given the seed — every value is engine output; the
+only thing the loop decides is *which region to amplify next*.
 
 Usage:
-    python examples/make_sample_data.py        # writes examples/transactions.csv
-    python examples/run_demo.py                # runs the campaign
-
-Everything here is deterministic given the seed. The only thing the control
-plane decides is *which region to amplify next*; every value is engine output.
+    python examples/run_demo.py                 # auto-generate data + run
+    python examples/run_demo.py --data my.csv   # use your own data
+    python examples/run_demo.py --label is_fraud --rare-value 1
 """
 
+import argparse
+import contextlib
+import io
 import logging
 import sys
 from pathlib import Path
@@ -21,73 +26,119 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from contracts.types import RareEventDef, RareMode  # noqa: E402
-from engine.ingest import ingest, persist_ingest     # noqa: E402
+from regen.api import run_campaign, screen          # noqa: E402
 
-logging.basicConfig(level=logging.WARNING, format="%(message)s")
+# Silence library logging (paramz/GPy warn "reconstraining parameters" on every
+# GP fit). The demo drives all output via print(), so logging is noise here.
+logging.basicConfig(level=logging.CRITICAL)
+
+DEFAULT_DATA = Path(__file__).parent / "transactions.csv"
+
+
+def _ensure_data(path: Path) -> None:
+    """Generate the sample fraud dataset if it isn't already on disk."""
+    if path.exists():
+        return
+    from examples.make_sample_data import make_dataset
+
+    df = make_dataset(n=2000, fraud_rate=0.03)
+    df.to_csv(path, index=False)
+    print(f"[demo] generated sample data → {path} "
+          f"({len(df)} rows, {int(df['is_fraud'].sum())} fraud)")
+
+
+@contextlib.contextmanager
+def _quiet():
+    """Suppress noisy library output (GPy prints to stderr) during engine work.
+
+    Exceptions raised inside still surface: the context restores the real
+    streams on exit, before Python prints the traceback.
+    """
+    sink = io.StringIO()
+    with contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
+        yield
+
+
+def run(data: Path, label_col: str, rare_value, seed: int, passes: int) -> int:
+    print("\n" + "=" * 64)
+    print("  REGEN — rare-event amplification demo")
+    print("=" * 64)
+
+    rare_def = RareEventDef(
+        mode=RareMode.LABEL,
+        label_value=int(rare_value) if str(rare_value).lstrip("-").isdigit() else rare_value,
+    )
+
+    # ── 1. Screen: quick REGEN vs SMOTE head-to-head on this data ─────────────
+    print("\n[1/2] Screening: REGEN vs SMOTE (1 pass each, matched budget)...")
+    with _quiet():
+        sr = screen(
+            filepath=str(data),
+            label_col=label_col,
+            rare_def=rare_def,
+            seed=seed,
+        )
+    print(f"      recommended: {sr.recommended_method}   "
+          f"(confidence {sr.confidence:.2f}, Fisher CV {sr.heterogeneity_score:.2f})")
+    print(f"      {sr.rationale}")
+
+    # ── 2. Full multi-pass campaign ───────────────────────────────────────────
+    print(f"\n[2/2] Running {passes}-pass REGEN campaign...")
+    with _quiet():
+        cr = run_campaign(
+            filepath=str(data),
+            label_col=label_col,
+            rare_def=rare_def,
+            seed=seed,
+            n_rows=300,
+            max_passes=passes,
+            coverage_threshold=0.60,
+            gp_noise=0.1,
+            n_estimators=80,
+            num_candidates=80,
+        )
+
+    # ── Report ─────────────────────────────────────────────────────────────────
+    print(f"\n  ingested: {cr.n_normal} normal, {cr.n_rare} rare, {cr.n_features} features")
+    print("-" * 64)
+    for p in cr.passes:
+        if p.status == "accepted":
+            print(
+                f"  pass {p.pass_num}: ACCEPTED   "
+                f"recall {p.baseline_recall:.3f} → {p.amplified_recall:.3f}  "
+                f"(lift {p.tail_lift:+.3f})   "
+                f"precision {p.baseline_precision:.3f} → {p.amplified_precision:.3f}"
+            )
+        else:
+            print(f"  pass {p.pass_num}: REJECTED   coverage {p.coverage:.3f}")
+    print("-" * 64)
+    print(f"  best tail lift: {cr.best_lift:+.4f}   "
+          f"accepted {cr.n_accepted}/{cr.n_accepted + cr.n_rejected} passes")
+    if cr.best_batch_path:
+        print(f"  best batch:     {cr.best_batch_path}")
+    print("=" * 64 + "\n")
+    return 0
 
 
 def main():
-    csv_path = "examples/transactions.csv"
-    if not Path(csv_path).exists():
-        print(f"Missing {csv_path}. Run: python examples/make_sample_data.py")
-        sys.exit(1)
+    p = argparse.ArgumentParser(description="Run the REGEN end-to-end demo.")
+    p.add_argument("--data", default=str(DEFAULT_DATA),
+                   help="Path to input CSV (default: auto-generated sample).")
+    p.add_argument("--label", default="is_fraud", help="Label column name.")
+    p.add_argument("--rare-value", default=1, help="Label value marking a rare event.")
+    p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--passes", type=int, default=3, help="Number of amplification passes.")
+    args = p.parse_args()
 
-    # ── Ingest: isolate the fraud rows, persist the on-disk layout ────────────
-    result = ingest(
-        filepath=csv_path,
-        label_col="is_fraud",
-        rare_def=RareEventDef(mode=RareMode.LABEL, label_value=1),
-    )
-    print(
-        f"Ingested: {len(result.normal_df)} normal, {len(result.rare_df)} rare, "
-        f"label='{result.label_col}'"
-    )
+    data = Path(args.data)
+    if data == DEFAULT_DATA:
+        _ensure_data(data)
+    elif not data.exists():
+        print(f"Missing data file: {data}", file=sys.stderr)
+        return 1
 
-    work_dir = Path("examples/_run")
-    work_dir.mkdir(exist_ok=True)
-    ingest_path = str(work_dir / "txns")
-    persist_ingest(result, ingest_path)
-
-    # ── Run the campaign via the the agent runtime loop skill ────────────────────────────
-    # The skill lives in a hyphenated dir (regen-loop) so load it by path.
-    import importlib.util
-    skill_path = Path(__file__).parent.parent / "agent-runtime" / "skills" / "regen-loop" / "skill.py"
-    spec = importlib.util.spec_from_file_location("regen_loop_skill", skill_path)
-    skill = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(skill)
-    run_campaign = skill.run_campaign
-
-    print("\nRunning REGEN active-learning campaign...\n")
-    summary = run_campaign(
-        ingest_path=ingest_path,
-        seed=42,
-        n_rows=300,
-        max_passes=3,
-        label_col=result.label_col,
-        prior_config={"device": "cpu"},
-        amplifier_config={"gp_noise_variance": 0.1},
-        auditor_config={"coverage_threshold": 0.60},
-        examiner_config={"n_estimators": 80},
-        scout_config={"num_candidates": 80},
-    )
-
-    # ── Report ────────────────────────────────────────────────────────────────
-    print("\n" + "=" * 60)
-    print("CAMPAIGN SUMMARY")
-    print("=" * 60)
-    for p in summary["passes"]:
-        if p["status"] == "accepted":
-            print(
-                f"  Pass {p['pass']}: ACCEPTED\n"
-                f"      recall    {p['baseline_recall']:.3f} → {p['amplified_recall']:.3f}  "
-                f"(lift {p['tail_lift']:+.3f})\n"
-                f"      precision {p['baseline_precision']:.3f} → {p['amplified_precision']:.3f}"
-            )
-        else:
-            print(f"  Pass {p['pass']}: REJECTED  coverage={p['coverage']:.3f}")
-    print(f"\n  Best tail lift across campaign: {summary['best_lift']:+.4f}")
-    print("=" * 60)
+    return run(data, args.label, args.rare_value, args.seed, args.passes)
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
