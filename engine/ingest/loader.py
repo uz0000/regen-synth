@@ -37,11 +37,36 @@ from contracts.types import (
     RareEventDef,
     RareMode,
     SchemaGraph,
+    TargetDetection,
 )
 
 logger = logging.getLogger(__name__)
 
+# Names that hint a column is the classification target. Only a tiebreak bonus
+# in structural detection — never the sole basis (a well-named but balanced
+# column is a poor rare-event target; an unnamed but imbalanced one is a good one).
 _LABEL_CANDIDATES = ("label", "target", "y", "is_fraud", "fraud", "class")
+
+
+class AmbiguousTargetError(ValueError):
+    """Raised when auto-detection cannot confidently choose one target column.
+
+    Two or more columns score within _AMBIGUITY_MARGIN of each other, so guessing
+    would be arbitrary. The caller should pass label_col / rare_def explicitly.
+    """
+
+    def __init__(self, candidates):
+        self.candidates = candidates
+        lines = [
+            f"    {c.label_col!r}: rare={c.rare_value!r} "
+            f"minority_ratio={c.minority_ratio:.3f} n_rare={c.n_rare} score={c.score:.3f}"
+            for c in candidates
+        ]
+        super().__init__(
+            "Auto-detection found multiple comparable rare-event targets. "
+            "Pass label_col (and rare_def) explicitly to disambiguate. Candidates:\n"
+            + "\n".join(lines)
+        )
 
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -50,6 +75,15 @@ _LABEL_CANDIDATES = ("label", "target", "y", "is_fraud", "fraud", "class")
 class IngestConfig:
     rare_percentile: float = 0.05  # bottom 5% of target = rare (percentile mode)
     min_rare_rows: int = 10        # raise if fewer rare rows are found
+
+    # ── Structural auto-detection "useful band" (INVARIANTS.md "What It Cannot Do") ──
+    # These bound which columns count as a rare-event target. The defaults track
+    # the documented limits (>=10 rare rows; clearly imbalanced; low cardinality),
+    # but they are knobs, not law — tune them per dataset if detection misfires.
+    max_target_cardinality: int = 20   # more distinct values ⇒ not a class label
+    max_minority_ratio: float = 0.35   # above this the column is ~balanced (no lift to gain)
+    rare_count_saturation: int = 50    # n_rare at/above this gets full "enough data" credit
+    ambiguity_margin: float = 0.05     # top-two scores within this ⇒ AmbiguousTargetError
 
 
 # ── Public API ─────────────────────────────────────────────────────────────────
@@ -78,8 +112,7 @@ def ingest(
     config = config or IngestConfig()
 
     df = _load_file(filepath)
-    label_col = _resolve_label_col(df, label_col)
-    rare_def = _resolve_rare_def(rare_def, config)
+    label_col, rare_def, detection = _resolve_target(df, label_col, rare_def, config)
 
     df = _impute_missing(df, label_col)
 
@@ -100,6 +133,7 @@ def ingest(
         schema_graph=SchemaGraph(),  # flat table — no relational structure
         field_dict=field_dict,
         label_col=label_col,
+        detection=detection,
     )
 
 
@@ -150,23 +184,159 @@ def _load_file(filepath: str) -> pd.DataFrame:
     return pd.read_csv(filepath)  # best-effort fallback
 
 
-# ── Label resolution (edge case 1) ────────────────────────────────────────────
+# ── Target resolution (label column + rare value) — edge cases 1 & 2 ──────────
 
-def _resolve_label_col(df: pd.DataFrame, label_col: Optional[str]) -> str:
+def _resolve_target(
+    df: pd.DataFrame,
+    label_col: Optional[str],
+    rare_def: Optional[RareEventDef],
+    config: IngestConfig,
+):
+    """Resolve (label_col, rare_def, detection), auto-detecting either when asked.
+
+    Manual choice stays optional and authoritative — an explicit label_col or a
+    rare_def with a concrete value is honored verbatim. Auto-detection only fires
+    for the parts the caller left open:
+
+      * label_col == ""              → structurally detect the target column.
+      * LABEL mode, label_value None → take the minority class of the column.
+
+    Detection is purely structural (cardinality + imbalance), so it never depends
+    on a downstream model. `detection` is returned for reporting/override (None
+    when nothing was auto-detected).
+    """
+    auto_rare_wanted = (
+        rare_def is not None
+        and rare_def.mode == RareMode.LABEL
+        and rare_def.label_value is None
+    )
+
+    # 1. Label column.
     if label_col:
         if label_col not in df.columns:
             raise ValueError(
                 f"Label column '{label_col}' not found. Columns: {list(df.columns)}"
             )
-        return label_col
-    for candidate in _LABEL_CANDIDATES:
-        if candidate in df.columns:
-            logger.info("No label column given — inferred '%s'", candidate)
-            return candidate
-    raise ValueError(
-        f"No label column given and none of {_LABEL_CANDIDATES} present. "
-        f"Columns: {list(df.columns)}"
+        detection = None
+        # 2a. Explicit column, auto rare value → minority class of that column.
+        if auto_rare_wanted:
+            detection = _candidate_for_column(df, label_col, config)
+            detection.auto_rare = True
+            rare_def = RareEventDef(mode=RareMode.LABEL, label_value=detection.rare_value)
+            logger.info(
+                "Auto-selected rare value %r for '%s' (minority class, ratio=%.3f, n=%d)",
+                detection.rare_value, label_col, detection.minority_ratio, detection.n_rare,
+            )
+        else:
+            # No rare side at all → historical percentile default (warns).
+            rare_def = _resolve_rare_def(rare_def, config)
+        return label_col, rare_def, detection
+
+    # 2b. No column given → structural detection picks both column and rare value.
+    detection = _detect_target(df, config)
+    detection.auto_label = True
+    logger.info(
+        "Auto-selected target column '%s' (score=%.3f, minority_ratio=%.3f, n_rare=%d)",
+        detection.label_col, detection.score, detection.minority_ratio, detection.n_rare,
     )
+    # When the caller left the rare side open too (auto LABEL, or no rare_def at
+    # all), use the detected minority class. An explicit non-label rare_def
+    # (percentile/imbalance) is honored against the detected column.
+    if rare_def is None or auto_rare_wanted:
+        rare_def = RareEventDef(mode=RareMode.LABEL, label_value=detection.rare_value)
+        detection.auto_rare = True
+    return detection.label_col, rare_def, detection
+
+
+def _minority_value(s: pd.Series):
+    """The least-frequent value in a series — the rare class under LABEL mode."""
+    return s.value_counts().idxmin()
+
+
+def _candidate_for_column(df: pd.DataFrame, col: str, config: IngestConfig) -> TargetDetection:
+    """Build a TargetDetection for a fixed column (no scoring / no ambiguity check)."""
+    s = df[col]
+    counts = s.value_counts(dropna=True)
+    rare_value = counts.idxmin()
+    n_rare = int(counts.min())
+    n = int(counts.sum())
+    return TargetDetection(
+        label_col=col,
+        rare_value=_as_native(rare_value),
+        n_rare=n_rare,
+        minority_ratio=(n_rare / n) if n else 0.0,
+        cardinality=int(s.nunique(dropna=True)),
+    )
+
+
+def _score_target_columns(df: pd.DataFrame, config: IngestConfig):
+    """Score every column for fitness as a rare-event target (descending).
+
+    Fitness is structural, matching REGEN's goal — amplifying a genuine minority
+    class to lift detection. A column qualifies only inside the "useful band"
+    (config): low cardinality, >= min_rare_rows rare rows, and minority ratio
+    below max_minority_ratio (a ~balanced column gives REGEN nothing to amplify).
+    Score then favors clearer imbalance, binary targets, and enough rare rows.
+    """
+    n = len(df)
+    candidates = []
+    for col in df.columns:
+        s = df[col]
+        card = int(s.nunique(dropna=True))
+        if card < 2 or card > config.max_target_cardinality:
+            continue
+        counts = s.value_counts(dropna=True)
+        n_rare = int(counts.min())
+        minority_ratio = n_rare / n if n else 0.0
+        if n_rare < config.min_rare_rows or minority_ratio > config.max_minority_ratio:
+            continue
+
+        imbalance_score = 1.0 - (minority_ratio / config.max_minority_ratio)   # 0..1, ↑ when rarer
+        cardinality_score = 1.0 if card == 2 else 1.0 / (card - 1)             # binary best
+        rare_count_score = min(1.0, n_rare / config.rare_count_saturation)    # enough to learn the tail
+        name_bonus = 0.15 if str(col).strip().lower() in _LABEL_CANDIDATES else 0.0
+        score = (
+            0.50 * imbalance_score
+            + 0.25 * cardinality_score
+            + 0.25 * rare_count_score
+            + name_bonus
+        )
+        candidates.append(
+            TargetDetection(
+                label_col=str(col),
+                rare_value=_as_native(counts.idxmin()),
+                n_rare=n_rare,
+                minority_ratio=minority_ratio,
+                cardinality=card,
+                score=score,
+            )
+        )
+    candidates.sort(key=lambda c: c.score, reverse=True)
+    return candidates
+
+
+def _detect_target(df: pd.DataFrame, config: IngestConfig) -> TargetDetection:
+    """Pick the single best rare-event target column, or fail loud if unclear."""
+    candidates = _score_target_columns(df, config)
+    if not candidates:
+        raise ValueError(
+            "No suitable rare-event target found: need a low-cardinality column "
+            f"(<= {config.max_target_cardinality} classes) with >= {config.min_rare_rows} "
+            f"rare rows and minority ratio <= {config.max_minority_ratio:.2f}. "
+            "Pass label_col / rare_def explicitly."
+        )
+    best = candidates[0]
+    if len(candidates) >= 2 and (best.score - candidates[1].score) < config.ambiguity_margin:
+        raise AmbiguousTargetError(candidates[:4])
+    best.alternatives = [c.as_dict() for c in candidates[1:4]]
+    return best
+
+
+def _as_native(value):
+    """Coerce a NumPy/pandas scalar to a JSON-serialisable Python scalar."""
+    if isinstance(value, np.generic):
+        return value.item()
+    return value
 
 
 # ── Rare definition resolution (edge case 2) ──────────────────────────────────
@@ -218,9 +388,12 @@ def _build_rare_mask(
     mode = rare_def.mode
 
     if mode == RareMode.LABEL:
-        if rare_def.label_value is None:
-            raise ValueError("LABEL mode requires rare_def.label_value.")
-        return df[label_col] == rare_def.label_value
+        # label_value should already be resolved by _resolve_target; auto-pick the
+        # minority class as a defensive fallback rather than failing.
+        value = rare_def.label_value
+        if value is None:
+            value = _minority_value(df[label_col])
+        return df[label_col] == value
 
     if mode == RareMode.PERCENTILE:
         pct = rare_def.percentile if rare_def.percentile is not None else config.rare_percentile

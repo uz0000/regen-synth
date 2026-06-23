@@ -39,6 +39,40 @@ class RareEventDef:
     imbalance_ratio: Optional[float] = None
 
 
+@dataclass
+class TargetDetection:
+    """
+    Result of structural auto-detection of the rare-event target.
+
+    Model-agnostic by design: the label column and rare value are chosen purely
+    from the data's structure (cardinality + class imbalance), never from a
+    model-specific lift measurement — detection lift depends on the downstream
+    model, so it must not drive *what* the rare event is (see INVARIANTS.md §1).
+    """
+    label_col: str
+    rare_value: Any
+    n_rare: int
+    minority_ratio: float
+    cardinality: int
+    score: float = 0.0
+    auto_label: bool = False   # was the column auto-detected (vs user-supplied)?
+    auto_rare: bool = False    # was the rare value auto-detected?
+    alternatives: List[Dict[str, Any]] = field(default_factory=list)
+
+    def as_dict(self) -> Dict[str, Any]:
+        return {
+            "label_col": self.label_col,
+            "rare_value": self.rare_value,
+            "n_rare": self.n_rare,
+            "minority_ratio": round(self.minority_ratio, 4),
+            "cardinality": self.cardinality,
+            "score": round(self.score, 4),
+            "auto_label": self.auto_label,
+            "auto_rare": self.auto_rare,
+            "alternatives": self.alternatives,
+        }
+
+
 # ── Schema graph ──────────────────────────────────────────────────────────────
 
 @dataclass
@@ -105,6 +139,7 @@ class IngestResult:
     schema_graph: SchemaGraph
     field_dict: FieldDict
     label_col: str = ""
+    detection: Optional[TargetDetection] = None  # set when label/rare auto-detected
 
 
 # ── Batch manifest ────────────────────────────────────────────────────────────

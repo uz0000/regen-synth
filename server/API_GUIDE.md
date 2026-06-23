@@ -35,16 +35,26 @@ GET /api/demo            → generate + ingest the built-in fraud demo dataset
 ```
 POST /api/generate       → auto-tune + generate a synthetic dataset
 ```
-Body: `{ label_col, rare_def: {mode, label_value}, n_rows, mode, seed, auto }`
+Body: `{ label_col?, rare_def?: {mode, label_value}, n_rows, mode, seed, auto }`
 where `mode` is `"faithful"` | `"balanced"` (default) | `"boost"`.
 
+`label_col` and `rare_def` are **optional** — omit `label_col` (or send `""`)
+and omit/`null` `rare_def` to let REGEN auto-detect the target column and rare
+class structurally (the most imbalanced low-cardinality column + its minority
+class). Send them to override. `rare_def.label_value` accepts any scalar — ints
+(`1`), or strings (`"fraud"`); `null` means "auto-pick the minority class."
+
 The user supplies only what only they know (their data, how many rows, what
-it's for); the auto-tuner picks `noise_scale` and the target region. Returns:
-`fidelity` (per-column distribution match), `lift` (detection lift, or null),
-`config_used` (the chosen noise/mode), and `candidates` (the auto-tune trail —
-one entry per noise candidate, for the fidelity-vs-lift frontier chart). The
-batch is saved in campaign layout, so `/api/campaign/{run_id}/download` and
-`/preview` retrieve it with the returned `run_id`.
+it's for); REGEN picks the target and the auto-tuner picks `noise_scale`.
+Returns: `detection` (what was auto-selected — label column, rare value, ratio,
+and runner-up columns; `null` if both were supplied), `fidelity` (per-column
+distribution match), `lift` (detection lift, or null), `config_used` (the chosen
+noise/mode), and `candidates` (the auto-tune trail — one entry per noise
+candidate, for the fidelity-vs-lift frontier chart). The batch is saved in
+campaign layout, so `/api/campaign/{run_id}/download` and `/preview` retrieve it
+with the returned `run_id`. If the target is ambiguous (two equally plausible
+columns) the endpoint returns **400** with the candidate list — resend with an
+explicit `label_col`.
 
 **Modes:** `faithful` maximizes distributional fidelity (model-agnostic — a
 faithful copy for any model); `balanced` maximizes detection-lift subject to

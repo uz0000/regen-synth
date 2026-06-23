@@ -21,7 +21,7 @@ import uuid
 import tempfile
 import warnings
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import pandas as pd
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks
@@ -58,7 +58,9 @@ CAMPAIGN_DIR.mkdir(parents=True, exist_ok=True)
 
 class RareEventDefModel(BaseModel):
     mode: str = "label"  # "label" | "percentile" | "imbalance_ratio"
-    label_value: Optional[int] = None
+    # Any scalar: rare classes are encoded as ints (0/1), strings ("fraud"), etc.
+    # None in label mode → auto-detect the minority class.
+    label_value: Optional[Any] = None
     percentile: Optional[float] = None
     imbalance_ratio: Optional[float] = None
 
@@ -89,8 +91,8 @@ class GenerateRequest(BaseModel):
     by regen.api.generate()'s auto-tuner; the user only owns the irreducible
     inputs (their data, how many rows, what they want it for).
     """
-    label_col: str = ""
-    rare_def: RareEventDefModel
+    label_col: str = ""           # "" → auto-detect the target column
+    rare_def: Optional[RareEventDefModel] = None  # None → auto-detect the rare class
     n_rows: int = 300
     mode: str = "balanced"        # "faithful" | "balanced" | "boost"
     seed: int = 42
@@ -104,8 +106,24 @@ class HealthResponse(BaseModel):
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _rare_def_from_model(model: RareEventDefModel):
+def _coerce_scalar(value):
+    """Form fields arrive as strings; recover int/float so '1' matches int 1.
+
+    Empty/None → None (auto-detect). Non-numeric strings (e.g. 'fraud') pass through.
+    """
+    if value is None or value == "":
+        return None
+    try:
+        f = float(value)
+        return int(f) if f.is_integer() else f
+    except (TypeError, ValueError):
+        return value
+
+
+def _rare_def_from_model(model: Optional[RareEventDefModel]):
     from contracts.types import RareEventDef, RareMode
+    if model is None:
+        return None  # → regen.api.generate() auto-detects the rare class
     mode_map = {
         "label": RareMode.LABEL,
         "percentile": RareMode.PERCENTILE,
@@ -156,6 +174,9 @@ def _profile(result, filepath: str) -> dict:
         "rare_ratio": round(len(result.rare_df) / n_total, 4) if n_total else 0.0,
         "n_features": len(result.field_dict) - (1 if result.label_col else 0),
         "label_col": result.label_col,
+        # What auto-detection chose (label column + rare value), or None if the
+        # caller supplied both. Lets the UI show "auto-selected X" and offer override.
+        "detection": result.detection.as_dict() if result.detection else None,
         "columns": columns,
     }
 
@@ -178,7 +199,7 @@ async def ingest_data(
     file: UploadFile = File(...),
     label_col: str = Form(""),
     rare_mode: str = Form("label"),
-    label_value: Optional[int] = Form(None),
+    label_value: Optional[str] = Form(None),
     percentile: Optional[float] = Form(None),
     imbalance_ratio: Optional[float] = Form(None),
 ):
@@ -191,7 +212,7 @@ async def ingest_data(
     mode_map = {"label": RareMode.LABEL, "percentile": RareMode.PERCENTILE, "imbalance_ratio": RareMode.IMBALANCE}
     rare_def = RareEventDef(
         mode=mode_map.get(rare_mode, RareMode.LABEL),
-        label_value=label_value,
+        label_value=_coerce_scalar(label_value),  # "" / None → auto-detect minority class
         percentile=percentile,
         imbalance_ratio=imbalance_ratio,
     )
@@ -206,15 +227,19 @@ async def ingest_data(
 
 @app.get("/api/demo")
 async def demo_dataset(
-    label_col: str = "is_fraud",
+    label_col: str = "",
     rare_mode: str = "label",
-    label_value: Optional[int] = 1,
+    label_value: Optional[Any] = None,
     percentile: Optional[float] = None,
     imbalance_ratio: Optional[float] = None,
 ):
     """Generate the built-in sample fraud dataset, ingest it, return a profile.
 
-    Lets the UI work with zero setup — no manual upload required.
+    Lets the UI work with zero setup — no manual upload required. By default it
+    exercises the same auto-detection path as a real upload (label_col="",
+    rare value auto) so the demo shows the system picking the target itself; the
+    detected column/value come back in the profile's `detection` field. Pass
+    explicit params to override.
     """
     from regen.api import ingest
     from contracts.types import RareEventDef, RareMode
@@ -229,7 +254,7 @@ async def demo_dataset(
                 "imbalance_ratio": RareMode.IMBALANCE}
     rare_def = RareEventDef(
         mode=mode_map.get(rare_mode, RareMode.LABEL),
-        label_value=label_value,
+        label_value=label_value,   # None → auto-detect the minority class
         percentile=percentile,
         imbalance_ratio=imbalance_ratio,
     )

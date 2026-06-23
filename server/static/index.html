@@ -104,14 +104,15 @@
         <input id="nRows" type="number" value="300" min="10" max="10000" style="width:120px" />
       </div>
       <div class="field">
-        <label>Label column</label>
-        <input id="labelCol" value="is_fraud" />
+        <label>Label column <span class="muted">(auto)</span></label>
+        <input id="labelCol" placeholder="auto-detect" />
       </div>
       <div class="field">
-        <label>Rare value</label>
-        <input id="rareValue" value="1" style="width:90px" />
+        <label>Rare value <span class="muted">(auto)</span></label>
+        <input id="rareValue" placeholder="auto" style="width:90px" />
       </div>
     </div>
+    <p class="hint" style="margin-top:-4px">REGEN picks the rare-event target for you from the data's structure (most imbalanced low-cardinality column). Leave these blank to auto-detect, or fill them to override.</p>
     <label>What's the data for?</label>
     <div class="intents" id="intents">
       <div class="intent" data-mode="faithful">
@@ -187,11 +188,28 @@ async function api(method, url, body, isForm){
 
 // ── step 1: data ──────────────────────────────────────────────────────
 function showDetected(p){
-  $("labelCol").value = p.label_col || $("labelCol").value;
   const pct = (p.rare_ratio*100).toFixed(1);
-  $("detected").innerHTML = '<span class="check">✓ Detected:</span> '+p.n_rows+' rows · '
-    + p.n_rare+' rare ('+pct+'%) · '+p.n_features+' features · label = <b>'+p.label_col+'</b>. '
-    + '<span class="muted">Looks right? If not, edit the label / rare value above.</span>';
+  const d = p.detection;
+  // Reflect what the system auto-selected. Leave the inputs blank (so generate
+  // re-auto-detects) but show the picks as placeholders + an explainer banner.
+  $("labelCol").value = ""; $("rareValue").value = "";
+  $("labelCol").placeholder = p.label_col ? p.label_col+" (auto)" : "auto-detect";
+  let html = '<span class="check">✓ Detected:</span> '+p.n_rows+' rows · '
+    + p.n_rare+' rare ('+pct+'%) · '+p.n_features+' features.';
+  if (d) {
+    const rv = String(d.rare_value);
+    $("rareValue").placeholder = rv+" (auto)";
+    html += ' <span class="muted">Auto-selected target:</span> label = <b>'+d.label_col+'</b>, '
+      + 'rare value = <b>'+rv+'</b>'
+      + (d.auto_label ? ' <span class="muted">(chosen as the most imbalanced low-cardinality column'
+          + (d.alternatives && d.alternatives.length
+              ? '; runners-up: '+d.alternatives.map(a=>a.label_col).join(', ') : '')
+          + ')</span>' : '')
+      + '. <span class="muted">Leave blank to keep, or override above.</span>';
+  } else {
+    html += ' label = <b>'+p.label_col+'</b>. <span class="muted">Override above if needed.</span>';
+  }
+  $("detected").innerHTML = html;
   $("detected").classList.add("show");
 }
 $("demoBtn").addEventListener("click", async () => {
@@ -202,7 +220,10 @@ $("demoBtn").addEventListener("click", async () => {
 });
 $("file").addEventListener("change", async (ev) => {
   const f = ev.target.files[0]; if (!f) return; clearError();
-  const fd = new FormData(); fd.append("file", f); fd.append("label_col",""); fd.append("rare_mode","label"); fd.append("label_value", $("rareValue").value);
+  const fd = new FormData(); fd.append("file", f);
+  fd.append("label_col", $("labelCol").value.trim()); fd.append("rare_mode","label");
+  const rv = $("rareValue").value.trim();
+  if (rv !== "") fd.append("label_value", rv);   // omit → auto-detect minority class
   try { const p = await api("POST","/api/ingest", fd, true); showDetected(p); }
   catch(e){ showError("Upload failed: "+e.message); }
 });
@@ -217,9 +238,14 @@ $("auto").addEventListener("change", () => $("noiseField").classList.toggle("hid
 // ── step 3: generate ──────────────────────────────────────────────────
 $("genBtn").addEventListener("click", async () => {
   clearError(); setLoading($("genBtn"), true, "Generating…"); $("result").classList.add("hidden");
+  // Blank label/rare value → auto-detect (omit label_col, null rare_def).
+  // A typed rare value may be numeric (1) or a string ("fraud"); preserve type.
+  const rareRaw = $("rareValue").value.trim();
+  const rareTyped = rareRaw === "" ? null
+    : (rareRaw !== "" && !isNaN(Number(rareRaw)) ? Number(rareRaw) : rareRaw);
   const body = {
-    label_col: $("labelCol").value,
-    rare_def: { mode: "label", label_value: Number($("rareValue").value) },
+    label_col: $("labelCol").value.trim(),
+    rare_def: rareTyped === null ? null : { mode: "label", label_value: rareTyped },
     n_rows: Number($("nRows").value), mode: state.mode, seed: Number($("seed").value),
     auto: $("auto").value === "true",
   };

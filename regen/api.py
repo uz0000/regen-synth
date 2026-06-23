@@ -498,10 +498,20 @@ def generate(
         The internal Examiner (a Random Forest) is a generic tabular-classifier
         proxy; lift optimized for it transfers well to tree/linear models.
 
+    Manual choice of the target is optional. Leave label_col / rare_def open and
+    the ingest layer detects them *structurally* — the most imbalanced
+    low-cardinality column, and its minority class as the rare value. Detection
+    is model-agnostic on purpose (detection lift depends on the downstream model,
+    so it must not decide *what* the rare event is). If two columns are equally
+    plausible targets the loader raises AmbiguousTargetError rather than guessing;
+    pass label_col explicitly to resolve. What was detected comes back in
+    summary["detection"] for display/override.
+
     Args:
         filepath: Input CSV/JSON/Parquet.
-        label_col: Label column. "" → auto-detect.
-        rare_def: How rare events are identified. None → auto (minority class).
+        label_col: Label column. "" → structurally auto-detect the target column.
+        rare_def: How rare events are identified. None → auto (minority class of
+            the resolved label column). Pass an explicit value to override.
         n_rows: How many synthetic rows to generate. The one knob the user owns.
         mode: "faithful" | "balanced" | "boost". Default "balanced".
         seed: RNG seed (full reproducibility).
@@ -511,8 +521,9 @@ def generate(
         out_dir: Where to persist the batch + summary. Auto-tempdir if None.
 
     Returns:
-        Dict with: run_id, n_rows, label_col, rare info, fidelity (per-column +
-        score), lift (or None), config_used, and the auto-tune candidate trail.
+        Dict with: run_id, n_rows, label_col, rare info, detection (what was
+        auto-selected, or None if fully manual), fidelity (per-column + score),
+        lift (or None), config_used, and the auto-tune candidate trail.
         The batch itself is saved to out_dir/pass_1_accepted.parquet and is
         retrievable via get_results()/load_synthetic().
     """
@@ -590,6 +601,9 @@ def generate(
         "n_normal": len(result.normal_df),
         "n_rare": len(result.rare_df),
         "n_features": len(result.field_dict) - (1 if result.label_col else 0),
+        # What the system chose for you (and what you could override). None when
+        # both label_col and rare value were supplied explicitly.
+        "detection": result.detection.as_dict() if result.detection else None,
         "fidelity": fidelity,
         "lift": lift_out,
         "config_used": {
@@ -632,10 +646,11 @@ def _save_generate_summary(summary: Dict[str, Any], out_path: Path) -> None:
 def _auto_rare_def() -> RareEventDef:
     """Default rare definition: label mode with the minority class as rare.
 
-    The actual minority value is resolved at ingest time from the data; here we
-    return a label-mode def that lets the loader auto-detect the rare class.
+    label_value=None signals the loader to auto-detect the rare class
+    structurally (minority class of the resolved label column) rather than
+    assuming a fixed encoding like 1. See loader._resolve_target.
     """
-    return RareEventDef(mode=RareMode.LABEL, label_value=1)
+    return RareEventDef(mode=RareMode.LABEL, label_value=None)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
