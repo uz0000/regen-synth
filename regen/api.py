@@ -134,6 +134,7 @@ def run_campaign(
     max_features: int = 0,
     n_estimators: int = 100,
     num_candidates: int = 100,
+    noise_scale: float = 0.10,
 ) -> CampaignResult:
     """Run a full multi-pass REGEN amplification campaign.
 
@@ -146,7 +147,7 @@ def run_campaign(
     Args:
         filepath: Path to input data (CSV/JSON/Parquet).
         label_col: Label column name.
-        rare_def: Rare event definition.
+        rare_def: How to identify rare events.
         seed: Base RNG seed (incremented per pass).
         n_rows: Batch size per pass.
         max_passes: Maximum number of amplification passes.
@@ -156,6 +157,7 @@ def run_campaign(
         max_features: GP input dim (0 = all). Set 6-10 for high-dim data.
         n_estimators: Number of trees in Examiner's RandomForest.
         num_candidates: Candidate pool size for Scout.
+        noise_scale: Prior perturbation scale (fraction of rare std-dev).
 
     Returns:
         CampaignResult with best_lift, pass history, output paths, etc.
@@ -182,7 +184,7 @@ def run_campaign(
     persist_ingest(result, ingest_path)
 
     # 3. Configs
-    prior_cfg = PriorConfig()
+    prior_cfg = PriorConfig(noise_scale=noise_scale)
     amp_cfg = AmplifierConfig(
         gp_noise_variance=gp_noise,
         max_features=max_features,
@@ -227,7 +229,8 @@ def run_campaign(
             explored_points.append(target_region["candidate_point"])
 
         # Prior Engine: generate base batch in the targeted region
-        base = generate_base_batch(prior, n_rows, target_region, rng)
+        base = generate_base_batch(prior, n_rows, target_region, rng,
+                                   noise_scale=prior_cfg.noise_scale)
 
         # Amplifier: ResidualGP tail correction
         rng2 = np.random.default_rng(seed + pass_num)

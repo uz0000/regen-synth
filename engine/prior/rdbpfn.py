@@ -56,12 +56,18 @@ class PriorConfig:
         max_train_rows:   Subsample normal rows when dataset exceeds this.
                           5000 is the TabPFN scale limit. Not used with
                           'gaussian' backend (GNB handles any size).
+        noise_scale:      Fraction of rare-event std-dev used as Gaussian
+                          perturbation on continuous features during base
+                          batch generation. Lower = tighter to real rare
+                          rows (better distribution match, less exploration).
+                          Higher = more exploration, wider coverage.
     """
     backend: str = "gaussian"    # 'gaussian' or 'pfn'
     device: str = "cpu"
     gnn_layers: int = 3
     latent_dim: int = 64
     max_train_rows: int = 5000
+    noise_scale: float = 0.10  # fraction of rare-event std-dev for perturbation
 
 
 # ── Fitted model ──────────────────────────────────────────────────────────────
@@ -250,6 +256,7 @@ def generate_base_batch(
     n: int,
     target_region: Dict,
     rng: np.random.Generator,
+    noise_scale: float = 0.10,
 ) -> pd.DataFrame:
     """
     Generate a base batch of n rows in the rare-event region.
@@ -270,6 +277,8 @@ def generate_base_batch(
         target_region: Dict from Scout describing the rare-event target.
                        Empty dict = densify the full rare region.
         rng:           Seeded Generator.
+        noise_scale:   Fraction of rare-event std-dev for continuous feature
+                       perturbation. Default 0.25.
 
     Returns:
         DataFrame with columns matching prior._feature_cols.
@@ -291,7 +300,7 @@ def generate_base_batch(
     # to reject with TVD=1.0 on that column.
     continuous = prior._is_continuous
     noise = np.zeros_like(X_base)
-    noise[:, continuous] = rng.standard_normal((n, int(continuous.sum()))) * anchor_std[continuous] * 0.25
+    noise[:, continuous] = rng.standard_normal((n, int(continuous.sum()))) * anchor_std[continuous] * noise_scale
     X_base += noise
 
     return pd.DataFrame(X_base, columns=feature_cols)

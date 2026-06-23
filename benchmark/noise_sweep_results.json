@@ -1,0 +1,282 @@
+[
+  {
+    "dataset": "hypothyroid",
+    "noise_scale": 0.05,
+    "mean_lift": 0.1304,
+    "lifts": [
+      0.1304,
+      0.1304
+    ],
+    "n_accepted": 10
+  },
+  {
+    "dataset": "hypothyroid",
+    "noise_scale": 0.1,
+    "mean_lift": 0.1522,
+    "lifts": [
+      0.1522,
+      0.1522
+    ],
+    "n_accepted": 10
+  },
+  {
+    "dataset": "hypothyroid",
+    "noise_scale": 0.15,
+    "mean_lift": 0.1196,
+    "lifts": [
+      0.1087,
+      0.1304
+    ],
+    "n_accepted": 10
+  },
+  {
+    "dataset": "hypothyroid",
+    "noise_scale": 0.2,
+    "mean_lift": 0.1304,
+    "lifts": [
+      0.1304,
+      0.1304
+    ],
+    "n_accepted": 10
+  },
+  {
+    "dataset": "hypothyroid",
+    "noise_scale": 0.25,
+    "mean_lift": 0.1087,
+    "lifts": [
+      0.1087,
+      0.1087
+    ],
+    "n_accepted": 10
+  },
+  {
+    "dataset": "hypothyroid",
+    "noise_scale": 0.3,
+    "mean_lift": 0.087,
+    "lifts": [
+      0.087,
+      0.087
+    ],
+    "n_accepted": 10
+  },
+  {
+    "dataset": "hypothyroid",
+    "noise_scale": 0.4,
+    "mean_lift": 0.1087,
+    "lifts": [
+      0.1087,
+      0.1087
+    ],
+    "n_accepted": 10
+  },
+  {
+    "dataset": "satellite",
+    "noise_scale": 0.05,
+    "mean_lift": 0.0,
+    "lifts": [
+      0.0,
+      0.0
+    ],
+    "n_accepted": 0
+  },
+  {
+    "dataset": "satellite",
+    "noise_scale": 0.1,
+    "mean_lift": 0.0,
+    "lifts": [
+      0.0,
+      0.0
+    ],
+    "n_accepted": 0
+  },
+  {
+    "dataset": "satellite",
+    "noise_scale": 0.15,
+    "mean_lift": 0.0,
+    "lifts": [
+      0.0,
+      0.0
+    ],
+    "n_accepted": 0
+  },
+  {
+    "dataset": "satellite",
+    "noise_scale": 0.2,
+    "mean_lift": 0.0,
+    "lifts": [
+      0.0,
+      0.0
+    ],
+    "n_accepted": 0
+  },
+  {
+    "dataset": "satellite",
+    "noise_scale": 0.25,
+    "mean_lift": 0.0,
+    "lifts": [
+      0.0,
+      0.0
+    ],
+    "n_accepted": 0
+  },
+  {
+    "dataset": "satellite",
+    "noise_scale": 0.3,
+    "mean_lift": 0.0,
+    "lifts": [
+      0.0,
+      0.0
+    ],
+    "n_accepted": 0
+  },
+  {
+    "dataset": "satellite",
+    "noise_scale": 0.4,
+    "mean_lift": 0.0,
+    "lifts": [
+      0.0,
+      0.0
+    ],
+    "n_accepted": 0
+  },
+  {
+    "dataset": "churn",
+    "noise_scale": 0.05,
+    "mean_lift": 0.0,
+    "lifts": [
+      0.0,
+      0.0
+    ],
+    "n_accepted": 0
+  },
+  {
+    "dataset": "churn",
+    "noise_scale": 0.1,
+    "mean_lift": 0.0,
+    "lifts": [
+      0.0,
+      0.0
+    ],
+    "n_accepted": 0
+  },
+  {
+    "dataset": "churn",
+    "noise_scale": 0.15,
+    "mean_lift": 0.0,
+    "lifts": [
+      0.0,
+      0.0
+    ],
+    "n_accepted": 0
+  },
+  {
+    "dataset": "churn",
+    "noise_scale": 0.2,
+    "mean_lift": 0.0,
+    "lifts": [
+      0.0,
+      0.0
+    ],
+    "n_accepted": 0
+  },
+  {
+    "dataset": "churn",
+    "noise_scale": 0.25,
+    "mean_lift": 0.0,
+    "lifts": [
+      0.0,
+      0.0
+    ],
+    "n_accepted": 0
+  },
+  {
+    "dataset": "churn",
+    "noise_scale": 0.3,
+    "mean_lift": 0.0,
+    "lifts": [
+      0.0,
+      0.0
+    ],
+    "n_accepted": 0
+  },
+  {
+    "dataset": "churn",
+    "noise_scale": 0.4,
+    "mean_lift": 0.0,
+    "lifts": [
+      0.0,
+      0.0
+    ],
+    "n_accepted": 0
+  },
+  {
+    "dataset": "ozone",
+    "noise_scale": 0.05,
+    "mean_lift": 0.0098,
+    "lifts": [
+      0.0098,
+      0.0098
+    ],
+    "n_accepted": 10
+  },
+  {
+    "dataset": "ozone",
+    "noise_scale": 0.1,
+    "mean_lift": 0.0091,
+    "lifts": [
+      0.0084,
+      0.0098
+    ],
+    "n_accepted": 10
+  },
+  {
+    "dataset": "ozone",
+    "noise_scale": 0.15,
+    "mean_lift": 0.0084,
+    "lifts": [
+      0.0084,
+      0.0084
+    ],
+    "n_accepted": 10
+  },
+  {
+    "dataset": "ozone",
+    "noise_scale": 0.2,
+    "mean_lift": 0.0084,
+    "lifts": [
+      0.0084,
+      0.0084
+    ],
+    "n_accepted": 10
+  },
+  {
+    "dataset": "ozone",
+    "noise_scale": 0.25,
+    "mean_lift": 0.007,
+    "lifts": [
+      0.007,
+      0.007
+    ],
+    "n_accepted": 10
+  },
+  {
+    "dataset": "ozone",
+    "noise_scale": 0.3,
+    "mean_lift": 0.0056,
+    "lifts": [
+      0.0042,
+      0.007
+    ],
+    "n_accepted": 10
+  },
+  {
+    "dataset": "ozone",
+    "noise_scale": 0.4,
+    "mean_lift": 0.007,
+    "lifts": [
+      0.007,
+      0.007
+    ],
+    "n_accepted": 10
+  }
+]

@@ -200,6 +200,18 @@ class PassDetail:
     amplified_precision: float = 0.0
     coverage: float = 0.0
 
+    def to_dict(self) -> dict:
+        return {
+            "pass_num": self.pass_num,
+            "status": self.status,
+            "tail_lift": self.tail_lift,
+            "baseline_recall": self.baseline_recall,
+            "amplified_recall": self.amplified_recall,
+            "baseline_precision": self.baseline_precision,
+            "amplified_precision": self.amplified_precision,
+            "coverage": self.coverage,
+        }
+
 
 @dataclass
 class CampaignResult:
@@ -214,6 +226,23 @@ class CampaignResult:
     n_rows_per_pass: int = 0
     output_dir: str = ""
     best_batch_path: Optional[str] = None
+
+    def to_dict(self) -> dict:
+        return {
+            "best_lift": self.best_lift,
+            "passes": [p.to_dict() for p in self.passes],
+            "n_accepted": self.n_accepted,
+            "n_rejected": self.n_rejected,
+            "n_normal": self.n_normal,
+            "n_rare": self.n_rare,
+            "n_features": self.n_features,
+            "n_rows_per_pass": self.n_rows_per_pass,
+            "output_dir": self.output_dir,
+            "best_batch_path": self.best_batch_path,
+        }
+
+    def to_json(self) -> str:
+        return json.dumps(self.to_dict(), indent=2)
 
 
 # ── Screen result ──────────────────────────────────────────────────────────────
@@ -237,3 +266,17 @@ class ScreenResult:
     rationale: str                  # one-line explanation
     n_rare: int = 0
     n_features: int = 0
+
+    def to_dict(self) -> dict:
+        return {
+            "recommended_method": self.recommended_method,
+            "heterogeneity_score": self.heterogeneity_score,
+            "confidence": self.confidence,
+            "predicted_lift_band": self.predicted_lift_band,
+            "rationale": self.rationale,
+            "n_rare": self.n_rare,
+            "n_features": self.n_features,
+        }
+
+    def to_json(self) -> str:
+        return json.dumps(self.to_dict(), indent=2)
