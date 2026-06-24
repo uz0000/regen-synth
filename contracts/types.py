@@ -135,6 +135,23 @@ class FieldMeta:
 FieldDict = Dict[str, FieldMeta]
 
 
+@dataclass
+class ColumnConstraint:
+    """A per-column validity rule the engine enforces on a synthetic batch (L1).
+
+    Built deterministically from the data today (engine.constraints.build_constraints);
+    in a future model-advised milestone the same spec is filled by a vetted semantic
+    proposal. Enforcement (clamp/round/snap) never invents values — it only folds
+    out-of-support output back onto what the column can actually be.
+    """
+    name: str
+    kind: str  # "continuous" | "binary" | "categorical" | "label"
+    min_val: Optional[float] = None
+    max_val: Optional[float] = None
+    is_integer: bool = False
+    binary_values: Optional[List[Any]] = None  # the (two) observed values, for snapping
+
+
 # ── Ingest result (engine input) ──────────────────────────────────────────────
 
 @dataclass

@@ -568,3 +568,47 @@ def test_percentile_tail_direction():
         hi = _ingest(p, "score", RareEventDef(mode=RareMode.PERCENTILE, percentile=0.10, tail="upper"))
     assert lo.rare_df["score"].max() < 15, "lower tail should be the smallest values"
     assert hi.rare_df["score"].min() > 85, "upper tail should be the largest values"
+
+
+# ── Semantic Fidelity M1: deterministic constraint layer + schema profile ─────
+
+def _toy_ingest():
+    from regen.api import ingest as _ingest
+    rd = RareEventDef(mode=RareMode.LABEL, label_value=1)
+    with tempfile.TemporaryDirectory() as tmp:
+        path = _toy_csv(tmp)
+        return _ingest(path, "label", rd)
+
+
+def test_build_constraints_reflects_field_types():
+    from engine.constraints import build_constraints
+    cons = build_constraints(_toy_ingest())
+    assert cons["label"].kind == "label"
+    assert cons["n_txns"].kind == "continuous" and cons["n_txns"].is_integer
+    assert cons["is_weekend"].kind == "binary" and set(cons["is_weekend"].binary_values) <= {0, 1}
+    assert cons["channel"].kind == "categorical"
+
+
+def test_apply_constraints_clamps_rounds_snaps():
+    from engine.constraints import apply_constraints
+    ing = _toy_ingest()
+    # Out-of-support junk the prior/GP could produce.
+    bad = pd.DataFrame({
+        "n_txns": [3.7, -5.0, 1e6],          # integer column, out of range
+        "amount": [-9.0, 5.0, 1e9],          # continuous, non-negative in source
+        "is_weekend": [0.7, -0.2, 1.4],      # binary drifted off {0,1}
+        "channel": [0, 1, 2],                # categorical codes (decoded elsewhere)
+    })
+    out = apply_constraints(bad, ing)
+    assert (out["n_txns"] == out["n_txns"].round()).all()      # integers
+    assert out["amount"].min() >= 0.0                          # clamped to observed >= 0
+    assert set(out["is_weekend"].unique()) <= {0, 1}           # snapped
+
+
+def test_column_profiles_shape_and_role_guess():
+    from engine.ingest.profile import column_profiles
+    profs = {p["name"]: p for p in column_profiles(_toy_ingest())}
+    assert profs["label"]["role_guess"] == "label"
+    assert profs["n_txns"]["is_integer"] is True
+    assert "min" in profs["amount"] and "max" in profs["amount"]
+    assert profs["channel"]["minority_value"] in ("web", "store", "kiosk")

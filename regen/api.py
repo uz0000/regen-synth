@@ -61,43 +61,14 @@ logger = logging.getLogger(__name__)
 def _apply_domain_constraints(df: pd.DataFrame, ingest: IngestResult) -> pd.DataFrame:
     """Coerce synthetic columns back onto their real-world support.
 
-    The Prior (Gaussian) and the residual GP both sample on an unbounded, real-
-    valued line, so a synthetic row can land outside what any real row could be.
-    Per column type we fix:
-
-      * CONTINUOUS — clip to the ingest-observed [min_val, max_val] (field_dict
-        spans the full dataset, so the rare tail's extremes are preserved). Kills
-        impossible values like a negative transaction Amount/Time. If the source
-        column was integer-valued (counts, hour, Time), round back to whole
-        numbers — emitting hour=11.97 or n_prior_txns=25.8 is visibly fake and
-        shifts the discrete marginal.
-      * BINARY — round to the nearest of the two observed values (the residual GP
-        perturbs these too, so a 0/1 column can drift to 0.7 / -0.3).
-
-    Categorical columns are handled in _decode_categoricals; the label is constant
-    and skipped. Folding out-of-support mass back in tightens fidelity, not loosens.
+    Thin delegate to the deterministic constraint layer (engine.constraints):
+    clip continuous columns to observed bounds, round integer-valued columns,
+    snap binaries to their two observed values. Categoricals are decoded in
+    _decode_categoricals; the label is set constant elsewhere. See
+    docs/SEMANTIC_FIDELITY_PLAN.md (M1).
     """
-    fd = ingest.field_dict
-    rare_df = ingest.rare_df
-    for col in df.columns:
-        meta = fd.get(col)
-        if meta is None or col == ingest.label_col:
-            continue
-        if meta.field_type == FieldType.CONTINUOUS:
-            if meta.min_val is not None and meta.max_val is not None:
-                df[col] = df[col].clip(meta.min_val, meta.max_val)
-            if meta.is_integer:
-                df[col] = df[col].round().astype("int64")
-        elif meta.field_type == FieldType.BINARY:
-            # Snap to the two real values (handles {0,1} and any other binary pair).
-            vals = pd.unique(rare_df[col].dropna()) if col in rare_df.columns else np.array([0, 1])
-            if len(vals) >= 2:
-                lo, hi = sorted(vals[:2])
-                mid = (float(lo) + float(hi)) / 2.0
-                df[col] = np.where(df[col].to_numpy() >= mid, hi, lo)
-            elif len(vals) == 1:
-                df[col] = vals[0]
-    return df
+    from engine.constraints import apply_constraints
+    return apply_constraints(df, ingest)
 
 
 def _decode_categoricals(df: pd.DataFrame, ingest: IngestResult) -> pd.DataFrame:
