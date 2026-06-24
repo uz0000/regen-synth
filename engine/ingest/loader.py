@@ -485,6 +485,10 @@ def _build_rare_mask(
             raise ValueError(
                 f"Percentile mode needs a numeric label; '{label_col}' is {df[label_col].dtype}."
             )
+        # "upper" tail flags the top pct (e.g. unusually large values); "lower"
+        # (default) flags the bottom pct.
+        if getattr(rare_def, "tail", "lower") == "upper":
+            return df[label_col] >= df[label_col].quantile(1.0 - pct)
         return df[label_col] <= df[label_col].quantile(pct)
 
     if mode == RareMode.IMBALANCE:

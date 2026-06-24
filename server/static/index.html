@@ -98,11 +98,22 @@
   <!-- STEP 2: HOW MUCH + INTENT -->
   <div class="card">
     <h2><span class="step">2</span> What you want</h2>
-    <div class="row" style="margin-bottom:14px">
+    <div class="row" style="margin-bottom:10px">
       <div class="field">
         <label>Synthetic rows to generate</label>
         <input id="nRows" type="number" value="300" min="10" max="10000" style="width:120px" />
       </div>
+      <div class="field">
+        <label>Rare event is defined by</label>
+        <select id="rareMode">
+          <option value="label">A category value (auto)</option>
+          <option value="percentile">The tail of a numeric column</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- Category/label mode -->
+    <div class="row" id="labelFields" style="margin-bottom:6px">
       <div class="field">
         <label>Label column <span class="muted">(auto)</span></label>
         <input id="labelCol" placeholder="auto-detect" />
@@ -112,7 +123,21 @@
         <input id="rareValue" placeholder="auto" style="width:90px" />
       </div>
     </div>
-    <p class="hint" style="margin-top:-4px">REGEN picks the rare-event target for you from the data's structure (most imbalanced low-cardinality column). Leave these blank to auto-detect, or fill them to override.</p>
+
+    <!-- Percentile / numeric-tail mode -->
+    <div class="row hidden" id="pctFields" style="margin-bottom:6px">
+      <div class="field"><label>Numeric column</label><select id="pctCol"></select></div>
+      <div class="field"><label>Tail</label>
+        <select id="pctTail">
+          <option value="lower">Bottom (smallest values)</option>
+          <option value="upper">Top (largest values)</option>
+        </select>
+      </div>
+      <div class="field"><label>Percentile %</label>
+        <input id="pctValue" type="number" value="5" min="1" max="49" style="width:80px" /></div>
+    </div>
+
+    <p class="hint" style="margin-top:-4px" id="targetHint">REGEN picks the rare-event target from the data's structure (most imbalanced low-cardinality column). Leave the fields blank to auto-detect, or fill them to override. Use "tail of a numeric column" when the rare thing is an extreme value (e.g. unusually large amounts), not a category.</p>
     <label>What's the data for?</label>
     <div class="intents" id="intents">
       <div class="intent" data-mode="faithful">
@@ -170,7 +195,7 @@
 
 <script>
 const $ = (id) => document.getElementById(id);
-let state = { mode: "balanced", runId: null, chart: null };
+let state = { mode: "balanced", runId: null, chart: null, columns: [] };
 
 function showError(msg){ const e=$("error"); e.textContent = msg || "Something went wrong."; e.classList.add("show"); }
 function clearError(){ $("error").classList.remove("show"); }
@@ -189,7 +214,17 @@ async function api(method, url, body, isForm){
 }
 
 // ── step 1: data ──────────────────────────────────────────────────────
+function populateNumericCols(){
+  // Numeric-tail (percentile) mode needs a continuous column to take the tail of.
+  const nums = (state.columns||[]).filter(c => c.type === "continuous");
+  const sel = $("pctCol");
+  sel.innerHTML = nums.length
+    ? nums.map(c => `<option value="${c.name}">${c.name}</option>`).join("")
+    : `<option value="">(no numeric columns detected)</option>`;
+}
 function showDetected(p){
+  state.columns = p.columns || [];
+  populateNumericCols();
   const pct = (p.rare_ratio*100).toFixed(1);
   const d = p.detection;
   // Reflect what the system auto-selected. Leave the inputs blank (so generate
@@ -236,18 +271,35 @@ document.querySelectorAll(".intent").forEach(el => el.addEventListener("click", 
   el.classList.add("active"); state.mode = el.dataset.mode;
 }));
 $("auto").addEventListener("change", () => $("noiseField").classList.toggle("hidden", $("auto").value === "true"));
+// Rare-event definition: category value vs numeric tail (percentile).
+$("rareMode").addEventListener("change", () => {
+  const pct = $("rareMode").value === "percentile";
+  $("pctFields").classList.toggle("hidden", !pct);
+  $("labelFields").classList.toggle("hidden", pct);
+  if (pct) populateNumericCols();
+});
 
 // ── step 3: generate ──────────────────────────────────────────────────
 $("genBtn").addEventListener("click", async () => {
   clearError(); setLoading($("genBtn"), true, "Generating…"); $("result").classList.add("hidden");
-  // Blank label/rare value → auto-detect (omit label_col, null rare_def).
-  // A typed rare value may be numeric (1) or a string ("fraud"); preserve type.
-  const rareRaw = $("rareValue").value.trim();
-  const rareTyped = rareRaw === "" ? null
-    : (rareRaw !== "" && !isNaN(Number(rareRaw)) ? Number(rareRaw) : rareRaw);
+  let label_col, rare_def;
+  if ($("rareMode").value === "percentile") {
+    // Numeric tail: the chosen column IS the target; flag its bottom/top pct.
+    label_col = $("pctCol").value;
+    if (!label_col) { showError("Pick a numeric column for percentile mode."); setLoading($("genBtn"), false); return; }
+    const pct = Math.min(49, Math.max(1, Number($("pctValue").value || 5))) / 100;
+    rare_def = { mode: "percentile", percentile: pct, tail: $("pctTail").value };
+  } else {
+    // Category value: blank label/rare → auto-detect. A typed rare value may be
+    // numeric (1) or a string ("fraud"); preserve its type.
+    const rareRaw = $("rareValue").value.trim();
+    const rareTyped = rareRaw === "" ? null
+      : (!isNaN(Number(rareRaw)) ? Number(rareRaw) : rareRaw);
+    label_col = $("labelCol").value.trim();
+    rare_def = rareTyped === null ? null : { mode: "label", label_value: rareTyped };
+  }
   const body = {
-    label_col: $("labelCol").value.trim(),
-    rare_def: rareTyped === null ? null : { mode: "label", label_value: rareTyped },
+    label_col, rare_def,
     n_rows: Number($("nRows").value), mode: state.mode, seed: Number($("seed").value),
     auto: $("auto").value === "true",
   };

@@ -37,6 +37,7 @@ class RareEventDef:
     label_value: Optional[Any] = None
     percentile: Optional[float] = None
     imbalance_ratio: Optional[float] = None
+    tail: str = "lower"  # PERCENTILE mode: "lower" → bottom pct, "upper" → top pct
 
 
 @dataclass

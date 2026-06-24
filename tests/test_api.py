@@ -553,3 +553,18 @@ def test_loader_sniffs_semicolon_delimiter():
         df = _load_file(str(p))
     assert list(df.columns) == ["a", "b", "label"]
     assert len(df) == 3
+
+
+# ── Percentile mode: upper vs lower tail ──────────────────────────────────────
+
+def test_percentile_tail_direction():
+    """Lower tail flags the smallest values; upper tail the largest."""
+    from engine.ingest.loader import ingest as _ingest
+    from contracts.types import RareEventDef, RareMode
+    with tempfile.TemporaryDirectory() as tmp:
+        df = pd.DataFrame({"score": list(range(100)), "x": np.random.RandomState(0).randn(100)})
+        p = str(Path(tmp) / "d.csv"); df.to_csv(p, index=False)
+        lo = _ingest(p, "score", RareEventDef(mode=RareMode.PERCENTILE, percentile=0.10, tail="lower"))
+        hi = _ingest(p, "score", RareEventDef(mode=RareMode.PERCENTILE, percentile=0.10, tail="upper"))
+    assert lo.rare_df["score"].max() < 15, "lower tail should be the smallest values"
+    assert hi.rare_df["score"].min() > 85, "upper tail should be the largest values"

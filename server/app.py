@@ -63,6 +63,7 @@ class RareEventDefModel(BaseModel):
     label_value: Optional[Any] = None
     percentile: Optional[float] = None
     imbalance_ratio: Optional[float] = None
+    tail: str = "lower"   # percentile mode: "lower" (bottom pct) | "upper" (top pct)
 
 
 class ScreenRequest(BaseModel):
@@ -134,6 +135,7 @@ def _rare_def_from_model(model: Optional[RareEventDefModel]):
         label_value=model.label_value,
         percentile=model.percentile,
         imbalance_ratio=model.imbalance_ratio,
+        tail=model.tail,
     )
 
 
