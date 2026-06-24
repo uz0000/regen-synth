@@ -166,4 +166,34 @@ a tested layer and fixes structural cases immediately. Build M1 first regardless
 
 Build **M1** now — pure Python, no model, no new dependency. It improves fidelity immediately, fixes
 structural cases, and is the foundation M2 plugs into. Hold M2/M3 until the §7 decisions are signed
-off.
+off. (Likely **post-funding** — M2 adds a paid LLM dependency; see Appendix A.)
+
+---
+
+## Appendix A — M2+ expectations (deferred, likely post-funding)
+
+What turning on the model-backed milestones actually commits us to. Recorded now so it's a
+deliberate decision later, not a surprise.
+
+**M2 — model-advised layer (the real commitment):**
+- *Requires from owner:* the two §7 decisions (provider, authority) **and** an API key/endpoint.
+  This is the first time REGEN talks to a network.
+- *Build:* `regen/semantics.py` — assemble the schema profile, one cached model call, parse +
+  schema-validate into a `SemanticProfile`, run `_vet_constraints` (the §1b charter), persist the
+  proposal to the manifest, offline fallback. Identifier handling lands here (IDs regenerated
+  unique / passed through, not Gaussian noise).
+- *Signing up for:* a new dependency, added latency on first generate (~seconds, then cached),
+  small per-dataset cost, ongoing prompt upkeep, and a determinism caveat (replay proposal from
+  manifest). INVARIANTS.md §4 gets updated to document the now-active layer; `test_boundary.py` must
+  stay green (call lives outside `engine/`).
+- *Extra deliverable:* an **evaluation** on a few datasets proving semantics measurably beats
+  structural-only — if it doesn't help, that's a finding. Model is **mocked in CI**.
+
+**M3 — advisory wiring (UX + transparency):**
+- API response carries the `SemanticProfile` + accepted/rejected/overridden constraints + rationale.
+- UI review panel: per-column inferred meaning, editable before generate; clear applied-vs-rejected.
+- `REGEN_SEMANTICS` on/off toggle + key config; off (or no key) is the safe default.
+- Mostly front-end + plumbing; no new external risk beyond M2.
+
+**Bottom line:** M1 is free of all this. M2 is a deliberate "yes" to running an LLM in the product
+path (cost + key + upkeep), with risk bounded by the charter. M3 makes it transparent and overridable.
