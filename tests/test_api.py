@@ -539,3 +539,17 @@ def test_amplifier_warns_when_underdetermined(caplog):
     with caplog.at_level(_logging.WARNING, logger="engine.amplifier.residual_gp"):
         fit_residuals(ing, prior, AmplifierConfig())
     assert any("underdetermined" in r.message for r in caplog.records)
+
+
+# ── CSV delimiter sniffing (semicolon/tab files) ──────────────────────────────
+
+def test_loader_sniffs_semicolon_delimiter():
+    """A semicolon-delimited CSV must parse into separate columns, not one blob
+    (regression: Instacart's export collapsed into a single 478k-unique column)."""
+    from engine.ingest.loader import _load_file
+    with tempfile.TemporaryDirectory() as tmp:
+        p = Path(tmp) / "semi.csv"
+        p.write_text("a;b;label\n1;x;0\n2;y;0\n3;z;1\n")
+        df = _load_file(str(p))
+    assert list(df.columns) == ["a", "b", "label"]
+    assert len(df) == 3

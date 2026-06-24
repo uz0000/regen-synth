@@ -175,13 +175,41 @@ def _load_file(filepath: str) -> pd.DataFrame:
     if not path.exists():
         raise FileNotFoundError(f"File not found: {filepath}")
     suffix = path.suffix.lower()
-    if suffix == ".csv":
-        return pd.read_csv(filepath)
     if suffix in (".json", ".jsonl"):
         return pd.read_json(filepath)
     if suffix in (".parquet", ".pq"):
         return pd.read_parquet(filepath)
-    return pd.read_csv(filepath)  # best-effort fallback
+    return _read_csv(filepath)  # .csv and best-effort fallback
+
+
+def _read_csv(filepath: str) -> pd.DataFrame:
+    """Read a delimited text file, sniffing the delimiter (`,` `;` tab `|`).
+
+    Not every "CSV" uses commas — Instacart's export, many European exports, and
+    TSVs use `;` or tabs. Reading those with the comma default collapses every
+    field into one giant column, which then looks like a high-cardinality target
+    and fails auto-detection. Sniff a sample and fall back to comma on doubt.
+    """
+    import csv
+    sep = ","
+    try:
+        with open(filepath, "r", newline="") as f:
+            sample = f.read(16384)
+        if sample:
+            try:
+                sep = csv.Sniffer().sniff(sample, delimiters=",;\t|").delimiter
+            except csv.Error:
+                # Sniffer failed (e.g. single column). Fall back to whichever
+                # candidate appears most in the header line, else comma.
+                header = sample.splitlines()[0] if sample.splitlines() else ""
+                counts = {d: header.count(d) for d in [",", ";", "\t", "|"]}
+                best = max(counts, key=counts.get)
+                sep = best if counts[best] > 0 else ","
+    except Exception:
+        sep = ","
+    if sep != ",":
+        logger.info("Detected '%s' delimiter for %s", repr(sep), filepath)
+    return pd.read_csv(filepath, sep=sep)
 
 
 # ── Target resolution (label column + rare value) — edge cases 1 & 2 ──────────
