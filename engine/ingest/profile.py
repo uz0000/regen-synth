@@ -57,10 +57,8 @@ def column_profiles(ingest: IngestResult, n_samples: int = 5) -> List[Dict[str, 
 def _role_guess(name: str, meta, uniq_ratio: float, label_col: str) -> str:
     if name == label_col:
         return "label"
-    # Near-unique → likely an identifier. Conservative: only structural; the
-    # model-advised layer (M2) refines this and decides ID handling.
-    if uniq_ratio >= 0.99:
-        return "identifier?"
+    if getattr(meta, "is_identifier", False):
+        return "identifier"
     return "feature"
 
 

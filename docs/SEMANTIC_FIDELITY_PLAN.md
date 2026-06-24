@@ -118,8 +118,9 @@ The model is shown the deterministic profile and asked to fill this in. Each pro
 
 | # | Deliverable | Needs model? | Risk |
 |---|-------------|--------------|------|
-| **M1** | Deterministic schema profile + `ColumnConstraint` spec + `engine/constraints.py` enforcing **structural** constraints. Refactor today's clamp/round/snap into it. **No model.** | no | low |
-| **M2** | Model-advised type / unit / bounds + **identifier handling** (IDs regenerated unique or passed through, not Gaussian noise), gated by `_vet_constraints` (§1b). | yes | low–med |
+| **M1** | Deterministic schema profile + `ColumnConstraint` spec + `engine/constraints.py` enforcing **structural** constraints. Refactor today's clamp/round/snap into it. **No model.** | no | low | ✅ done |
+| **M1.5** | **Structural identifier handling** (model-free): near-unique key columns (`order_id`, emails) regenerated as fresh unique values instead of Gaussian noise. Limitation: repeated foreign keys (e.g. `user_id`) are not detectable structurally — deferred to M2. | no | low | ✅ done |
+| **M2** | Model-advised type / unit / **semantic bounds** + **refined identifier handling** (foreign keys, format-aware IDs), gated by `_vet_constraints` (§1b). | yes | low–med |
 | **M3** | Advisory wiring: API + UI show the SemanticProfile and let the user edit/confirm; manifest persistence; offline fallback; cost cache; full tests. | — | med |
 
 **M1 stands on its own** even if M2/M3 are never built — it turns today's ad-hoc constraint code into

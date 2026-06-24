@@ -93,9 +93,11 @@ def _decode_categoricals(df: pd.DataFrame, ingest: IngestResult) -> pd.DataFrame
     for col in df.columns:
         if col not in field_dict:
             continue
-        ftype = field_dict[col].field_type
-        if ftype not in (FieldType.CATEGORICAL,):
+        meta = field_dict[col]
+        if meta.field_type not in (FieldType.CATEGORICAL,):
             continue
+        if meta.is_identifier:
+            continue  # already replaced with fresh unique values by the constraint layer
         cats = field_dict[col].categories
         if cats is None:  # defensive fallback for an externally-built field_dict
             cats = list(pd.Categorical(rare_df[col]).categories)

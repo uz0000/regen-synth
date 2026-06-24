@@ -612,3 +612,49 @@ def test_column_profiles_shape_and_role_guess():
     assert profs["n_txns"]["is_integer"] is True
     assert "min" in profs["amount"] and "max" in profs["amount"]
     assert profs["channel"]["minority_value"] in ("web", "store", "kiosk")
+
+
+# ── M1.5: structural identifier detection + handling ──────────────────────────
+
+def _id_ingest(tmp):
+    """Dataset with a near-unique integer ID, a string ID, a near-unique float
+    measurement (must NOT be flagged), and a real binary label."""
+    from regen.api import ingest as _ingest
+    rng = np.random.RandomState(0); n = 300
+    df = pd.DataFrame({
+        "order_id": np.arange(10_000, 10_000 + n),                 # near-unique int → ID
+        "email": [f"user{i}@x.com" for i in range(n)],             # near-unique string → ID
+        "amount": rng.gamma(2, size=n) + np.arange(n) * 1e-6,      # near-unique float, no hint → NOT id
+        "label": (rng.rand(n) < 0.2).astype(int),
+    })
+    p = str(Path(tmp) / "ids.csv"); df.to_csv(p, index=False)
+    return _ingest(p, "label", RareEventDef(mode=RareMode.LABEL, label_value=1))
+
+
+def test_identifier_detection_is_conservative():
+    with tempfile.TemporaryDirectory() as tmp:
+        fd = _id_ingest(tmp).field_dict
+    assert fd["order_id"].is_identifier
+    assert fd["email"].is_identifier
+    assert not fd["amount"].is_identifier, "near-unique float must not be flagged an ID"
+    assert not fd["label"].is_identifier
+
+
+def test_identifier_columns_regenerated_unique():
+    from regen import generate, load_synthetic
+    with tempfile.TemporaryDirectory() as tmp:
+        ing_dir = str(Path(tmp) / "out")
+        # reuse the same toy file the ingest built
+        rng = np.random.RandomState(0); n = 300
+        df = pd.DataFrame({
+            "order_id": np.arange(10_000, 10_000 + n),
+            "email": [f"user{i}@x.com" for i in range(n)],
+            "amount": rng.gamma(2, size=n),
+            "label": (rng.rand(n) < 0.2).astype(int),
+        })
+        p = str(Path(tmp) / "ids.csv"); df.to_csv(p, index=False)
+        generate(p, label_col="label", rare_def=RareEventDef(mode=RareMode.LABEL, label_value=1),
+                 n_rows=120, auto=False, out_dir=ing_dir)
+        b = load_synthetic(ing_dir)
+    assert b["order_id"].is_unique and b["order_id"].min() > 10_000 + n - 1  # past real max
+    assert b["email"].is_unique and b["email"].astype(str).str.startswith("email-").all()

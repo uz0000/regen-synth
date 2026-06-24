@@ -130,6 +130,8 @@ class FieldMeta:
                                        # (counts, hour, Time) → round synthetic output back to int
     categories: Optional[List[Any]] = None  # canonical category order (categorical fields),
                                              # computed from the FULL dataset so encode/decode agree
+    is_identifier: bool = False        # near-unique key column (order_id, uuid, email) →
+                                       # regenerate as fresh unique values, not Gaussian noise
 
 
 FieldDict = Dict[str, FieldMeta]

@@ -548,6 +548,7 @@ def _build_field_dict(df: pd.DataFrame, label_col: str) -> FieldDict:
             list(pd.Categorical(s.dropna()).categories)
             if ftype == FieldType.CATEGORICAL else None
         )
+        is_identifier = _is_identifier(col, s, len(df), label_col, ftype, is_integer)
         field_dict[col] = FieldMeta(
             name=col,
             field_type=ftype,
@@ -557,5 +558,34 @@ def _build_field_dict(df: pd.DataFrame, label_col: str) -> FieldDict:
             max_val=float(s.max()) if ftype == FieldType.CONTINUOUS else None,
             is_integer=is_integer,
             categories=categories,
+            is_identifier=is_identifier,
         )
     return field_dict
+
+
+# Threshold above which a non-label column is treated as an identifier key.
+_IDENTIFIER_UNIQUE_RATIO = 0.99
+
+
+def _is_identifier(col, s: pd.Series, n: int, label_col: str,
+                   ftype: FieldType, is_integer: bool) -> bool:
+    """Conservative, model-free identifier detection.
+
+    A column is an identifier if its values are (near-)unique per row AND it
+    looks like a key, not a measurement: integer-valued, or string/categorical,
+    or its name hints at an id. A near-unique *float* with no name hint (e.g. a
+    continuous sensor reading) is deliberately NOT flagged — that call is left to
+    the model-advised layer. Repeated foreign keys (e.g. user_id, which recurs
+    across rows) are also out of scope here; their uniqueness is too low to tell
+    apart from a high-cardinality category structurally.
+    """
+    if col == label_col or n < 20:
+        return False
+    ratio = s.nunique(dropna=True) / n if n else 0.0
+    if ratio < _IDENTIFIER_UNIQUE_RATIO:
+        return False
+    name_l = str(col).strip().lower()
+    name_hint = (name_l == "id" or name_l.endswith("_id") or name_l.startswith("id_")
+                 or any(k in name_l for k in ("uuid", "guid", "email", "hash")))
+    dtype_ok = is_integer or ftype == FieldType.CATEGORICAL
+    return bool(dtype_ok or name_hint)

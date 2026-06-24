@@ -39,6 +39,13 @@ def build_constraints(ingest: IngestResult) -> Dict[str, ColumnConstraint]:
     for name, meta in fd.items():
         if name == ingest.label_col:
             constraints[name] = ColumnConstraint(name=name, kind="label")
+        elif meta.is_identifier:
+            # Carry integer-ness + observed max so we can mint fresh unique values
+            # (sequential ints past the observed max, or unique strings otherwise).
+            constraints[name] = ColumnConstraint(
+                name=name, kind="identifier",
+                is_integer=meta.is_integer, max_val=meta.max_val,
+            )
         elif meta.field_type == FieldType.CONTINUOUS:
             constraints[name] = ColumnConstraint(
                 name=name, kind="continuous",
@@ -62,9 +69,21 @@ def apply_constraints(df: pd.DataFrame, ingest: IngestResult) -> pd.DataFrame:
     - label / categorical: untouched here.
     """
     constraints = build_constraints(ingest)
+    n = len(df)
     for col in df.columns:
         c = constraints.get(col)
         if c is None or c.kind in ("label", "categorical"):
+            continue
+        if c.kind == "identifier":
+            # The prior/GP can't produce meaningful keys — it emits noise. Replace
+            # with fresh unique values: sequential ints past the observed max
+            # (no collision with real rows), or unique strings otherwise.
+            # Deterministic, so reproducibility holds.
+            if c.is_integer:
+                start = int(c.max_val) + 1 if c.max_val is not None else 1
+                df[col] = np.arange(start, start + n, dtype="int64")
+            else:
+                df[col] = [f"{col}-{i}" for i in range(1, n + 1)]
             continue
         if c.kind == "continuous":
             if c.min_val is not None and c.max_val is not None:
