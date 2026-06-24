@@ -245,7 +245,7 @@ def _generate_amp_batch(
     if target_region.get("candidate_point"):
         explored_points.append(target_region["candidate_point"])
 
-    # Prior Engine: base batch in the targeted region
+    # Prior: base batch in the targeted region
     base = generate_base_batch(prior, n_rows, target_region, rng,
                                noise_scale=prior_cfg.noise_scale)
 
@@ -1116,7 +1116,7 @@ def _compute_fisher_cv(ingest_result: IngestResult) -> float:
     Returns the CV (σ/μ) of the Fisher scores across all features. Higher CV
     means features vary more in how well they separate rare from normal.
     """
-    from engine.prior.rdbpfn import _encode_features
+    from engine.prior.grounded import _encode_features
 
     normal_df = ingest_result.normal_df
     rare_df = ingest_result.rare_df

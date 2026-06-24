@@ -31,7 +31,7 @@ import numpy as np
 import pandas as pd
 
 from contracts.types import IngestResult
-from engine.prior.rdbpfn import PriorModel, _encode_features
+from engine.prior.grounded import PriorModel, _encode_features
 
 logger = logging.getLogger(__name__)
 

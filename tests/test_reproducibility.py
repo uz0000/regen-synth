@@ -61,7 +61,7 @@ def _make_ingest() -> IngestResult:
 def _run_generation(manifest: BatchManifest, ingest: IngestResult) -> pd.DataFrame:
     """
     Run the deterministic generation path from a manifest.
-    Uses only the prior base-batch generator (avoids TabPFN dependency in tests).
+    Uses only the prior base-batch generator.
     """
     rng = seed_rng(manifest)
 

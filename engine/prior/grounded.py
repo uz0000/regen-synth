@@ -1,5 +1,5 @@
 """
-Prior Engine — statistical base data generator.
+Prior — grounded-sampling base generator + normal-density scorer.
 
 Role in REGEN:
   The Prior characterizes average-case behaviour (what "normal" looks like)
@@ -7,18 +7,20 @@ Role in REGEN:
   strong on the bulk distribution and weak on the tail — that is the
   Amplifier's job.
 
-Two components:
-  1. Scoring — how "normal" does a row look? A Gaussian Naive Bayes
-     estimator (GaussianPrior) computes P(normal | x) in O(1) per row.
-  2. Base batch generation — produce new rows in the rare-event region
-     by perturbing real rare rows (grounded sampling). No generative
-     model required because the Amplifier handles the tail.
+Two components, both empirical (no learned generative model):
+  1. Normal-density scoring — how "normal" does a row look? A class-conditional
+     diagonal-Gaussian scorer (GaussianPrior) computes P(normal | x) in O(1)
+     per row. This score is consumed by the Amplifier to weight residual
+     relevance; it is NOT used to generate rows.
+  2. Base batch generation — produce new rows by *grounded sampling*: draw a
+     real anchor row and add Gaussian noise scaled to that region's observed
+     spread, perturbing only continuous features. Anchors come from the rare
+     support (generate_base_batch) or the normal support (generate_normal_batch).
 
-Optional upgrade: TabPFN or RDB-PFN can replace the GaussianPrior scorer
-for relational schemas or structural feature interactions. Install
-'pip install regen-synth[pfn]' and set PriorConfig(backend='pfn') to
-enable. Without it, the GaussianPrior fallback runs everywhere, fully
-air-gapped, with no API keys.
+This is deliberately not a deep/relational generative model. An earlier design
+proposed wrapping RDB-PFN/TabPFN for relational schemas; that path was dropped
+as unused — REGEN is single-table, and grounded sampling plus the Amplifier's
+residual GP cover the need without it.
 
 Key design constraint: this file must not import any LLM client, agent
 framework, or network library. All randomness flows through the passed
@@ -27,7 +29,7 @@ Generator.
 
 import logging
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -41,33 +43,19 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class PriorConfig:
-    """Prior Engine configuration.
+    """Prior configuration.
 
     Attributes:
-        backend:          Which prior backend to use.
-                          'gaussian' (default) — fast, air-gapped, always
-                          available. 'pfn' — TabPFN/RDB-PFN for relational
-                          data and structural feature interactions (requires
-                          `pip install regen-synth[pfn]`).
-        device:           'cpu' or 'cuda' (only used with 'pfn' backend).
-        gnn_layers:       GNN message-passing rounds for relational schemas
-                          (only used with 'pfn' backend).
-        latent_dim:       Per-row latent vector (only used with 'pfn' backend).
-        max_train_rows:   Subsample normal rows when dataset exceeds this.
-                          5000 is the TabPFN scale limit. Not used with
-                          'gaussian' backend (GNB handles any size).
-        noise_scale:      Fraction of rare-event std-dev used as Gaussian
-                          perturbation on continuous features during base
-                          batch generation. Lower = tighter to real rare
-                          rows (better distribution match, less exploration).
-                          Higher = more exploration, wider coverage.
+        max_train_rows:   Subsample normal rows when the dataset exceeds this
+                          (the prior only needs to characterize the average case).
+        noise_scale:      Fraction of the anchor region's std-dev used as Gaussian
+                          perturbation on continuous features during grounded
+                          sampling. Lower = tighter to real anchor rows (better
+                          distribution match, less exploration). Higher = more
+                          exploration, wider coverage.
     """
-    backend: str = "gaussian"    # 'gaussian' or 'pfn'
-    device: str = "cpu"
-    gnn_layers: int = 3
-    latent_dim: int = 64
     max_train_rows: int = 5000
-    noise_scale: float = 0.10  # fraction of rare-event std-dev for perturbation
+    noise_scale: float = 0.10  # fraction of std-dev for continuous-feature perturbation
 
 
 # ── Fitted model ──────────────────────────────────────────────────────────────
@@ -75,14 +63,14 @@ class PriorConfig:
 @dataclass
 class PriorModel:
     """
-    Fitted prior. Exposes .score(df) and stores training state
-    needed by the Amplifier to compute residuals.
+    Fitted prior. Exposes .score(df) and stores training state needed by the
+    Amplifier to compute residuals, plus the anchor support used by grounded
+    sampling.
 
-    Scoring uses a Gaussian Naive Bayes estimator (O(1) per row) that
-    captures the "normal vs rare" contrast. The optional PFN backend is
-    used only when PriorConfig(backend='pfn') is set.
+    Scoring uses a class-conditional diagonal-Gaussian estimator (O(1) per row)
+    that captures the "normal vs rare" contrast.
     """
-    _scorer: object              # GaussianPrior or TabPFN instance
+    _scorer: object              # GaussianPrior — P(normal|x) density scorer
     _feature_cols: List[str]
     _label_col: str
     _X_train: np.ndarray         # encoded normal training features (float32)
@@ -91,7 +79,6 @@ class PriorModel:
     _X_rare_std: np.ndarray      # per-feature std of rare support
     _is_continuous: np.ndarray   # bool mask: which feature columns are continuous
     schema_graph: SchemaGraph
-    _backend_used: str = "gaussian"  # 'gaussian' or 'pfn' — which backend actually ran
     _field_dict: object = None   # ingest field_dict → canonical categorical encoding
 
     def score(self, df: pd.DataFrame) -> pd.Series:
@@ -118,9 +105,6 @@ class GaussianPrior:
     structure of the normal class well and is intentionally weak in the tail —
     which is precisely the prior's role. The Amplifier's ResidualGP corrects
     the tail.
-
-    Exposes .fit(X, y) / .predict_proba(X) interface, same as TabPFN, so
-    downstream code is agnostic to which backend is in use.
     """
 
     def __init__(self):
@@ -223,14 +207,10 @@ def fit_prior(
     y_all = np.array([1] * len(X) + [0] * n_synthetic_rare, dtype=np.int64)
 
     # Fit the scorer
-    if config.backend == "pfn":
-        scorer, backend_actual = _load_pfn_backend(config, X_all, y_all)
-    else:
-        scorer = GaussianPrior()
-        scorer.fit(X_all, y_all)
-        backend_actual = "gaussian"
-        logger.info("Prior fitted (Gaussian backend) on %d normal rows, %d features",
-                     len(X), len(feature_cols))
+    scorer = GaussianPrior()
+    scorer.fit(X_all, y_all)
+    logger.info("Prior scorer fitted on %d normal rows, %d features",
+                 len(X), len(feature_cols))
 
     X_std = X.std(axis=0)
     X_std = np.where(X_std < 1e-8, 1.0, X_std)
@@ -255,7 +235,6 @@ def fit_prior(
 
     return PriorModel(
         _scorer=scorer,
-        _backend_used=backend_actual,
         _feature_cols=feature_cols,
         _label_col=label_col,
         _X_train=X,
@@ -352,66 +331,6 @@ def generate_normal_batch(
     X_base += noise
 
     return pd.DataFrame(X_base, columns=feature_cols)
-
-
-# ── Optional PFN backend ──────────────────────────────────────────────────────
-
-def _load_pfn_backend(
-    config: PriorConfig,
-    X_all: np.ndarray,
-    y_all: np.ndarray,
-) -> Tuple[object, str]:
-    """
-    Load and fit the PFN backend (TabPFN or RDB-PFN).
-
-    Requires 'pip install regen-synth[pfn]'. Falls back to GaussianPrior
-    if the package is not installed or authentication fails. Logs a loud
-    warning on any fallback.
-
-    Returns:
-        (scorer, backend_name) where backend_name is 'pfn', 'rdbpfn',
-        or 'gaussian' (fallback).
-    """
-    # Try RDB-PFN first (relational)
-    try:
-        import rdbpfn
-        logger.info("Using rdbpfn (relational PFN)")
-        model = rdbpfn.RDBPFNClassifier(device=config.device, seed=42)
-        model.fit(X_all, y_all)
-        return model, "rdbpfn"
-    except ImportError:
-        pass
-    except Exception as exc:
-        logger.warning("rdbpfn loaded but failed: %s", exc)
-
-    # Fall back to TabPFN (flat table)
-    try:
-        from tabpfn import TabPFNClassifier
-        logger.info("Using TabPFN (flat-table PFN)")
-        model = TabPFNClassifier(device=config.device, ignore_pretraining_limits=True)
-        model.fit(X_all, y_all)
-        return model, "pfn"
-    except ImportError:
-        logger.warning(
-            "PFN backend requested but TabPFN not installed. "
-            "Install with: pip install regen-synth[pfn]"
-        )
-    except Exception as exc:
-        logger.warning(
-            "PFN backend requested but TabPFN failed: %s. "
-            "Falling back to GaussianPrior.",
-            exc,
-        )
-
-    # Fallback
-    scorer = GaussianPrior()
-    scorer.fit(X_all, y_all)
-    logger.warning(
-        "Prior backend fell back to GaussianPrior (requested: '%s'). "
-        "PFN features (ARD lengthscales, relational structure) unavailable.",
-        config.backend,
-    )
-    return scorer, "gaussian"
 
 
 # ── Internals ──────────────────────────────────────────────────────────────────

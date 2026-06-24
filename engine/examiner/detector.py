@@ -21,7 +21,7 @@ from sklearn.metrics import precision_score, recall_score
 from sklearn.model_selection import train_test_split
 
 from contracts.types import BatchManifest, IngestResult, LiftReport
-from engine.prior.rdbpfn import _encode_features
+from engine.prior.grounded import _encode_features
 
 logger = logging.getLogger(__name__)
 

@@ -22,7 +22,7 @@
 ## What Actually Ran
 
 ### Backend
-All three benchmarks used the **GaussianPrior** backend (`backend='gaussian'`). The PFN backend (TabPFN) was verified separately and works end-to-end, but its `fit()` does not scale past ~1000 training rows, so the GaussianPrior is the practical default.
+All three benchmarks used the **Gaussian scorer** (class-conditional diagonal Gaussian, `P(normal|x)`). This is the only backend — an optional RDB-PFN/TabPFN backend existed in an earlier revision and was removed as unused.
 
 ### GP Learning
 The GP uses an **ARD RBF kernel with L-BFGS optimization** (max 500 iterations, 120s timeout). On all three datasets the optimization converged:

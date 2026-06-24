@@ -603,7 +603,7 @@ def test_generate_is_reproducible_through_the_api():
 def test_gaussian_prior_not_dominated_by_feature_scale():
     """A huge-scale noise feature must not swamp an informative small-scale one
     (the prior standardizes features before the Gaussian fit)."""
-    from engine.prior.rdbpfn import GaussianPrior
+    from engine.prior.grounded import GaussianPrior
     rng = np.random.RandomState(0)
     m = 200
     x_info = np.concatenate([rng.normal(-1, 0.5, m), rng.normal(1, 0.5, m)])
@@ -620,7 +620,7 @@ def test_amplifier_warns_when_underdetermined(caplog):
     """Few rare rows relative to feature dims → loud warning, not a silent fit."""
     import logging as _logging
     from engine.amplifier.residual_gp import fit_residuals, AmplifierConfig
-    from engine.prior.rdbpfn import fit_prior, PriorConfig
+    from engine.prior.grounded import fit_prior, PriorConfig
     from engine.ingest.loader import _build_field_dict
     from contracts.types import IngestResult, SchemaGraph
 

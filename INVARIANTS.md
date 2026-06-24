@@ -16,7 +16,7 @@ see §4 and §7.
 > **The deterministic engine produces every number. Nothing an LLM/model emits ever becomes a data value.**
 
 No model ever invents a synthetic data value. If/when a model is added (§4), its output is metadata,
-control flow, or narration only. The actual values come out of the Prior Engine, the residual GP, and
+control flow, or narration only. The actual values come out of the Prior, the residual GP, and
 the acquisition math. This is what makes REGEN output defensible rather than plausible-looking
 fabrication.
 
@@ -39,11 +39,15 @@ in code comments; do not paste paper text.
 
 | Component        | Paper                                                        | Role in REGEN |
 |------------------|--------------------------------------------------------------|---------------|
-| Prior Engine     | RDB-PFN — relational in-context learning via synthetic prior | Statistically grounded base data generator. Relational prior + ICL produces structurally consistent rows (correct FK topology, block-diagonal correlation, temporal structure). |
+| Prior            | Empirical grounded sampling + class-conditional Gaussian density scorer (no learned generative model) | Generates the base batch by *grounded sampling* — real anchor rows + Gaussian noise scaled to the observed spread (continuous features only). Also fits a class-conditional Gaussian scorer `P(normal\|x)` that the Amplifier uses to weight residual relevance. Intentionally strong on the bulk, weak on the tail. Single-table; no relational/FK or temporal structure. |
 | Amplifier        | R-Design — active residual learning (R-EPIG, ResidualGP)     | Corrects the *tail*. Models the residual (gap between the prior's tail predictions and truth) because the residual is smoother and far cheaper to learn than regenerating the full distribution. |
 | Stylist (opt.)   | Structured semantic control                                  | Only if generating model-grounded narrated content (personas, attack-step text). Control vectors + drift penalty keep narration on-distribution. **Deferred — see §7.** |
 
-RDB-PFN reference implementation: `https://github.com/MuLabPKU/RDBPFN`. Wrap it; do not reimplement it.
+An earlier design proposed wrapping RDB-PFN / TabPFN (a Prior-Fitted Network) for
+relational schemas. That path was **removed** — REGEN is single-table, and grounded
+sampling plus the Amplifier's residual GP cover the need without it. Do not reintroduce
+a relational/PFN prior without a concrete relational requirement; if one appears, wrap
+(`https://github.com/MuLabPKU/RDBPFN`) rather than reimplement.
 
 ---
 
@@ -59,7 +63,7 @@ regen.api  (deterministic orchestration — sequences passes, gates batches, rep
     Examiner       trains/evaluates the downstream detector, measures rare-event lift
 
 Deterministic engine (pure Python — produces all numbers)
-    Prior Engine   RDB-PFN generator
+    Prior          grounded-sampling base generator + P(normal|x) density scorer
     Amplifier      ResidualGP correction over Scout's target region
     Auditor        fidelity gate (marginal calibration, tail dependence, correlation structure)
 
@@ -74,7 +78,7 @@ Entry points
 ```
 Scout selects rare-event target
         ↓
-Prior Engine generates base batch
+Prior generates base batch
         ↓
 Amplifier corrects the tail
         ↓
@@ -92,8 +96,11 @@ Examiner measures detection lift
 - **Scout** — runs R-EPIG over a candidate pool, reads the last lift signal and the within-run memory
   of explored regions, emits a target (covariate region / event type / tail percentile). Picks the
   question; the engine answers it.
-- **Prior Engine** — RDB-PFN. Given a schema and a Scout target, generates a structurally consistent
-  base batch. Strong on average-case, weak on the tail (that is the Amplifier's job).
+- **Prior** — grounded-sampling generator. Given a Scout target, generates a base batch by drawing
+  real anchor rows and perturbing their continuous features with Gaussian noise scaled to the observed
+  spread. Also fits a class-conditional Gaussian scorer `P(normal|x)` consumed by the Amplifier. Strong
+  on average-case, weak on the tail (that is the Amplifier's job). Single-table; not a learned or
+  relational generative model.
 - **Amplifier** — ResidualGP. Corrects and densifies the targeted rare region; does not regenerate
   the whole distribution.
 - **Auditor** — hard gate (default). Checks the batch against reference statistics and rejects
@@ -145,7 +152,7 @@ regen-synth/
     REGEN.md                 # architecture overview
     REGEN_DOCUMENTATION.md   # full API + stage reference
   engine/                    # DETERMINISTIC. No LLM, no agent, no network imports.
-    prior/                   # RDB-PFN wrapper (Prior Engine)
+    prior/                   # grounded-sampling generator + P(normal|x) density scorer
     amplifier/               # ResidualGP + correction (Rare Event Amplifier)
     scout/                   # R-EPIG acquisition + explored-region penalty (targeting math only)
     auditor/                 # fidelity statistics + accept/reject
@@ -177,7 +184,7 @@ Each milestone delivers standalone value. M0–M4 are complete and green.
 
 | # | Milestone        | Deliverable | Status |
 |---|------------------|-------------|--------|
-| M0 | Engine skeleton + boundary test | Wrap RDB-PFN Prior Engine. Generate a reproducible base batch from a fixed schema. `test_boundary.py` passes. | ✅ |
+| M0 | Engine skeleton + boundary test | Grounded-sampling Prior. Generate a reproducible base batch from a fixed schema. `test_boundary.py` passes. | ✅ |
 | M1 | Auditor          | Fidelity stats + gate. It must reject a deliberately corrupted batch and accept a clean one. | ✅ |
 | M2 | Amplifier        | ResidualGP correction on a hardcoded target region. Measurable density increase in the tail with fidelity preserved. | ✅ |
 | M3 | Examiner         | Train a simple detector; report tail recall/precision lift of amplified vs base data. Produces a single lift number. | ✅ |

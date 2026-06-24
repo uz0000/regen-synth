@@ -71,11 +71,8 @@ Full system documentation: [`docs/REGEN_DOCUMENTATION.md`](docs/REGEN_DOCUMENTAT
 ## Dependencies
 
 ```bash
-# Core (default, air-gapped):
+# Core (air-gapped, CPU-only):
 pip install regen-synth
-
-# With PFN backend for relational data:
-pip install regen-synth[pfn]
 
 # Everything:
 pip install regen-synth[all]
