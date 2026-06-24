@@ -464,3 +464,38 @@ def test_auditor_rejects_scrambled_correlation():
     assert all(c.passed for c in rep_bad.column_results), "marginals should still pass"
     assert not rep_bad.correlation_passed, "scrambled correlation should fail"
     assert not rep_bad.overall_passed
+
+
+# ── Batch B3: manifest persistence + real-path reproducibility ────────────────
+
+def test_generate_writes_complete_manifest():
+    """generate() must persist a manifest with everything needed to reproduce the
+    batch from disk (Invariant 2)."""
+    import json
+    from regen import generate
+    rd = RareEventDef(mode=RareMode.LABEL, label_value=1)
+    with tempfile.TemporaryDirectory() as tmp:
+        out = str(Path(tmp) / "out")
+        s = generate(SAMPLE_CSV, label_col=LABEL_COL, rare_def=rd,
+                     n_rows=100, auto=False, out_dir=out)
+        mpath = Path(s["manifest_path"])
+        assert mpath.exists()
+        m = json.loads(mpath.read_text())
+    for key in ("seed", "schema_hash", "prior_config", "amplifier_params", "code_version", "n_rows"):
+        assert key in m, f"manifest missing {key}"
+    assert m["code_version"] and m["code_version"] != "unknown"
+    assert m["prior_config"].get("noise_scale") is not None
+
+
+def test_generate_is_reproducible_through_the_api():
+    """Same seed + config through the real generate() path → identical batch."""
+    from regen import generate, load_synthetic
+    rd = RareEventDef(mode=RareMode.LABEL, label_value=1)
+    with tempfile.TemporaryDirectory() as tmp:
+        o1, o2 = str(Path(tmp) / "a"), str(Path(tmp) / "b")
+        generate(SAMPLE_CSV, label_col=LABEL_COL, rare_def=rd, n_rows=120,
+                 seed=7, auto=False, out_dir=o1)
+        generate(SAMPLE_CSV, label_col=LABEL_COL, rare_def=rd, n_rows=120,
+                 seed=7, auto=False, out_dir=o2)
+        b1, b2 = load_synthetic(o1), load_synthetic(o2)
+    pd.testing.assert_frame_equal(b1, b2)

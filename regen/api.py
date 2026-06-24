@@ -382,9 +382,11 @@ def run_campaign(
     n_rejected = 0
     explored_points: list = []
     best_batch_path: Optional[str] = None
+    best_seed: Optional[int] = None
+    best_target: Dict[str, Any] = {}
 
     for pass_num in range(max_passes):
-        amp_df, report, lift, _ = _run_one_pass(
+        amp_df, report, lift, target_region = _run_one_pass(
             result, prior_cfg, amp_cfg, aud_cfg, exam_cfg, scout_cfg,
             seed + pass_num, n_rows, label_col, rare_def, explored_points,
         )
@@ -412,10 +414,17 @@ def run_campaign(
             amplified_precision=lift.amplified_precision,
         ))
 
-        # Save batch (features only — label is inherent for rare events)
+        # Save the accepted batch (carries the rare label, see _generate_amp_batch).
         batch_path = str(out_path / f"pass_{pass_num + 1}_accepted.parquet")
         amp_df.to_parquet(batch_path, index=False)
         best_batch_path = batch_path  # last accepted is best
+        best_seed = seed + pass_num
+        best_target = target_region
+
+    # Persist the manifest for the best (last accepted) batch so it is
+    # reproducible from disk (Invariant 2).
+    if best_batch_path is not None:
+        _write_manifest(out_path, best_seed, result, prior_cfg, amp_cfg, best_target, n_rows)
 
     n_features = len(result.field_dict) - 1
 
@@ -657,15 +666,22 @@ def generate(
     exam_cfg = ExaminerConfig(n_estimators=100)
     scout_cfg = ScoutConfig(num_candidates=100)
 
-    amp_df, report, lift, _ = _run_one_pass(
+    final_seed = seed + 9000
+    amp_df, report, lift, target_region = _run_one_pass(
         result, prior_cfg, amp_cfg, aud_cfg, exam_cfg, scout_cfg,
-        seed + 9000, n_rows, result.label_col, rare_def, [],
+        final_seed, n_rows, result.label_col, rare_def, [],
     )
 
     # 4. Persist the batch (reuses the campaign on-disk layout so the existing
     #    get_results / load_synthetic / download endpoints work unchanged).
     batch_path = str(out_path / "pass_1_accepted.parquet")
     amp_df.to_parquet(batch_path, index=False)
+
+    # Persist the manifest so the batch is reproducible from disk (Invariant 2):
+    # seed + configs + schema hash + code version fully determine the output.
+    manifest_path = _write_manifest(
+        out_path, final_seed, result, prior_cfg, amp_cfg, target_region, len(amp_df),
+    )
 
     fidelity = {
         "score": round(_fidelity_score(report), 4),
@@ -711,10 +727,48 @@ def generate(
         "candidates": trail,
         "output_dir": str(out_path),
         "best_batch_path": batch_path,
+        "manifest_path": manifest_path,
+        "seed": final_seed,
     }
     # Write a minimal campaign_summary.json so get_results()/download work.
     _save_generate_summary(summary, out_path)
     return summary
+
+
+def _write_manifest(
+    out_path: Path,
+    seed: int,
+    result: IngestResult,
+    prior_cfg,
+    amp_cfg,
+    target_region: Dict[str, Any],
+    n_rows: int,
+) -> str:
+    """Build and persist the batch manifest (Invariant 2).
+
+    Captures everything that determines the output — seed, schema hash, prior
+    and amplifier configs, the Scout target, n_rows, and the code version — so
+    the batch can be regenerated bit-for-bit from what's saved on disk. Returns
+    the manifest file path.
+    """
+    from dataclasses import asdict, is_dataclass
+    from engine.manifest import build_manifest
+
+    def _cfg(c):
+        return asdict(c) if is_dataclass(c) else dict(getattr(c, "__dict__", {}))
+
+    manifest = build_manifest(
+        seed=seed,
+        schema=result.schema_graph,
+        prior_config=_cfg(prior_cfg),
+        target_region={k: v for k, v in (target_region or {}).items()
+                       if isinstance(v, (int, float, str, bool, type(None)))},
+        amplifier_params=_cfg(amp_cfg),
+        n_rows=n_rows,
+    )
+    path = out_path / "manifest.json"
+    path.write_text(manifest.to_json())
+    return str(path)
 
 
 def _save_generate_summary(summary: Dict[str, Any], out_path: Path) -> None:
