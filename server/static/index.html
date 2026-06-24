@@ -159,6 +159,8 @@
 
       <h2 style="margin-top:20px;font-size:1rem">Synthetic preview (first 10 rows)</h2>
       <div class="preview-scroll"><table id="previewTable"><thead></thead><tbody></tbody></table></div>
+
+      <div id="repro" class="hint" style="margin-top:16px"></div>
     </div>
   </div>
 
@@ -263,10 +265,19 @@ $("genBtn").addEventListener("click", async () => {
 function renderResult(s){
   const f = s.fidelity, l = s.lift, c = s.config_used;
   const liftPct = l ? (l.tail_lift*100).toFixed(1)+"%" : "n/a";
+  // Cross-column correlation-structure gate (joint structure, not just marginals).
+  const corr = f.correlation || {};
+  const corrShown = (corr.delta !== null && corr.delta !== undefined);
+  const corrCell = corrShown
+    ? `<div class="stat"><div class="k">structure</div>
+         <div class="v ${corr.passed?'good':'warn'}">${corr.passed?'✓':'✗'}</div>
+         <div class="k" style="margin-top:2px">corr Δ ${corr.delta.toFixed(3)}</div></div>`
+    : "";
   $("topStats").innerHTML = `
     <div class="stat"><div class="k">rows generated</div><div class="v">${s.n_rows}</div></div>
     <div class="stat"><div class="k">fidelity</div><div class="v ${f.passed?'good':'warn'}">${(f.score*100).toFixed(0)}%</div></div>
-    <div class="stat"><div class="k">detection lift</div><div class="v ${l&&l.tail_lift>=0?'good':'warn'}">${liftPct}</div></div>
+    <div class="stat"><div class="k">detection lift <span class="muted">(held-out)</span></div><div class="v ${l&&l.tail_lift>=0?'good':'warn'}">${liftPct}</div></div>
+    ${corrCell}
     <div class="stat"><div class="k">auto noise</div><div class="v">${c.noise_scale.toFixed(2)}</div></div>`;
   $("fidGrid").innerHTML = (f.columns||[]).map(col => `
     <div class="fid-col"><span class="${col.passed?'ok':'no'}">${col.passed?'✓':'✗'}</span> ${col.col}
@@ -277,6 +288,14 @@ function renderResult(s){
   } else {
     $("liftBlock").classList.add("hidden");
   }
+  // Reproducibility: lift is measured on real rows held out of generation, and
+  // the batch ships with a manifest (seed + configs + code version) that
+  // regenerates it bit-for-bit.
+  const seed = (s.seed !== undefined && s.seed !== null) ? s.seed : "—";
+  $("repro").innerHTML =
+    `Reproducible — seed <b>${seed}</b>. Detection lift is measured on real rare events `
+    + `held out of generation (leakage-free). `
+    + `<a href="/api/campaign/${s.run_id}/manifest">Download manifest</a>`;
   $("result").classList.remove("hidden");
 }
 

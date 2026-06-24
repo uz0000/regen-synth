@@ -48,11 +48,15 @@ The user supplies only what only they know (their data, how many rows, what
 it's for); REGEN picks the target and the auto-tuner picks `noise_scale`.
 Returns: `detection` (what was auto-selected — label column, rare value, ratio,
 and runner-up columns; `null` if both were supplied), `fidelity` (per-column
-distribution match), `lift` (detection lift, or null), `config_used` (the chosen
-noise/mode), and `candidates` (the auto-tune trail — one entry per noise
-candidate, for the fidelity-vs-lift frontier chart). The batch is saved in
-campaign layout, so `/api/campaign/{run_id}/download` and `/preview` retrieve it
-with the returned `run_id`. If the target is ambiguous (two equally plausible
+distribution match **plus** `fidelity.correlation` = `{delta, passed}`, the
+cross-column correlation-structure gate; `delta` is `null` when there are too
+few numeric columns to estimate), `lift` (held-out detection lift, or null),
+`config_used` (the chosen noise/mode), `candidates` (the auto-tune trail — one
+entry per noise candidate, for the fidelity-vs-lift frontier chart), and `seed`
++ `manifest_path` (the batch ships with a manifest that regenerates it
+bit-for-bit). The batch is saved in campaign layout, so
+`/api/campaign/{run_id}/download`, `/preview`, and `/manifest` retrieve it with
+the returned `run_id`. If the target is ambiguous (two equally plausible
 columns) the endpoint returns **400** with the candidate list — resend with an
 explicit `label_col`.
 
@@ -60,7 +64,11 @@ explicit `label_col`.
 faithful copy for any model); `balanced` maximizes detection-lift subject to
 the fidelity gate; `boost` is the same with a looser gate (more lift, more
 distortion). Detection lift is measured by the internal Examiner, a Random
-Forest used as a generic tabular-classifier proxy.
+Forest used as a generic tabular-classifier proxy — and it is **leakage-free**:
+the real rare rows are split into train/test first, the synthetic the amplified
+detector trains on is generated from the train fold only, and both detectors are
+scored on the held-out real rows. The Auditor gate now also checks cross-column
+correlation structure, not just per-column marginals.
 
 ### 2. Health Check
 ```
@@ -192,6 +200,14 @@ GET /api/campaign/{run_id}/download?format=parquet
 ```
 Returns a file download (CSV or Parquet).
 
+### 9. Download Manifest
+```
+GET /api/campaign/{run_id}/manifest
+```
+Returns the batch manifest JSON (seed, schema hash, prior/amplifier configs,
+Scout target, code version) — everything needed to regenerate the batch
+bit-for-bit. **404** if the run has no manifest.
+
 ## Frontend Flow
 
 The built-in UI (`GET /`) is a three-step session:
@@ -282,15 +298,22 @@ interface GenerateResult {
   n_rows: number;              // rows generated
   label_col: string;
   n_normal: number; n_rare: number; n_features: number;
+  detection: {
+    label_col: string; rare_value: any; n_rare: number; minority_ratio: number;
+    auto_label: boolean; auto_rare: boolean; alternatives: object[];
+  } | null;                    // what was auto-selected; null if both supplied
   fidelity: {
     score: number;             // 0-1, fraction of columns matching
     passed: boolean;           // cleared the Auditor gate
     coverage: number;
+    correlation: { delta: number | null; passed: boolean };  // cross-column joint structure
     columns: { col: string; passed: boolean; metric: "wasserstein"|"tvd"; value: number }[];
   };
-  lift: { tail_lift: number; baseline_recall: number; amplified_recall: number } | null;
+  lift: { tail_lift: number; baseline_recall: number; amplified_recall: number } | null; // held-out
   config_used: { mode: string; noise_scale: number; coverage_threshold: number; auto: boolean };
   candidates: { noise: number; fidelity: number; lift: number | null; passed: boolean }[]; // frontier
+  seed: number;                // reproduces the batch with config_used
+  manifest_path: string;       // also downloadable via /api/campaign/{run_id}/manifest
 }
 ```
 

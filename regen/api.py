@@ -692,6 +692,12 @@ def generate(
         "score": round(_fidelity_score(report), 4),
         "passed": bool(report.overall_passed),
         "coverage": round(report.coverage_rate, 4),
+        # Cross-column correlation-structure gate (B2): None when too few numeric
+        # columns/rows to estimate.
+        "correlation": {
+            "delta": round(report.correlation_delta, 4) if report.correlation_delta is not None else None,
+            "passed": bool(report.correlation_passed),
+        },
         "columns": [
             {
                 "col": c.col,

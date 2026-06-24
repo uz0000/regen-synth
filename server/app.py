@@ -416,6 +416,22 @@ async def download_synthetic(run_id: str, format: str = "csv"):
         )
 
 
+@app.get("/api/campaign/{run_id}/manifest")
+async def download_manifest(run_id: str):
+    """Download the batch manifest (seed + configs + schema hash + code version).
+
+    The manifest is what makes a batch reproducible from disk (Invariant 2).
+    """
+    manifest_path = CAMPAIGN_DIR / run_id / "manifest.json"
+    if not manifest_path.exists():
+        raise HTTPException(status_code=404, detail=f"No manifest for campaign {run_id}.")
+    return StreamingResponse(
+        io.StringIO(manifest_path.read_text()),
+        media_type="application/json",
+        headers={"Content-Disposition": f"attachment; filename=regen_manifest_{run_id}.json"},
+    )
+
+
 @app.get("/api/campaign/{run_id}/preview")
 async def preview_synthetic(run_id: str, n: int = 10):
     """Preview the first N rows of synthetic data as JSON."""
