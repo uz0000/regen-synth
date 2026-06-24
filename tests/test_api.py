@@ -499,3 +499,43 @@ def test_generate_is_reproducible_through_the_api():
                  seed=7, auto=False, out_dir=o2)
         b1, b2 = load_synthetic(o1), load_synthetic(o2)
     pd.testing.assert_frame_equal(b1, b2)
+
+
+# ── Medium fragility fixes (#8 RNG / #9 GP guard / #10 standardization) ────────
+
+def test_gaussian_prior_not_dominated_by_feature_scale():
+    """A huge-scale noise feature must not swamp an informative small-scale one
+    (the prior standardizes features before the Gaussian fit)."""
+    from engine.prior.rdbpfn import GaussianPrior
+    rng = np.random.RandomState(0)
+    m = 200
+    x_info = np.concatenate([rng.normal(-1, 0.5, m), rng.normal(1, 0.5, m)])
+    x_noise = rng.normal(0, 1000.0, 2 * m)          # huge scale, no signal
+    X = np.column_stack([x_info, x_noise])
+    y = np.array([0] * m + [1] * m)
+    gp = GaussianPrior().fit(X, y)
+    proba = gp.predict_proba(X)
+    acc = ((proba[:, 1] > 0.5).astype(int) == y).mean()
+    assert acc > 0.9, "scoring was dominated by the large-scale noise feature"
+
+
+def test_amplifier_warns_when_underdetermined(caplog):
+    """Few rare rows relative to feature dims → loud warning, not a silent fit."""
+    import logging as _logging
+    from engine.amplifier.residual_gp import fit_residuals, AmplifierConfig
+    from engine.prior.rdbpfn import fit_prior, PriorConfig
+    from engine.ingest.loader import _build_field_dict
+    from contracts.types import IngestResult, SchemaGraph
+
+    rng = np.random.RandomState(0)
+    nf = 8
+    cols = [f"f{i}" for i in range(nf)]
+    norm = pd.DataFrame(rng.randn(300, nf), columns=cols); norm["label"] = 0
+    rare = pd.DataFrame(rng.randn(12, nf) + 3, columns=cols); rare["label"] = 1
+    full = pd.concat([norm, rare], ignore_index=True)
+    ing = IngestResult(normal_df=norm, rare_df=rare, schema_graph=SchemaGraph(),
+                       field_dict=_build_field_dict(full, "label"), label_col="label")
+    prior = fit_prior(ing, PriorConfig(), np.random.default_rng(0))
+    with caplog.at_level(_logging.WARNING, logger="engine.amplifier.residual_gp"):
+        fit_residuals(ing, prior, AmplifierConfig())
+    assert any("underdetermined" in r.message for r in caplog.records)

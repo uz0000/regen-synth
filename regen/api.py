@@ -251,7 +251,13 @@ def _generate_amp_batch(
     from engine.amplifier import fit_residuals, sample_residuals
     from engine.scout import select_target
 
-    rng = np.random.default_rng(seed)
+    # Two independent RNG substreams from one seed. `rng` drives the prior fit,
+    # Scout, and base-batch noise; `rng_res` drives residual sampling. Spawning
+    # via SeedSequence guarantees the two streams are statistically independent
+    # and stay so regardless of how many draws the upstream stages consume — the
+    # old code reseeded both from the raw `seed`, which only avoided correlation
+    # by accident of stream position and would silently couple if merged.
+    rng, rng_res = (np.random.default_rng(s) for s in np.random.SeedSequence(seed).spawn(2))
 
     # Prior + Amplifier are fit on the ingest data (not the generated batch)
     prior = fit_prior(result, prior_cfg, rng)
@@ -270,9 +276,8 @@ def _generate_amp_batch(
     base = generate_base_batch(prior, n_rows, target_region, rng,
                                noise_scale=prior_cfg.noise_scale)
 
-    # Amplifier: ResidualGP tail correction
-    rng2 = np.random.default_rng(seed)
-    _, _, X_res = sample_residuals(residual, base.values.astype(np.float64), rng2)
+    # Amplifier: ResidualGP tail correction (independent substream — see above)
+    _, _, X_res = sample_residuals(residual, base.values.astype(np.float64), rng_res)
     amp_df = pd.DataFrame(base.values + X_res, columns=base.columns)
 
     # Constrain to observed support + dtype (clip continuous, round integers, snap

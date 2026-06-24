@@ -44,6 +44,8 @@ class AmplifierConfig:
     gp_noise_variance: float = 0.1 # observation noise σ²
     max_features: int = 0          # 0 = all features; >0 = top-K by variance (speeds GP on high-D data)
     gp_optimize_iters: int = 500   # max L-BFGS iterations for GP hyperparameter optimisation
+    min_obs_per_dim: float = 2.0   # warn if rare obs per ARD lengthscale falls below this
+                                   # (the GP is underdetermined → tail fit is unreliable)
 
 
 # ── Fitted residual model ──────────────────────────────────────────────────────
@@ -101,7 +103,8 @@ def fit_residuals(
     """
     rare_df = ingest.rare_df
     feature_cols = prior._feature_cols
-    X_rare = _encode_features(rare_df[feature_cols]).astype(np.float64)
+    # Use the prior's canonical category encoding so codes match the scored space.
+    X_rare = _encode_features(rare_df[feature_cols], prior._field_dict).astype(np.float64)
 
     prior_scores = prior.score(rare_df).values  # P(normal) for each rare row
     residuals = 1.0 - prior_scores              # high = very un-normal
@@ -125,6 +128,20 @@ def fit_residuals(
         logger.info("Rare event buffer capped: %d → %d", len(X_gp), config.gp_max_obs)
         X_gp = X_gp[-config.gp_max_obs:]
         residuals = residuals[-config.gp_max_obs:]
+
+    # Underdetermination guard: the ARD kernel fits one lengthscale per input
+    # dimension, so with few rare rows relative to dimensions the tail fit is
+    # unreliable (overfit lengthscales, posterior variance masked by the 1e-6
+    # clip downstream). Warn loudly rather than silently producing a confident-
+    # looking but ungrounded correction; the Auditor still gates the result.
+    n_obs, n_dim = X_gp.shape
+    if n_dim > 0 and n_obs < config.min_obs_per_dim * n_dim:
+        logger.warning(
+            "GP underdetermined: %d rare obs for %d feature dims (< %.1f per dim). "
+            "Tail correction is unreliable — consider more rare data or "
+            "AmplifierConfig.max_features to reduce GP input dimensions.",
+            n_obs, n_dim, config.min_obs_per_dim,
+        )
 
     gp, optimized = _fit_gp(X_gp, residuals, config)
 

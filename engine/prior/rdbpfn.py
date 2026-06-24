@@ -125,17 +125,31 @@ class GaussianPrior:
 
     def __init__(self):
         self._classes = None
-        self._means = {}      # class → per-feature mean
-        self._vars = {}       # class → per-feature variance
+        self._means = {}      # class → per-feature mean (in standardized space)
+        self._vars = {}       # class → per-feature variance (in standardized space)
         self._priors = {}     # class → prior probability
+        self._feat_mean = None  # global per-feature mean (standardization)
+        self._feat_std = None   # global per-feature std (standardization)
+
+    def _standardize(self, X: np.ndarray) -> np.ndarray:
+        return (X - self._feat_mean) / self._feat_std
 
     def fit(self, X: np.ndarray, y: np.ndarray) -> "GaussianPrior":
         X = np.asarray(X, dtype=np.float64)
         y = np.asarray(y)
+        # Standardize features to unit scale before fitting. Without this, a
+        # low-variance or small-unit feature contributes a disproportionately
+        # large (X-mean)^2/var term and dominates the diagonal-Gaussian score,
+        # swamping the other features. Standardizing puts every feature on equal
+        # footing. Scoring only — generation uses raw anchor values, untouched.
+        self._feat_mean = X.mean(axis=0)
+        std = X.std(axis=0)
+        self._feat_std = np.where(std < 1e-8, 1.0, std)
+        Xs = self._standardize(X)
         self._classes = np.unique(y)
         n = len(y)
         for c in self._classes:
-            Xc = X[y == c]
+            Xc = Xs[y == c]
             self._means[c] = Xc.mean(axis=0)
             # Floor the variance so a constant feature doesn't blow up the density
             self._vars[c] = Xc.var(axis=0) + 1e-6
@@ -143,7 +157,7 @@ class GaussianPrior:
         return self
 
     def predict_proba(self, X: np.ndarray) -> np.ndarray:
-        X = np.asarray(X, dtype=np.float64)
+        X = self._standardize(np.asarray(X, dtype=np.float64))
         # Log-likelihood per class under a diagonal Gaussian, plus log prior
         log_probs = []
         for c in self._classes:
