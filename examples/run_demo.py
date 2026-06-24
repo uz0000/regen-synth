@@ -1,11 +1,13 @@
 """
 End-to-end REGEN demo (CLI, no UI framework).
 
-This is the runnable proof that the loop closes:
-    ingest → (Scout → Prior → Amplifier → Auditor → Examiner) × N
+This is the runnable proof that the pipeline works:
+    ingest → generate a full synthetic dataset (normal part + amplified rare part)
+           → (Scout → Prior → Amplifier → Auditor → Examiner) × N
 
 It is fully self-contained: if the sample dataset is missing it generates one,
-then runs a multi-pass amplification campaign and a quick REGEN-vs-SMOTE screen.
+then (1) screens REGEN vs SMOTE, (2) generates a full synthetic dataset via the
+primary generate() path, and (3) runs a multi-pass amplification campaign.
 Everything is deterministic given the seed — every value is engine output; the
 only thing the loop decides is *which region to amplify next*.
 
@@ -26,7 +28,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from contracts.types import RareEventDef, RareMode  # noqa: E402
-from regen.api import run_campaign, screen          # noqa: E402
+from regen.api import generate, run_campaign, screen          # noqa: E402
 
 # Silence library logging (paramz/GPy warn "reconstraining parameters" on every
 # GP fit). The demo drives all output via print(), so logging is noise here.
@@ -70,7 +72,7 @@ def run(data: Path, label_col: str, rare_value, seed: int, passes: int) -> int:
     )
 
     # ── 1. Screen: quick REGEN vs SMOTE head-to-head on this data ─────────────
-    print("\n[1/2] Screening: REGEN vs SMOTE (1 pass each, matched budget)...")
+    print("\n[1/3] Screening: REGEN vs SMOTE (1 pass each, matched budget)...")
     with _quiet():
         sr = screen(
             filepath=str(data),
@@ -82,8 +84,35 @@ def run(data: Path, label_col: str, rare_value, seed: int, passes: int) -> int:
           f"(confidence {sr.confidence:.2f}, Fisher CV {sr.heterogeneity_score:.2f})")
     print(f"      {sr.rationale}")
 
-    # ── 2. Full multi-pass campaign ───────────────────────────────────────────
-    print(f"\n[2/2] Running {passes}-pass REGEN campaign...")
+    # ── 2. Generate a full synthetic dataset (the primary deliverable) ────────
+    #    generate() returns a FULL dataset: an amplified rare part concatenated
+    #    with a synthetic normal part, at a rare:normal ratio that reflects the
+    #    amplification. This is what changed — it no longer returns rare rows only.
+    print("\n[2/3] Generating full synthetic dataset (normal part + amplified rare part)...")
+    with _quiet():
+        gs = generate(
+            filepath=str(data),
+            label_col=label_col,
+            rare_def=rare_def,
+            n_rows=400,
+            mode="balanced",
+            seed=seed,
+        )
+    print(f"      rows: {gs['n_rows']}  =  {gs['n_synthetic_normal']} normal  +  "
+          f"{gs['n_synthetic_rare']} rare")
+    print(f"      rare ratio: {gs['rare_ratio']:.2f}  "
+          f"(natural prevalence {gs['natural_prevalence']:.2f} → amplified)")
+    print(f"      fidelity: rare {gs['fidelity']['score']:.2f} "
+          f"(coverage {gs['fidelity']['coverage']:.2f}), "
+          f"normal {gs['normal_fidelity']['score']:.2f}  "
+          f"[overall {'PASS' if gs['fidelity']['passed'] else 'FAIL'}]")
+    if gs["lift"]:
+        print(f"      detection lift: recall {gs['lift']['baseline_recall']:.3f} → "
+              f"{gs['lift']['amplified_recall']:.3f}  ({gs['lift']['tail_lift']:+.3f})")
+    print(f"      full dataset:  {gs['best_batch_path']}")
+
+    # ── 3. Full multi-pass campaign ───────────────────────────────────────────
+    print(f"\n[3/3] Running {passes}-pass REGEN campaign...")
     with _quiet():
         cr = run_campaign(
             filepath=str(data),

@@ -323,6 +323,37 @@ def generate_base_batch(
     return pd.DataFrame(X_base, columns=feature_cols)
 
 
+def generate_normal_batch(
+    prior: PriorModel,
+    n: int,
+    rng: np.random.Generator,
+    noise_scale: float = 0.10,
+) -> pd.DataFrame:
+    """Generate n synthetic *normal*-class rows.
+
+    Mirror of generate_base_batch but anchored on the normal covariate support
+    (prior._X_train) instead of the rare region, with no Scout targeting — the
+    normal class has no tail to densify. Same grounded-sampling discipline: real
+    normal rows + Gaussian perturbation scaled to the normal spread; only
+    continuous features are perturbed. Used to synthesize the majority half of a
+    full synthetic dataset; its fidelity is gated by the Auditor against the
+    normal reference (the Amplifier is not involved — it corrects the rare tail).
+    """
+    feature_cols = prior._feature_cols
+    X_anchor = prior._X_train
+    anchor_std = prior._X_train_std
+
+    idx = rng.choice(len(X_anchor), size=n, replace=True)
+    X_base = X_anchor[idx].copy().astype(np.float64)
+
+    continuous = prior._is_continuous
+    noise = np.zeros_like(X_base)
+    noise[:, continuous] = rng.standard_normal((n, int(continuous.sum()))) * anchor_std[continuous] * noise_scale
+    X_base += noise
+
+    return pd.DataFrame(X_base, columns=feature_cols)
+
+
 # ── Optional PFN backend ──────────────────────────────────────────────────────
 
 def _load_pfn_backend(

@@ -10,6 +10,11 @@ multi-table schemas.
 The base batch covers the average case well; the Amplifier corrects the tail.
 """
 
-from .rdbpfn import PriorConfig, PriorModel, fit_prior, generate_base_batch
+from .rdbpfn import (
+    PriorConfig, PriorModel, fit_prior, generate_base_batch, generate_normal_batch,
+)
 
-__all__ = ["PriorConfig", "PriorModel", "fit_prior", "generate_base_batch"]
+__all__ = [
+    "PriorConfig", "PriorModel", "fit_prior",
+    "generate_base_batch", "generate_normal_batch",
+]

@@ -269,6 +269,44 @@ def _generate_amp_batch(
     return amp_df, target_region
 
 
+def _generate_normal_batch(
+    result: IngestResult,
+    prior_cfg,
+    seed: int,
+    n_rows: int,
+    label_col: str,
+) -> pd.DataFrame:
+    """Generate n_rows synthetic *normal*-class rows for the full-dataset path.
+
+    Mirror of the generation core, but for the majority class: fit the Prior
+    (anchored on the normal covariate support, ``_X_train``) and ground-sample
+    from it via ``generate_normal_batch`` — no Scout, no Amplifier (those exist
+    to densify the rare tail, which the normal class does not have). Then apply
+    the same domain constraints + categorical decode as the rare path, and
+    attach the normal label so the row is usable downstream. Pure function of
+    (result, config, seed).
+    """
+    from engine.prior import fit_prior, generate_normal_batch
+
+    rng = np.random.default_rng(seed)
+    prior = fit_prior(result, prior_cfg, rng)
+    normal_df = generate_normal_batch(
+        prior, n_rows, rng, noise_scale=prior_cfg.noise_scale,
+    )
+
+    # Clip continuous, round integers, snap binaries (shared constraint layer).
+    normal_df = _apply_domain_constraints(normal_df, result)
+
+    # Attach the label. Like the rare path, the Prior emits feature columns only;
+    # every row here is the normal class, so it carries the normal label sourced
+    # from the real normal rows (robust to whatever encoding the rare value has).
+    if label_col and label_col in result.normal_df.columns and len(result.normal_df):
+        normal_df[label_col] = result.normal_df[label_col].mode().iloc[0]
+
+    normal_df = _decode_categoricals(normal_df, result)
+    return normal_df
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # 2. RUN CAMPAIGN
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -469,6 +507,15 @@ _NOISE_CANDIDATES = (0.05, 0.08, 0.10, 0.13, 0.16, 0.20)
 # boost    = same objective, looser gate (more amplification, more lift, more distortion).
 _GENERATE_MODES = ("faithful", "balanced", "boost")
 
+# Full-synthesis auto rare:normal ratio. The deliverable is a full dataset =
+# amplified rare part + synthetic normal part. The rare fraction reflects the
+# amplification: amplify any true minority up to at least this floor so the
+# detector always gets strong rare signal, but never push a well-represented
+# class (prevalence above the floor) past its natural rate. The loader always
+# picks the minority class, so natural prevalence is ≤ 0.5 — the resolved auto
+# ratio therefore lands in [DEFAULT_MIN_RARE_FRAC, 0.5].
+DEFAULT_MIN_RARE_FRAC = 0.25
+
 
 def _fidelity_score(report) -> float:
     """Scalar fidelity in [0,1]: fraction of columns whose distribution matches.
@@ -564,22 +611,31 @@ def generate(
     auto: bool = True,
     noise_scale: Optional[float] = None,
     coverage_threshold: Optional[float] = None,
+    rare_ratio: Optional[float] = None,
     out_dir: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """The simple primary path: generate a synthetic dataset as a CSV-ready batch.
+    """The simple primary path: generate a synthetic *dataset* as a CSV-ready batch.
 
     This is the user-facing entry point that hides REGEN's technical knobs.
     The user supplies data + how many rows they want (+ an optional intent);
     the system auto-detects the rare class, auto-tunes noise and target region,
-    and returns a fidelity-checked synthetic batch plus both quality numbers
-    (fidelity + detection lift).
+    and returns a fidelity-checked synthetic **full dataset** — an amplified
+    rare part concatenated with a synthetic normal part — plus both quality
+    numbers (fidelity + detection lift).
 
-    Two operating points (INVARIANTS.md §4 / design notes):
-      * faithful — maximize distributional fidelity. Model-agnostic: the result
-        is just a faithful synthetic copy, useful for any downstream model.
+    The deliverable is a full dataset, not just the rare rows. The rare part is
+    the amplified batch (Prior → Amplifier, gated against the rare reference);
+    the normal part is grounded-sampled from the normal covariate support (gated
+    against the normal reference). They are concatenated at ``rare_ratio``, the
+    fraction of the batch that is rare — the ratio reflects the amplification.
+
+    Three operating points (INVARIANTS.md §4 / design notes):
+      * faithful — maximize distributional fidelity. Model-agnostic copy.
       * balanced / boost — maximize detection-lift subject to the fidelity gate.
         The internal Examiner (a Random Forest) is a generic tabular-classifier
         proxy; lift optimized for it transfers well to tree/linear models.
+      All three return the combined full dataset; the mode only controls how the
+      rare part is generated/tuned, not whether the normal part is included.
 
     Manual choice of the target is optional. Leave label_col / rare_def open and
     the ingest layer detects them *structurally* — the most imbalanced
@@ -595,17 +651,23 @@ def generate(
         label_col: Label column. "" → structurally auto-detect the target column.
         rare_def: How rare events are identified. None → auto (minority class of
             the resolved label column). Pass an explicit value to override.
-        n_rows: How many synthetic rows to generate. The one knob the user owns.
+        n_rows: Size of the full synthetic dataset (normal + rare combined).
         mode: "faithful" | "balanced" | "boost". Default "balanced".
         seed: RNG seed (full reproducibility).
         auto: If True, auto-tune noise via a small search. If False, use noise_scale.
         noise_scale: Manual prior-noise (used when auto=False; default 0.10).
         coverage_threshold: Auditor gate strictness. None → 0.30 for boost, else 0.50.
+        rare_ratio: Target fraction of the batch that is the rare class
+            (0 < rare_ratio < 1). None → auto: ``max(natural_prevalence,
+            DEFAULT_MIN_RARE_FRAC)`` — amplifies any true minority to at least 25%
+            so the detector always gets strong rare signal, without de-amplifying
+            a class that is already well represented.
         out_dir: Where to persist the batch + summary. Auto-tempdir if None.
 
     Returns:
         Dict with: run_id, n_rows, label_col, rare info, detection (what was
-        auto-selected, or None if fully manual), fidelity (per-column + score),
+        auto-selected, or None if fully manual), rare_ratio + the normal/rare
+        split, fidelity (per-column + score, rare-half), normal_fidelity,
         lift (or None), config_used, and the auto-tune candidate trail.
         The batch itself is saved to out_dir/pass_1_accepted.parquet and is
         retrievable via get_results()/load_synthetic().
@@ -627,17 +689,34 @@ def generate(
     if coverage_threshold is None:
         coverage_threshold = 0.30 if mode == "boost" else 0.50
 
+    # Resolve the rare:normal split. n_rows is the FULL dataset size; the rare
+    # part is amplified to `rare_ratio` of it and the normal part fills the rest.
+    natural_prevalence = (
+        len(result.rare_df) / (len(result.normal_df) + len(result.rare_df))
+        if (len(result.normal_df) + len(result.rare_df)) > 0 else 0.0
+    )
+    if rare_ratio is None:
+        rare_ratio_resolved = max(natural_prevalence, DEFAULT_MIN_RARE_FRAC)
+    else:
+        if not (0.0 < rare_ratio < 1.0):
+            raise ValueError(f"rare_ratio must be in (0, 1), got {rare_ratio!r}")
+        rare_ratio_resolved = rare_ratio
+    n_rare = max(1, int(round(n_rows * rare_ratio_resolved)))
+    n_rare = min(n_rare, n_rows - 1) if n_rows > 1 else n_rare
+    n_normal = n_rows - n_rare
+
     out_path = Path(out_dir) if out_dir else Path(tempfile.mkdtemp(prefix="regen_generate_"))
     out_path.mkdir(parents=True, exist_ok=True)
 
-    # 2. Auto-tune (or use the manual noise)
+    # 2. Auto-tune (or use the manual noise). Tuning runs at the RARE batch size:
+    #    the rare part is what the objective (fidelity / lift) scores against.
     if auto:
-        best_noise, trail = _autotune(result, rare_def, mode, seed, coverage_threshold, n_rows)
+        best_noise, trail = _autotune(result, rare_def, mode, seed, coverage_threshold, n_rare)
     else:
         best_noise = 0.10 if noise_scale is None else noise_scale
         trail = []
 
-    # 3. Final generation at the requested size with the chosen config
+    # 3. Final generation with the chosen config.
     prior_cfg = PriorConfig(noise_scale=best_noise)
     amp_cfg = AmplifierConfig(gp_noise_variance=0.1)
     aud_cfg = AuditorConfig(coverage_threshold=coverage_threshold)
@@ -645,31 +724,58 @@ def generate(
     scout_cfg = ScoutConfig(num_candidates=100)
 
     final_seed = seed + 9000
-    amp_df, report, lift, target_region = _run_one_pass(
+
+    # 3a. Rare part: Prior → Scout → Amplifier, gated against the rare reference.
+    rare_df_synth, rare_report, lift, target_region = _run_one_pass(
         result, prior_cfg, amp_cfg, aud_cfg, exam_cfg, scout_cfg,
-        final_seed, n_rows, result.label_col, rare_def, [],
+        final_seed, n_rare, result.label_col, rare_def, [],
     )
 
-    # 4. Persist the batch (reuses the campaign on-disk layout so the existing
+    # 3b. Normal part: grounded sampling on the normal covariate support, gated
+    #     against the normal reference. Coverage is a rare-region question
+    #     ("did we densify the tail?") and is meaningless for a normal sample, so
+    #     it is turned off — the normal part is judged on marginals + correlation.
+    #     A decorrelated seed offset keeps the normal draw independent of the rare
+    #     pipeline's RNG consumption.
+    normal_df_synth = _generate_normal_batch(
+        result, prior_cfg, final_seed + 7777, n_normal, result.label_col,
+    )
+    from engine.auditor import audit
+    normal_report = audit(
+        result, normal_df_synth, aud_cfg,
+        reference_df=result.normal_df, check_coverage=False,
+    )
+
+    # 4. Combine + persist (reuses the campaign on-disk layout so the existing
     #    get_results / load_synthetic / download endpoints work unchanged).
+    full_df = pd.concat([normal_df_synth, rare_df_synth], ignore_index=True)
+    # Each part minted its own fresh identifiers starting past the observed max,
+    # so the two parts now collide on keys. Re-run the constraint layer on the
+    # combined frame to re-mint identifiers across the whole batch (unique again);
+    # the clip/snap steps are idempotent on the already-constrained columns.
+    full_df = _apply_domain_constraints(full_df, result)
     batch_path = str(out_path / "pass_1_accepted.parquet")
-    amp_df.to_parquet(batch_path, index=False)
+    full_df.to_parquet(batch_path, index=False)
+
+    overall_passed = bool(rare_report.overall_passed and normal_report.overall_passed)
 
     # Persist the manifest so the batch is reproducible from disk (Invariant 2):
-    # seed + configs + schema hash + code version fully determine the output.
+    # seed + configs + schema hash + rare split + code version fully determine
+    # the output.
     manifest_path = _write_manifest(
-        out_path, final_seed, result, prior_cfg, amp_cfg, target_region, len(amp_df),
+        out_path, final_seed, result, prior_cfg, amp_cfg, target_region,
+        len(full_df), rare_ratio_resolved,
     )
 
     fidelity = {
-        "score": round(_fidelity_score(report), 4),
-        "passed": bool(report.overall_passed),
-        "coverage": round(report.coverage_rate, 4),
+        "score": round(_fidelity_score(rare_report), 4),
+        "passed": overall_passed,
+        "coverage": round(rare_report.coverage_rate, 4),
         # Cross-column correlation-structure gate (B2): None when too few numeric
         # columns/rows to estimate.
         "correlation": {
-            "delta": round(report.correlation_delta, 4) if report.correlation_delta is not None else None,
-            "passed": bool(report.correlation_passed),
+            "delta": round(rare_report.correlation_delta, 4) if rare_report.correlation_delta is not None else None,
+            "passed": bool(rare_report.correlation_passed),
         },
         "columns": [
             {
@@ -679,8 +785,16 @@ def generate(
                 "value": round(c.wasserstein, 4) if c.wasserstein is not None
                 else (round(c.tvd, 4) if c.tvd is not None else None),
             }
-            for c in report.column_results
+            for c in rare_report.column_results
         ],
+    }
+    normal_fidelity = {
+        "score": round(_fidelity_score(normal_report), 4),
+        "passed": bool(normal_report.overall_passed),
+        "correlation": {
+            "delta": round(normal_report.correlation_delta, 4) if normal_report.correlation_delta is not None else None,
+            "passed": bool(normal_report.correlation_passed),
+        },
     }
     lift_out = None
     if lift is not None:
@@ -692,20 +806,29 @@ def generate(
 
     summary = {
         "run_id": out_path.name,
-        "n_rows": len(amp_df),
+        "n_rows": len(full_df),
         "label_col": result.label_col,
+        # Real (source) class counts — get_results() reads these as the original
+        # dataset's normal/rare sizes, so they stay about the input, not the output.
         "n_normal": len(result.normal_df),
         "n_rare": len(result.rare_df),
+        # Synthetic split of the delivered full dataset.
+        "n_synthetic_normal": n_normal,
+        "n_synthetic_rare": n_rare,
+        "rare_ratio": round(rare_ratio_resolved, 4),
+        "natural_prevalence": round(natural_prevalence, 4),
         "n_features": len(result.field_dict) - (1 if result.label_col else 0),
         # What the system chose for you (and what you could override). None when
         # both label_col and rare value were supplied explicitly.
         "detection": result.detection.as_dict() if result.detection else None,
         "fidelity": fidelity,
+        "normal_fidelity": normal_fidelity,
         "lift": lift_out,
         "config_used": {
             "mode": mode,
             "noise_scale": round(best_noise, 4),
             "coverage_threshold": coverage_threshold,
+            "rare_ratio": round(rare_ratio_resolved, 4),
             "auto": auto,
         },
         "candidates": trail,
@@ -727,13 +850,14 @@ def _write_manifest(
     amp_cfg,
     target_region: Dict[str, Any],
     n_rows: int,
+    rare_ratio: float = 0.0,
 ) -> str:
     """Build and persist the batch manifest (Invariant 2).
 
     Captures everything that determines the output — seed, schema hash, prior
-    and amplifier configs, the Scout target, n_rows, and the code version — so
-    the batch can be regenerated bit-for-bit from what's saved on disk. Returns
-    the manifest file path.
+    and amplifier configs, the Scout target, n_rows, the rare:normal split, and
+    the code version — so the batch can be regenerated bit-for-bit from what is
+    saved on disk. Returns the manifest file path.
     """
     from dataclasses import asdict, is_dataclass
     from engine.manifest import build_manifest
@@ -749,6 +873,7 @@ def _write_manifest(
                        if isinstance(v, (int, float, str, bool, type(None)))},
         amplifier_params=_cfg(amp_cfg),
         n_rows=n_rows,
+        rare_ratio=rare_ratio,
     )
     path = out_path / "manifest.json"
     path.write_text(manifest.to_json())

@@ -70,6 +70,8 @@ def audit(
     synthetic_df: pd.DataFrame,
     config: AuditorConfig,
     manifest: Optional[BatchManifest] = None,
+    reference_df: Optional[pd.DataFrame] = None,
+    check_coverage: bool = True,
 ) -> FidelityReport:
     """
     Gate the synthetic batch. Returns a FidelityReport.
@@ -79,10 +81,16 @@ def audit(
     to the Examiner — do not route around this gate.
 
     Args:
-        ingest:       IngestResult (uses normal_df + rare_df for reference).
-        synthetic_df: Generated synthetic records.
-        config:       AuditorConfig with thresholds.
-        manifest:     BatchManifest to embed in the report (optional).
+        ingest:        IngestResult (uses normal_df + rare_df for reference).
+        synthetic_df:  Generated synthetic records.
+        config:        AuditorConfig with thresholds.
+        manifest:      BatchManifest to embed in the report (optional).
+        reference_df:  Override the reference distribution. Default None →
+                       rare_df (the rare-amplification case). Pass normal_df to
+                       gate a synthetic *normal* batch (full-synthesis path).
+        check_coverage: Coverage answers "did we densify the rare region", which
+                       is meaningless for a normal sample — set False there and
+                       gate on marginals + correlation only.
 
     Returns:
         FidelityReport — check .overall_passed before proceeding.
@@ -95,18 +103,23 @@ def audit(
     # coverage and per-column marginals is the rare distribution — "do these
     # synthetic rare rows look like real rare events?" Comparing against the
     # full dataset (mostly normal) would reject every valid amplification batch.
-    # If there are no rare rows, fall back to the full distribution.
-    if rare_df is not None and len(rare_df) > 0:
+    # A caller can override the reference (e.g. the normal half of a full set).
+    if reference_df is not None:
+        pass
+    elif rare_df is not None and len(rare_df) > 0:
         reference_df = rare_df
     else:
         reference_df = pd.concat([ingest.normal_df, ingest.rare_df], ignore_index=True)
 
     # ── PRIMARY GATE: rare event coverage ────────────────────────────────────
-    if rare_df is not None and len(rare_df) > 0:
-        coverage_rate = _coverage_rate(rare_df, synthetic_df, field_dict)
+    if check_coverage and rare_df is not None and len(rare_df) > 0:
+        coverage_rate = _coverage_rate(reference_df, synthetic_df, field_dict)
     else:
         coverage_rate = 1.0
-        logger.info("No rare_df — skipping coverage check.")
+        if not check_coverage:
+            logger.info("Coverage check disabled (non-rare reference).")
+        else:
+            logger.info("No rare_df — skipping coverage check.")
 
     coverage_passed = coverage_rate >= config.coverage_threshold
     if not coverage_passed:

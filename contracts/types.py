@@ -183,6 +183,10 @@ class BatchManifest:
     amplifier_params: Dict[str, Any]
     code_version: str                # git commit hash or package version
     n_rows: int = 0
+    # Full-synthesis split: fraction of the batch that is the amplified rare class
+    # (the rest is the synthetic normal part). 0.0 = rare-only (legacy/pre-split
+    # batches); recorded so a full-dataset run can be reproduced row-for-row.
+    rare_ratio: float = 0.0
 
     def to_json(self) -> str:
         return json.dumps(
@@ -194,6 +198,7 @@ class BatchManifest:
                 "amplifier_params": self.amplifier_params,
                 "code_version": self.code_version,
                 "n_rows": self.n_rows,
+                "rare_ratio": self.rare_ratio,
             },
             sort_keys=True,
         )

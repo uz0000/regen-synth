@@ -98,6 +98,7 @@ class GenerateRequest(BaseModel):
     mode: str = "balanced"        # "faithful" | "balanced" | "boost"
     seed: int = 42
     auto: bool = True
+    rare_ratio: Optional[float] = None  # None → auto (amplify minority to >=25%)
 
 
 class HealthResponse(BaseModel):
@@ -357,6 +358,7 @@ async def generate_data(req: GenerateRequest):
             mode=req.mode,
             seed=req.seed,
             auto=req.auto,
+            rare_ratio=req.rare_ratio,
             out_dir=out_dir,
         )
     except ValueError as e:

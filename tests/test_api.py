@@ -266,25 +266,122 @@ def test_api_boundary():
 
 # ── generate(): label passthrough + domain constraints ────────────────────────
 
-def test_generate_attaches_rare_label():
-    """The synthetic batch must carry the label column, set to the rare class.
+def test_generate_returns_full_dataset_with_both_classes():
+    """generate() returns a FULL dataset: synthetic normal part + amplified rare part.
 
-    The Prior generates feature columns only, so the batch arrives unlabeled —
-    but every row is the amplified rare class and must say so to be usable
-    downstream. Regression test for the dropped-label bug.
+    The Prior generates feature columns only, so each part arrives unlabeled and
+    must be stamped with its class. The batch therefore carries BOTH classes —
+    normal rows labeled 0 and rare rows labeled 1 — at the resolved rare ratio.
+    Regression test for the dropped-label bug and for the full-synthesis shape.
     """
     from regen import generate, load_synthetic
 
+    n_rows = 120
     with tempfile.TemporaryDirectory() as out:
         summary = generate(
             SAMPLE_CSV, label_col=LABEL_COL, rare_def=RARE_DEF,
-            n_rows=120, mode="balanced", auto=False, out_dir=out,
+            n_rows=n_rows, mode="balanced", auto=False, out_dir=out,
         )
         batch = load_synthetic(out)
 
     assert LABEL_COL in batch.columns, "synthetic batch is missing the label column"
-    # All rows are the amplified rare class → label is the rare value, constant.
-    assert set(batch[LABEL_COL].unique()) == {RARE_DEF.label_value}
+    # Both classes present, and only those two values.
+    assert set(batch[LABEL_COL].unique()) == {0, RARE_DEF.label_value}
+    # The full dataset has the requested number of rows.
+    assert len(batch) == n_rows
+    # The split matches the reported counts.
+    n_rare = int((batch[LABEL_COL] == RARE_DEF.label_value).sum())
+    n_normal = int((batch[LABEL_COL] == 0).sum())
+    assert n_rare == summary["n_synthetic_rare"]
+    assert n_normal == summary["n_synthetic_normal"]
+    assert n_rare + n_normal == n_rows
+
+
+def test_generate_auto_rare_ratio_amplifies_minority():
+    """Auto rare_ratio = max(natural_prevalence, DEFAULT_MIN_RARE_FRAC=0.25).
+
+    The sample data has ~3% natural prevalence, so the auto ratio floors it at
+    25% — a real amplification, never a de-amplification. The resolved ratio and
+    the realized rare fraction in the batch must agree.
+    """
+    from regen.api import generate
+
+    with tempfile.TemporaryDirectory() as out:
+        summary = generate(SAMPLE_CSV, label_col=LABEL_COL, rare_def=RARE_DEF,
+                           n_rows=400, auto=False, out_dir=out)
+        batch = pd.read_parquet(summary["best_batch_path"])
+
+    assert summary["rare_ratio"] == 0.25
+    assert summary["natural_prevalence"] < 0.25  # genuinely rare in the source
+    realized = (batch[LABEL_COL] == RARE_DEF.label_value).mean()
+    assert abs(realized - 0.25) < 0.02  # within one row of the target ratio
+
+
+def test_generate_explicit_rare_ratio_honored():
+    """An explicit rare_ratio overrides auto and is reflected in the split."""
+    from regen.api import generate
+
+    with tempfile.TemporaryDirectory() as out:
+        summary = generate(SAMPLE_CSV, label_col=LABEL_COL, rare_def=RARE_DEF,
+                           n_rows=200, auto=False, rare_ratio=0.5, out_dir=out)
+
+    assert summary["rare_ratio"] == 0.5
+    assert summary["n_synthetic_rare"] == 100
+    assert summary["n_synthetic_normal"] == 100
+
+
+def test_generate_rejects_invalid_rare_ratio():
+    from regen.api import generate
+    with pytest.raises(ValueError, match="rare_ratio"):
+        generate(SAMPLE_CSV, label_col=LABEL_COL, rare_def=RARE_DEF,
+                 n_rows=100, auto=False, rare_ratio=1.5)
+
+
+def test_generate_gates_normal_part_against_normal_reference():
+    """The normal part is audited against normal_df (coverage off) and reported.
+
+    The summary must carry a normal_fidelity block, and for a clean run the
+    normal part passes its gate — otherwise a garbage normal half would ship
+    silently alongside an accepted rare half.
+    """
+    from regen.api import generate
+
+    with tempfile.TemporaryDirectory() as out:
+        summary = generate(SAMPLE_CSV, label_col=LABEL_COL, rare_def=RARE_DEF,
+                           n_rows=300, auto=False, out_dir=out)
+
+    nf = summary["normal_fidelity"]
+    assert "score" in nf and "passed" in nf
+    # Overall passed requires BOTH halves to pass.
+    assert summary["fidelity"]["passed"] == (nf["passed"] and True)
+
+
+def test_generate_full_dataset_is_reproducible():
+    """Same seed + config through generate() → identical full-dataset batch."""
+    from regen.api import generate
+
+    with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
+        sa = generate(SAMPLE_CSV, label_col=LABEL_COL, rare_def=RARE_DEF,
+                      n_rows=200, auto=False, noise_scale=0.10, out_dir=a)
+        sb = generate(SAMPLE_CSV, label_col=LABEL_COL, rare_def=RARE_DEF,
+                      n_rows=200, auto=False, noise_scale=0.10, out_dir=b)
+        da = pd.read_parquet(sa["best_batch_path"])
+        db = pd.read_parquet(sb["best_batch_path"])
+    assert da.equals(db), "full-dataset generation is not reproducible"
+
+
+def test_generate_manifest_records_rare_ratio():
+    """The manifest must capture the rare split so the full dataset reproduces."""
+    import json as _json
+    from regen.api import generate
+
+    with tempfile.TemporaryDirectory() as out:
+        summary = generate(SAMPLE_CSV, label_col=LABEL_COL, rare_def=RARE_DEF,
+                           n_rows=200, auto=False, rare_ratio=0.4, out_dir=out)
+        manifest = _json.loads(Path(summary["manifest_path"]).read_text())
+
+    assert manifest["rare_ratio"] == 0.4
+    assert manifest["n_rows"] == 200
 
 
 def test_generate_clips_to_observed_support():
