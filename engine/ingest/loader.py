@@ -319,17 +319,62 @@ def _detect_target(df: pd.DataFrame, config: IngestConfig) -> TargetDetection:
     """Pick the single best rare-event target column, or fail loud if unclear."""
     candidates = _score_target_columns(df, config)
     if not candidates:
-        raise ValueError(
-            "No suitable rare-event target found: need a low-cardinality column "
-            f"(<= {config.max_target_cardinality} classes) with >= {config.min_rare_rows} "
-            f"rare rows and minority ratio <= {config.max_minority_ratio:.2f}. "
-            "Pass label_col / rare_def explicitly."
-        )
+        raise ValueError(_no_target_message(df, config))
     best = candidates[0]
     if len(candidates) >= 2 and (best.score - candidates[1].score) < config.ambiguity_margin:
         raise AmbiguousTargetError(candidates[:4])
     best.alternatives = [c.as_dict() for c in candidates[1:4]]
     return best
+
+
+def _no_target_message(df: pd.DataFrame, config: IngestConfig) -> str:
+    """A diagnostic error explaining why each column was rejected as a target.
+
+    The bare "no suitable target" message leaves the caller guessing. Here we list
+    the low-cardinality columns (the realistic override candidates) with the
+    specific reason each failed the useful band, so they know what to pass as
+    label_col / rare_def.
+    """
+    n = len(df)
+    near, high_card = [], 0
+    for col in df.columns:
+        s = df[col]
+        card = int(s.nunique(dropna=True))
+        if card < 2:
+            continue  # constant column — never a target
+        if card > config.max_target_cardinality:
+            high_card += 1
+            continue
+        counts = s.value_counts(dropna=True)
+        n_rare = int(counts.min())
+        ratio = n_rare / n if n else 0.0
+        if n_rare < config.min_rare_rows:
+            reason = f"only {n_rare} rare rows (need >= {config.min_rare_rows})"
+        elif ratio > config.max_minority_ratio:
+            reason = (f"minority class is {ratio:.0%} of rows — too balanced "
+                      f"(need <= {config.max_minority_ratio:.0%})")
+        else:
+            reason = "borderline"
+        kind = "binary" if card == 2 else f"{card}-class"
+        near.append(f"  • '{col}' ({kind}, rare value={_as_native(counts.idxmin())!r}): {reason}")
+
+    lines = [
+        "No column qualified for automatic rare-event detection. REGEN looks for a "
+        f"low-cardinality column (<= {config.max_target_cardinality} classes) with "
+        f">= {config.min_rare_rows} rare rows and a minority class <= "
+        f"{config.max_minority_ratio:.0%} of the data.",
+    ]
+    if near:
+        lines.append("Closest columns and why each was skipped:")
+        lines.extend(near[:8])
+    if high_card:
+        lines.append(f"  ({high_card} other column(s) skipped: too many distinct values — "
+                     "likely continuous or an ID.)")
+    lines.append(
+        "Fix: pass label_col (and a rare value) explicitly. For a continuous target "
+        "(e.g. an amount/score), use percentile mode to flag the tail instead of a label."
+    )
+    return "\n".join(lines)
 
 
 def _as_native(value):
