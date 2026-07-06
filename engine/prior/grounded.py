@@ -370,15 +370,21 @@ def generate_parametric_batch(
     This is the privacy-safe generator: unlike ``generate_base_batch`` /
     ``generate_normal_batch`` (which perturb a *real anchor row* and so emit
     near-copies of real individuals), this never touches a real row. Continuous
-    features are drawn from a **Gaussian copula** fit on demand from the stored
-    class array (``_X_rare``/``_X_train``): each continuous column is mapped to
-    standard-normal scores, the latent correlation is estimated, fresh latent
-    rows are drawn from that correlation, then mapped back through the column's
-    empirical quantiles. This preserves each marginal exactly (values lie on the
-    real support) **and** the correlation structure — the two things the Auditor
-    gates on — without ever copying a real row. Categorical/binary features are
-    drawn from per-class frequency tables (so discrete values are no longer
-    copied verbatim from a real row, which was the strongest re-id signal).
+    features are drawn from a **mixed-data Gaussian copula** fit on demand from
+    the stored class array (``_X_rare``/``_X_train``): every feature column
+    (continuous *and* discrete) is mapped to standard-normal scores, one latent
+    correlation is estimated across all of them, fresh latent rows are drawn from
+    that correlation, then each column is mapped back to its own marginal —
+    continuous columns through their empirical quantiles, categorical/binary
+    columns through the inverse-CDF of their per-class frequency table. This
+    preserves each marginal exactly (values lie on the real support) **and** the
+    full correlation structure — including correlation *between* discrete and
+    continuous features — which the Auditor gates on, without ever copying a real
+    row. (Drawing the discrete columns independently, as an earlier version did,
+    reproduced their marginals but erased that cross-correlation and failed the
+    gate whenever a binary/categorical feature was correlated with the continuous
+    ones — the P0-2 defect.) Discrete values are never copied verbatim from a
+    real row, which was the strongest re-id signal.
 
     Returns a feature-only DataFrame in *encoded* space — the same contract as
     ``generate_base_batch`` — so the downstream ResidualGP correction,
@@ -399,31 +405,42 @@ def generate_parametric_batch(
     p = len(feature_cols)
     X = np.zeros((n, p), dtype=np.float64)
 
-    cont_idx = prior._cont_idx
     disc_idx = prior._disc_idx
-    disc_freq = prior._disc_freq or {}
+    disc_freq = (prior._disc_freq or {}).get(which_class, {})
 
-    key = which_class
     # The real class array the copula + frequency tables were derived from.
-    class_X = (prior._X_rare if key == "rare" else prior._X_train)
+    class_X = (prior._X_rare if which_class == "rare" else prior._X_train)
     class_X = np.asarray(class_X, dtype=np.float64)
+    if class_X.shape[0] == 0:
+        return pd.DataFrame(X, columns=feature_cols)
 
-    # Continuous block: Gaussian copula built on demand from class_X (no real
-    # row is reused — only its per-column marginal and the latent correlation).
-    if cont_idx is not None and cont_idx.size and class_X.shape[0] > 0:
-        real_cont = class_X[:, cont_idx]                       # (m, k) real values
-        Xc = _gaussian_copula_sample(real_cont, n, rng)        # (n, k) fresh draws
-        X[:, cont_idx] = Xc
+    # ONE joint Gaussian copula over ALL feature columns (continuous + discrete),
+    # not a continuous-only copula with discrete columns drawn independently.
+    # Sampling discrete columns independently (the previous behaviour) preserved
+    # each marginal but erased every correlation *between* a discrete feature and
+    # the continuous ones. When a binary/categorical feature is correlated with
+    # the continuous features in the rare tail (e.g. is_fraud ↔ n_prior_txns), the
+    # Auditor's correlation gate then failed on the whole batch — the P0-2 defect,
+    # which only surfaced once such a feature was gated (in LABEL mode the binary
+    # is the label and is excluded from the gate). The joint copula ties every
+    # column to a shared latent correlation, so cross-correlation is restored
+    # while each marginal is still reproduced exactly (continuous via
+    # empirical-quantile inverse; discrete via inverse-CDF on the frequency table).
+    # No real row is emitted: every coordinate is an interpolation/lookup selected
+    # by an independently drawn latent rank. When there are no discrete features
+    # this reduces exactly (same RNG draws, same values) to the continuous copula.
+    U = _copula_uniforms(class_X, n, rng)                     # (n, p) correlated uniforms
 
-    # Discrete block: sample codes from the per-class frequency tables.
-    if disc_idx is not None and disc_idx.size and key in disc_freq:
-        for j in disc_idx:
-            col = feature_cols[j]
-            freq = disc_freq[key].get(col)
+    disc_set = set(int(j) for j in disc_idx) if disc_idx is not None else set()
+    for j in range(p):
+        if j in disc_set:
+            freq = disc_freq.get(feature_cols[j])
             if freq is None or freq.size == 0:
-                continue
-            codes = np.arange(freq.size)
-            X[:, j] = rng.choice(codes, size=n, p=freq).astype(np.float64)
+                X[:, j] = class_X[0, j]      # degenerate: single observed code
+            else:
+                X[:, j] = _discrete_inverse_cdf(freq, U[:, j])
+        else:
+            X[:, j] = _quantile_inverse(class_X[:, j], U[:, j])
 
     return pd.DataFrame(X, columns=feature_cols)
 
@@ -460,53 +477,74 @@ def _quantile_inverse(real_col: np.ndarray, u: np.ndarray) -> np.ndarray:
     return sv[lo] * (1.0 - frac) + sv[hi] * frac
 
 
-def _gaussian_copula_sample(
-    real_cont: np.ndarray, n: int, rng: np.random.Generator,
+def _copula_uniforms(
+    source: np.ndarray, n: int, rng: np.random.Generator,
 ) -> np.ndarray:
-    """Draw ``n`` fresh continuous rows from a Gaussian copula fit on
-    ``real_cont`` (shape (m, k)).
+    """Draw ``n`` correlated uniform rows from a Gaussian copula fit on
+    ``source`` (shape (m, p)), for ALL columns jointly — continuous and discrete.
+
+    Returns an (n, p) matrix of uniforms in (0, 1); mapping each uniform back to
+    its column's marginal (continuous → empirical-quantile inverse; discrete →
+    inverse-CDF on the frequency table) is the caller's job. Handling every
+    column jointly here is what lets a mixed continuous/discrete batch keep the
+    cross-correlation between the two kinds of feature.
 
     The copula factors a joint distribution into (marginals) × (dependence):
-      1. Map each real column to standard-normal scores (``_normal_scores``) →
-         the latent Gaussian space where dependence is a plain correlation.
+      1. Map each source column to standard-normal scores (``_normal_scores``) →
+         the latent Gaussian space where dependence is a plain correlation. Rank
+         scores work for continuous *and* ordinal-coded discrete columns, and a
+         discrete column with no real association leaves the estimated latent
+         correlation ≈ 0, so no spurious dependence is manufactured.
       2. Estimate that latent correlation and draw ``n`` fresh latent rows from
-         it. With <2 real rows or a degenerate/non-finite correlation, fall back
-         to the identity (independent columns): marginals still match exactly,
-         only cross-column correlation is dropped.
-      3. Push each latent column through Φ to a uniform, then through the real
-         column's empirical quantiles (``_quantile_inverse``) → values that lie
-         on the real support with the real marginal, but belong to no real row.
+         it. With <2 rows or a degenerate/non-finite correlation, fall back to
+         the identity (independent columns): marginals still match exactly, only
+         cross-column correlation is dropped.
+      3. Push each latent column through Φ to a uniform.
 
-    No real row is ever emitted: every output coordinate is an interpolation of
-    sorted real values selected by an independently drawn latent rank.
+    No real row is ever emitted: the uniforms are drawn from a fitted latent, and
+    the caller's marginal lookup selects sorted real values / frequency-table
+    codes by an independently drawn latent rank.
     """
     from scipy.stats import norm
 
-    m, k = real_cont.shape
-    if k == 0:
+    m, p = source.shape
+    if p == 0:
         return np.zeros((n, 0), dtype=np.float64)
 
     # 1. Latent normal scores per column.
-    Z = np.column_stack([_normal_scores(real_cont[:, c]) for c in range(k)])
+    Z = np.column_stack([_normal_scores(source[:, c]) for c in range(p)])
 
     # 2. Latent correlation + fresh draws. np.corrcoef needs ≥2 rows and varying
     #    columns; guard both and ridge-regularize so the Cholesky/eigendecomp in
     #    multivariate_normal stays well-conditioned.
-    corr = np.eye(k)
+    corr = np.eye(p)
     if m >= 2:
         with np.errstate(invalid="ignore", divide="ignore"):
             c = np.corrcoef(Z, rowvar=False)
         c = np.atleast_2d(c)
-        if c.shape == (k, k) and np.all(np.isfinite(c)):
-            corr = 0.999 * c + 0.001 * np.eye(k)  # pull toward identity
-    L = rng.multivariate_normal(np.zeros(k), corr, size=n)
+        if c.shape == (p, p) and np.all(np.isfinite(c)):
+            corr = 0.999 * c + 0.001 * np.eye(p)  # pull toward identity
+    L = rng.multivariate_normal(np.zeros(p), corr, size=n)
 
-    # 3. Latent → uniform → real marginal.
-    U = norm.cdf(L)
-    out = np.empty((n, k), dtype=np.float64)
-    for c in range(k):
-        out[:, c] = _quantile_inverse(real_cont[:, c], U[:, c])
-    return out
+    # 3. Latent → uniform.
+    return norm.cdf(L)
+
+
+def _discrete_inverse_cdf(freq: np.ndarray, u: np.ndarray) -> np.ndarray:
+    """Map uniforms ``u`` ∈ [0,1] to discrete codes via the inverse CDF of the
+    frequency table ``freq`` (probabilities over codes 0..K-1).
+
+    ``code = min{ k : cumsum(freq)[k] ≥ u }``. This reproduces the marginal
+    frequency exactly (same distribution the old independent sampler produced),
+    while the *ordering* of the draw is governed by the shared copula latent — so
+    a discrete column now co-varies with the continuous ones it was correlated
+    with, instead of being sampled in isolation.
+    """
+    cum = np.cumsum(np.asarray(freq, dtype=np.float64))
+    if cum.size:
+        cum[-1] = 1.0  # guard fp drift so u≈1 lands on the last code, not past it
+    codes = np.searchsorted(cum, np.clip(u, 0.0, 1.0), side="left")
+    return np.clip(codes, 0, freq.size - 1).astype(np.float64)
 
 
 def _fit_discrete_freq(

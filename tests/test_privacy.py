@@ -202,3 +202,62 @@ class TestGeneratePrivacy:
         with pytest.raises(ValueError):
             generate(SAMPLE_CSV, label_col=LABEL_COL, rare_def=RARE_DEF,
                      n_rows=50, delta=5.0)
+
+
+# ── P0-2: percentile-mode correlation gate under privacy ──────────────────────
+
+class TestP02PercentileCorrelationUnderPrivacy:
+    """P0-2: percentile (numeric-tail) rare mode must pass the correlation gate
+    under privacy="floored" (the default).
+
+    Root cause was the parametric generator sampling discrete columns
+    independently of the continuous copula, erasing the correlation between a
+    binary/categorical feature and the continuous ones. In LABEL mode the binary
+    is the label (excluded from the gate) so it never surfaced; in PERCENTILE
+    mode (here: amount as the target, is_fraud a gated binary feature) it did.
+    The fix draws all features from one joint (mixed-data) Gaussian copula.
+    """
+
+    RD = RareEventDef(mode=RareMode.PERCENTILE, percentile=0.05, tail="upper")
+
+    def test_percentile_mode_passes_correlation_gate_under_floor(self):
+        from regen.api import generate
+        with tempfile.TemporaryDirectory() as out:
+            s = generate(SAMPLE_CSV, label_col="amount", rare_def=self.RD,
+                         n_rows=200, seed=7, privacy="floored", out_dir=out)
+        corr = s["fidelity"]["correlation"]
+        # The whole point: the correlation gate that used to fail (delta≈0.33)
+        # now passes, so the default-privacy batch is shippable.
+        assert corr["passed"], f"correlation gate failed: delta={corr['delta']}"
+        assert s["fidelity"]["passed"]
+        assert s["passed"]
+
+    def test_privacy_off_still_passes(self):
+        """Sanity: the non-private path was never broken and stays green."""
+        from regen.api import generate
+        with tempfile.TemporaryDirectory() as out:
+            s = generate(SAMPLE_CSV, label_col="amount", rare_def=self.RD,
+                         n_rows=200, seed=7, privacy="none", out_dir=out)
+        assert s["fidelity"]["correlation"]["passed"]
+
+    def test_mixed_copula_preserves_discrete_continuous_correlation(self):
+        """Direct check on the generator: a discrete feature strongly correlated
+        with a continuous one keeps that correlation under the joint copula,
+        where independent discrete sampling would drop it toward zero."""
+        import numpy as np
+        from engine.prior import fit_prior, PriorConfig, generate_parametric_batch
+        from regen.api import ingest as _ingest
+
+        result = _ingest(SAMPLE_CSV, "amount", self.RD)
+        rng = np.random.default_rng(0)
+        prior = fit_prior(result, PriorConfig(), rng)
+        batch = generate_parametric_batch(prior, 400, np.random.default_rng(1),
+                                          which_class="rare")
+        # In the rare tail is_fraud is strongly (negatively) correlated with
+        # n_prior_txns in the real data; the synthetic batch should keep the sign
+        # and a non-trivial magnitude rather than collapsing to ~0.
+        real_r = result.rare_df[["n_prior_txns", "is_fraud"]].corr().iloc[0, 1]
+        synth_r = batch[["n_prior_txns", "is_fraud"]].corr().iloc[0, 1]
+        assert abs(real_r) > 0.2                       # precondition on the fixture
+        assert np.sign(synth_r) == np.sign(real_r)
+        assert abs(synth_r) > 0.15                     # not erased to independence
