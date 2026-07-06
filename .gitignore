@@ -15,8 +15,10 @@ regen-output/
 benchmark/regen-output/
 benchmark/creditcard.csv
 
-# Benchmark datasets (downloaded by run_multi.py from OpenML)
+# Benchmark datasets (downloaded from OpenML by the benchmark runners) — not
+# redistributed in the repo. The provenance record is tracked (see G-F.4).
 benchmark/data/
+!benchmark/data/PROVENANCE.md
 
 # Python egg info
 *.egg-info/

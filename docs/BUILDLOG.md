@@ -107,3 +107,29 @@ Done together per the audit (same files/context as P0-2).
   is a no-op on continuous data — 0 verbatim dups).
 - **Tests:** `TestP08Scope` (k-anonymity + full-set scope) and `TestP09LoudFloorSkip` (explicit skip on
   all-categorical + floor-applied-true contrast). Suite **88 → 92 green**.
+
+### G-F — Code/repo information protection (done early so later work inherits it)
+
+- **(1) No values in logs — verified + guarded.** Audited every `logger.*` call and `raise` string in
+  `engine/` + `regen/`: none interpolate a real cell value (they carry column names, counts, metrics,
+  and the user's own filepath). Added `tests/test_infosec.py::TestNoValueLeakInLogs` — runs
+  `generate()` at DEBUG over a fixture with planted sentinel values (`8675309.4242`,
+  `ZZ_SENTINEL_CATEGORY_ZZ`) and asserts neither appears in captured logs. **Observed:** passes.
+- **(2) No secrets in tracked files.** `TestNoSecretsInTrackedFiles` scans everything `git ls-files`
+  returns for `sk-…`/`AKIA…`/`tabpfn_sk_…`/secret-named-assignment patterns. **Observed:** 0 offenders.
+  This runs on every commit via the existing pre-commit test hook, so it doubles as the requested
+  secret-scan hook. Deleted the dead `TABPFN_API_KEY` from `.env` (P2-10a); `.env` was already
+  gitignored (never tracked), so no secret was ever in the repo — verified via `git ls-files .env`
+  (empty).
+- **(3) Model-payload redaction seam.** The engine is model-free; documented the provider-agnostic env
+  seam for the future advisory layer in `.env` (`REGEN_SEMANTICS_*`, incl. `REGEN_SEMANTICS_SAMPLES=0`
+  to send no example values). Actual redaction code lands with G-B Source 3 (item 16); PRIVACY.md
+  documents it at P1-3.
+- **(4) Dataset provenance + gitignore.** Wrote `benchmark/data/PROVENANCE.md` (verified OpenML ids from
+  `benchmark/dataset_candidates.csv` + the runners' `openml.datasets.get_dataset(<id>)`); added a
+  `.gitignore` negation so the provenance doc is tracked while the datasets stay ignored. Untracked 5
+  stale `regen-output/*` files that were committed before the ignore rule (`git rm --cached`, P2-10b).
+- **(5) Synthetic fixtures only.** The new tests build their own synthetic data;
+  `examples/transactions.csv` is generated. No real rows in tests.
+- Suite **92 → 94 green**. _(P2-10a + P2-10b handled here; P2-10c KNOWN_ISSUES header deferred to the
+  P2-10 housekeeping step.)_
