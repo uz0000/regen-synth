@@ -71,4 +71,39 @@ Baseline matches the audit's recorded numbers exactly.
 - **Tests:** added `TestP02PercentileCorrelationUnderPrivacy` (3 tests: e2e repro passes under floor,
   privacy-off sanity, and a direct check that the copula preserves a binary↔continuous correlation).
   Full suite **88 passed** (was 85).
-- **Commit:** _(below)_
+- **Commit:** `1dbc508`.
+
+### P2-8 + P2-9 — Privacy scope reconciliation + loud floor-skip
+
+Done together per the audit (same files/context as P0-2).
+
+**P2-8 (scope):**
+- (a) δ-floor stays **rare-vs-rare** — enforcement (`generate()`) and measurement (`assess_privacy`)
+  already agree on this; kept.
+- (b) The **verbatim guard now runs against the full real set** (normal + rare) in both generation
+  paths (`_generate_amp_batch`, `_generate_normal_batch`), matching `assess_privacy`'s measurement
+  scope. Previously enforcement was rare-vs-rare / normal-vs-normal while measurement was vs the full
+  set, so a cross-class verbatim copy could fail the batch with no upstream step preventing it.
+- (c) Fixed the misleading `enforce_distance_floor` docstring (it claimed `real_df` was "normal +
+  rare"; the caller passes rare-only — now documented as "stay away from whatever reference you pass").
+- **Discovered + fixed (surfaced, per §6 rule 5):** the verbatim-duplicate check over-counted on
+  low-cardinality **discrete-only** data — every synthetic row necessarily reuses a category tuple, so
+  an all-categorical batch reported `n_verbatim=200, passed=False`, contradicting the audit's own
+  statement that this case should pass. Redefined a verbatim duplicate as reproducing a **uniquely-
+  identifying** real record: a discrete tuple shared by ≥ `_MIN_ANON_COUNT` (=2) real rows is
+  k-anonymous and safe; only singleton tuples are flagged. Continuous matches (within ~1e-3σ) are
+  already near-unique, so that branch is unchanged. **Before:** all-categorical → `passed=False`
+  (200 false dups). **After:** `passed=True`, `n_verbatim=0`.
+
+**P2-9 (loud skip):**
+- `generate()` now tracks `floor_applied` + `floor_skip_reason` and surfaces them in the `privacy`
+  block. Reasons: `no_label`, `no_continuous_features`, `no_rare_rows`. Added the two fields to
+  `PrivacyReport` (so they flow to `explanation.json` in G-C). The note text now states plainly when
+  the floor was skipped and what protection remains.
+- **Before (repro):** `generate(all_categorical.csv, privacy="floored")` → summary said `mode:floored`
+  with no indication the floor never ran. **After:** `floor_applied=False`,
+  `floor_skip_reason="no_continuous_features"`, `min_distance=inf`, `passed=True` — explicit.
+- **Invariant 2 re-verified:** label-mode row-hash still `40933a2bef4f4140` (P2-8's guard-scope change
+  is a no-op on continuous data — 0 verbatim dups).
+- **Tests:** `TestP08Scope` (k-anonymity + full-set scope) and `TestP09LoudFloorSkip` (explicit skip on
+  all-categorical + floor-applied-true contrast). Suite **88 → 92 green**.

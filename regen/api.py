@@ -300,10 +300,16 @@ def _generate_amp_batch(
 
     # Verbatim-attribute guard: no released row duplicates a real row's full
     # (non-identifier) attribute set. Catches the measure-zero accidental copy
-    # that parametric sampling can still produce.
+    # that parametric sampling can still produce. Guard against the FULL real set
+    # (normal + rare), not just the rare set: a synthetic rare row could verbatim-
+    # match a real *normal* row (a cross-class copy), and assess_privacy counts
+    # duplicates against the full set — enforcement must be at least as wide as
+    # measurement, or a batch could fail its own privacy check with no upstream
+    # step that prevents it (P2-8b).
     if privacy == "floored":
+        real_full = pd.concat([result.normal_df, result.rare_df], ignore_index=True)
         amp_df, _ = guard_against_duplicates(
-            amp_df, result.rare_df, result.field_dict, label_col, rng_priv,
+            amp_df, real_full, result.field_dict, label_col, rng_priv,
         )
     return amp_df, target_region
 
@@ -362,9 +368,13 @@ def _generate_normal_batch(
 
     normal_df = _decode_categoricals(normal_df, result)
 
+    # Guard against the FULL real set (normal + rare), matching the rare path and
+    # assess_privacy's measurement scope — a synthetic normal row could verbatim-
+    # match a real rare row just as easily as a real normal one (P2-8b).
     if privacy == "floored":
+        real_full = pd.concat([result.normal_df, result.rare_df], ignore_index=True)
         normal_df, _ = guard_against_duplicates(
-            normal_df, result.normal_df, result.field_dict, label_col, rng,
+            normal_df, real_full, result.field_dict, label_col, rng,
         )
     return normal_df
 
@@ -843,14 +853,27 @@ def generate(
     # row by ≤0.5 raw units), so we enforce to δ plus that worst-case rounding
     # margin and the delivered distance clears δ even after the round.
     # Deterministic: a dedicated substream off final_seed (Invariant 2).
+    # Track whether the floor was actually enforced. When the data can't support
+    # a δ-shell (no continuous features, or no resolvable label/rare class) the
+    # floor is skipped — but that must be stated in the privacy block, not
+    # silently implied while the mode still reads "floored" (P2-9: fail loud).
+    floor_applied = False
+    floor_skip_reason: Optional[str] = None
     if privacy == "floored":
         from engine.privacy import enforce_distance_floor, _continuous_cols
         rare_val = (result.rare_df[result.label_col].mode().iloc[0]
                     if result.label_col and len(result.rare_df) else None)
         cont_cols = _continuous_cols(full_df, result.field_dict, result.label_col)
-        if result.label_col and rare_val is not None and cont_cols:
+        if not (result.label_col and rare_val is not None):
+            floor_skip_reason = "no_label"
+        elif not cont_cols:
+            floor_skip_reason = "no_continuous_features"
+        else:
             rare_mask = full_df[result.label_col] == rare_val
+            if not rare_mask.any():
+                floor_skip_reason = "no_rare_rows"
             if rare_mask.any():
+                floor_applied = True
                 # Worst-case L2 displacement (σ-normalized) from re-rounding the
                 # integer-valued continuous columns: ≤0.5 raw unit each.
                 sig = result.rare_df[cont_cols].to_numpy(dtype=float).std(axis=0)
@@ -903,17 +926,32 @@ def generate(
             rare_delivered, result.rare_df, full_df, real_full,
             result.field_dict, result.label_col, delta,
         )
+        # Record whether the δ-floor was actually enforced (P2-9). When it was
+        # skipped, min_distance is inf (no rare-continuous distance to measure)
+        # and `passed` reflects only the verbatim guard — which is what protects
+        # an all-categorical / no-label batch, and must be stated, not implied.
+        privacy_report.floor_applied = floor_applied
+        privacy_report.floor_skip_reason = floor_skip_reason
+        if floor_applied:
+            note = ("Per-record δ-distance floor on the rare class + "
+                    "verbatim-attribute guard on the whole batch (vs the full "
+                    "real set). NOT differential privacy — see docs/PRIVACY.md.")
+        else:
+            note = (f"δ-distance floor NOT applied ({floor_skip_reason}); "
+                    "protection is parametric sampling + the verbatim-attribute "
+                    "guard against the full real set. NOT differential privacy "
+                    "— see docs/PRIVACY.md.")
         privacy_out = {
             "mode": "floored",
             "delta": delta,
+            "floor_applied": floor_applied,
+            "floor_skip_reason": floor_skip_reason,
             "min_distance": round(privacy_report.min_distance, 4),
             "distance_p50": (round(privacy_report.distance_p50, 4)
                              if privacy_report.distance_p50 is not None else None),
             "n_verbatim_duplicates": int(privacy_report.n_respawned),
             "passed": bool(privacy_report.passed),
-            "note": ("Per-record δ-distance floor on the rare class + "
-                     "verbatim-attribute guard on the whole batch. NOT differential "
-                     "privacy — see docs."),
+            "note": note,
         }
     else:
         privacy_out = None

@@ -31,6 +31,17 @@ from contracts.types import FieldDict, FieldType, PrivacyReport
 
 logger = logging.getLogger(__name__)
 
+# A released row that reproduces a real row's full non-identifier attribute set
+# is a re-identification risk only when that attribute set *uniquely* identifies
+# the real individual. A discrete tuple shared by ≥ this many real rows is
+# k-anonymous — reusing it reveals nothing about any one person — so it is not a
+# verbatim leak. Below this count (i.e. a singleton real record) it is. This is
+# what makes the guarantee meaningful for low-cardinality categorical data, where
+# every synthetic row necessarily reuses some real category combination. When
+# continuous features are present, a match within tol_sigma already pins a near-
+# unique individual, so the count check applies only to the discrete-only path.
+_MIN_ANON_COUNT = 2
+
 
 # ── Public API ─────────────────────────────────────────────────────────────────
 
@@ -69,7 +80,15 @@ def enforce_distance_floor(
     Args:
         synth_df:  Synthetic batch (encoded space is fine; only continuous cols
                    are read or modified).
-        real_df:   The real reference set to stay away from (normal + rare).
+        real_df:   The real reference set the released rows must stay ≥ delta
+                   from. REGEN's caller passes the real **rare** set: the floor
+                   is a rare-vs-rare guarantee (the rare set is sparse enough for
+                   a δ-shell to exist, and it is where re-identification risk
+                   concentrates). Cross-class near-copies against the dense
+                   normal bulk are instead handled by parametric sampling + the
+                   verbatim guard (P2-8). Pass whatever reference the guarantee
+                   is defined against; this function stays away from every row in
+                   whatever it is given.
         field_dict: Ingest field dict — selects continuous columns.
         label_col: Excluded from the metric.
         delta:     Floor in σ-normalized units (e.g. 0.5).
@@ -249,10 +268,15 @@ def guard_against_duplicates(
             else:
                 dup_idx.append(i)
     elif disc:
-        # No continuous features — match on discrete signature only.
-        real_keys = set(map(tuple, real_df[disc].to_numpy().tolist()))
+        # No continuous features — match on discrete signature only, but flag a
+        # row only when it reproduces a *singleton* real tuple (a uniquely-
+        # identifying record). Tuples shared by ≥ _MIN_ANON_COUNT real rows are
+        # k-anonymous and reusing them is not a leak (see _MIN_ANON_COUNT).
+        from collections import Counter
+        real_counts = Counter(map(tuple, real_df[disc].to_numpy().tolist()))
         for i in range(len(out)):
-            if tuple(out.iloc[i][disc].tolist()) in real_keys:
+            c = real_counts.get(tuple(out.iloc[i][disc].tolist()), 0)
+            if 0 < c < _MIN_ANON_COUNT:
                 dup_idx.append(i)
 
     n = len(dup_idx)
@@ -350,9 +374,14 @@ def _count_duplicates(
             else:
                 count += 1
     elif disc:
-        real_keys = set(map(tuple, real_df[disc].to_numpy().tolist()))
-        count = sum(1 for i in range(len(synth_df))
-                    if tuple(synth_df.iloc[i][disc].tolist()) in real_keys)
+        # Discrete-only: count only singleton (uniquely-identifying) matches;
+        # k-anonymous shared tuples are safe (see _MIN_ANON_COUNT).
+        from collections import Counter
+        real_counts = Counter(map(tuple, real_df[disc].to_numpy().tolist()))
+        count = sum(
+            1 for i in range(len(synth_df))
+            if 0 < real_counts.get(tuple(synth_df.iloc[i][disc].tolist()), 0) < _MIN_ANON_COUNT
+        )
     return count
 
 

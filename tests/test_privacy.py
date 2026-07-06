@@ -261,3 +261,91 @@ class TestP02PercentileCorrelationUnderPrivacy:
         assert abs(real_r) > 0.2                       # precondition on the fixture
         assert np.sign(synth_r) == np.sign(real_r)
         assert abs(synth_r) > 0.15                     # not erased to independence
+
+
+# ── P2-8: privacy scope reconciliation (floor / guard / measurement) ──────────
+
+class TestP08Scope:
+    """P2-8: verbatim-attribute detection must (a) be k-anonymity aware for
+    discrete-only data — reusing a category tuple shared by many real rows is not
+    a leak — and (b) treat matching a real *normal* row the same as a real rare
+    row (the guard now runs against the full real set in generation)."""
+
+    def _cat_fd(self):
+        return {
+            "a": FieldMeta(name="a", field_type=FieldType.CATEGORICAL,
+                           categories=["x", "y", "z"]),
+            "b": FieldMeta(name="b", field_type=FieldType.CATEGORICAL,
+                           categories=["p", "q"]),
+        }
+
+    def test_kanonymous_discrete_tuple_is_not_a_duplicate(self):
+        from engine.privacy import _count_duplicates
+        # 'x','p' appears many times → k-anonymous; 'z','q' appears once → unique.
+        real = pd.DataFrame({
+            "a": ["x", "x", "x", "x", "z"],
+            "b": ["p", "p", "p", "p", "q"],
+        })
+        fd = self._cat_fd()
+        shared = pd.DataFrame({"a": ["x"], "b": ["p"]})   # reuses a shared tuple
+        unique = pd.DataFrame({"a": ["z"], "b": ["q"]})   # reproduces the singleton
+        assert _count_duplicates(shared, real, fd, "") == 0
+        assert _count_duplicates(unique, real, fd, "") == 1
+
+    def test_guard_scope_is_the_full_real_set(self):
+        """A synthetic row verbatim-matching a UNIQUE real row is caught whether
+        that real row is 'normal' or 'rare' — the guard sees the full set."""
+        from engine.privacy import _count_duplicates
+        real_full = pd.DataFrame({           # every tuple unique → all identifying
+            "a": ["x", "y", "z"],
+            "b": ["p", "q", "p"],
+        })
+        fd = self._cat_fd()
+        synth = pd.DataFrame({"a": ["y"], "b": ["q"]})    # matches the middle row
+        assert _count_duplicates(synth, real_full, fd, "") == 1
+
+
+# ── P2-9: the floor must never skip silently ──────────────────────────────────
+
+class TestP09LoudFloorSkip:
+    """P2-9: when the δ-floor can't apply (no continuous features / no label) the
+    privacy block must say so — floor_applied=False + a reason — never imply a
+    δ-shell was carved while mode still reads 'floored'."""
+
+    def _all_categorical_csv(self, tmp):
+        rng = np.random.default_rng(0)
+        n = 600
+        df = pd.DataFrame({
+            "region": rng.choice(["north", "south", "east", "west"], size=n,
+                                 p=[0.4, 0.3, 0.2, 0.1]),
+            "plan": rng.choice(["basic", "plus", "pro"], size=n),
+            "device": rng.choice(["ios", "android"], size=n),
+            "churn": rng.choice([0, 1], size=n, p=[0.85, 0.15]),
+        })
+        p = str(Path(tmp) / "cat.csv")
+        df.to_csv(p, index=False)
+        return p
+
+    def test_floor_skip_is_explicit_on_all_categorical(self):
+        from regen.api import generate
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._all_categorical_csv(tmp)
+            s = generate(path, label_col="churn", n_rows=200, seed=3,
+                         privacy="floored", auto=False, out_dir=tmp)
+        pv = s["privacy"]
+        assert pv["floor_applied"] is False
+        assert pv["floor_skip_reason"] == "no_continuous_features"
+        # k-anonymous categorical reuse is not a leak → still passes, as documented.
+        assert pv["min_distance"] == float("inf")
+        assert pv["n_verbatim_duplicates"] == 0
+        assert pv["passed"] is True
+
+    def test_floor_applied_true_when_continuous_present(self):
+        """Contrast: the bundled continuous dataset carves a real δ-shell."""
+        from regen.api import generate
+        with tempfile.TemporaryDirectory() as tmp:
+            s = generate(SAMPLE_CSV, label_col=LABEL_COL, rare_def=RARE_DEF,
+                         n_rows=200, seed=1, privacy="floored", auto=False,
+                         out_dir=tmp)
+        assert s["privacy"]["floor_applied"] is True
+        assert s["privacy"]["floor_skip_reason"] is None

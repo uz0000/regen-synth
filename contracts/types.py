@@ -268,6 +268,14 @@ class PrivacyReport:
         passed:       True iff min_distance ≥ delta (the guarantee holds).
         distance_p10/p50/p90: Spread of nearest-neighbor distances, for judging
                       how much headroom the batch has above the floor.
+        floor_applied: Whether the δ-distance floor was actually enforced on the
+                      rare part. False when the data can't support it (no
+                      continuous features, or the label/rare class couldn't be
+                      resolved) — the batch still gets parametric sampling + the
+                      verbatim guard, but the reader must not assume a δ-shell
+                      was carved. Never silently implied (P2-9: fail loud).
+        floor_skip_reason: Why the floor was skipped ("no_continuous_features" /
+                      "no_label"), or None when it was applied.
     """
     mode: str = "floored"
     delta: float = 0.0
@@ -278,6 +286,8 @@ class PrivacyReport:
     distance_p10: Optional[float] = None
     distance_p50: Optional[float] = None
     distance_p90: Optional[float] = None
+    floor_applied: bool = True
+    floor_skip_reason: Optional[str] = None
 
     def to_dict(self) -> dict:
         return {
@@ -290,6 +300,8 @@ class PrivacyReport:
             "distance_p10": self.distance_p10,
             "distance_p50": self.distance_p50,
             "distance_p90": self.distance_p90,
+            "floor_applied": self.floor_applied,
+            "floor_skip_reason": self.floor_skip_reason,
         }
 
 
