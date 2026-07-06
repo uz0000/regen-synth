@@ -1,3 +1,12 @@
+# Known Issues
+
+> This file mixes **historical, resolved** entries (kept as a record of what was
+> fixed and how) with a **current** section at the bottom, added 2026-07-06 during
+> the privacy/capability build (see `docs/BUILDLOG.md`). The first entry below is
+> historical (resolved 2026-06-22).
+
+---
+
 # KNOWN ISSUE: High-Cardinality Categorical TVD Failures
 
 **Status:** Resolved — top-K TVD comparison implemented for high-cardinality columns
@@ -67,3 +76,37 @@ mismatched distributions produce TVD ≈ 0.60 (correctly rejected).
 - `engine/auditor/fidelity.py` — `_tvd_discrete()` (top-K TVD), `AuditorConfig.high_card_threshold`
 - `tests/test_fidelity.py` — `test_auditor_high_cardinality_tvd_topk`, `test_auditor_high_cardinality_rejects_mismatched`
 - `benchmark/run_breadth.py` — verification script
+
+---
+
+# CURRENT KNOWN ISSUES (2026-07-06 privacy/capability build)
+
+These are open, characterized limitations surfaced by the P1-6 privacy sweep.
+None are crashes (the one crash found — the coincident-row `inf` in
+`enforce_distance_floor` — was fixed). Each has a repro in `docs/BUILDLOG.md`
+and is slated for the G-E capability matrix.
+
+## 1. `privacy="floored"` degrades low-cardinality integer/ordinal data
+**Severity:** Medium (documented limit, not a correctness bug).
+`solar_flare` (features are 3–6-value integer codes) under `privacy="floored"`:
+coverage collapses 1.00→0.039 and the batch fails the fidelity gate. The
+δ-distance floor (plus the integer-rounding margin) pushes the tiny integer-grid
+rare cluster off its own region. **Workaround:** use `privacy="none"` for such
+data, or treat those columns as categorical. Preflight (`regen doctor`, G-E)
+should warn.
+
+## 2. `privacy="floored"` costs fidelity on all-categorical high-cardinality data
+**Severity:** Medium.
+`open_payments` (all-categorical, high-cardinality) under `floored`: fidelity
+0.80→0.40. The δ-floor is correctly skipped (`floor_applied=false`,
+`no_continuous_features`); the loss comes from parametric frequency-table +
+copula sampling of high-cardinality categoricals vs grounded anchoring. The
+verbatim guard + k-anonymity still hold. **Workaround:** `privacy="none"` if
+fidelity on high-card categoricals matters more than near-copy protection.
+
+## 3. Pandas FutureWarning on integer-column write-back
+**Severity:** Low (cosmetic; correct today, will error in pandas 3.0).
+Enforcing the floor on integer-valued continuous columns emits a pandas
+FutureWarning about assigning float values into an int64 column before the
+re-round restores the dtype. Behaviour is correct; the assignment path should be
+made dtype-clean (cast column to float up front) before pandas 3.0.

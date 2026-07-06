@@ -230,3 +230,14 @@ Done together per the audit (same files/context as P0-2).
 - **Tests:** `test_lift_flags_insufficient_rare_rows` + `test_generate_lift_out_nulls_tail_lift_when_insufficient`
   (synthetic small-rare fixtures); existing no-synth lift test now also asserts `status=="ok"`.
   Suite **104 → 106 green**. `generate()` bit-identical (hash `40933a2b`).
+
+### P2-10 — Housekeeping
+
+- **(a)** dead `TABPFN_API_KEY` removed from `.env` — done in G-F.
+- **(b)** stale `regen-output/*` untracked, gitignore verified — done in G-F. Confirmed no tracked
+  parquet/output files remain (`git ls-files | grep -iE "regen-output|\.parquet"` → none).
+- **(c)** `docs/KNOWN_ISSUES.md` was fully-resolved history; added a dated header marking it as such
+  and a **"CURRENT KNOWN ISSUES (2026-07-06)"** section capturing the three open items surfaced this
+  build (floored degrades low-card integer data; floored costs fidelity on all-categorical high-card
+  data; a low-severity pandas int64 FutureWarning on floor write-back). Each cross-refs the BUILDLOG
+  repro and G-E.
