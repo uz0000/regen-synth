@@ -1,0 +1,42 @@
+# Example ScenarioSpec (G-A) — a fraud-detector-training use case over the
+# bundled examples/transactions.csv. This is the unit a researcher saves and
+# re-runs: it states what is being simulated, the gates it must pass, and the
+# semantics of each column. Drive it with:
+#
+#   from contracts.scenario import ScenarioSpec
+#   from regen.api import generate
+#   spec = ScenarioSpec.load_yaml("examples/scenario_fraud.yaml")
+#   summary = generate("examples/transactions.csv", scenario=spec)
+#
+# The batch's manifest round-trips this spec, so a re-run reproduces it exactly.
+spec_version: 1
+notes: >-
+  Train/stress a card-fraud detector: amplify the rare fraud class and keep the
+  amount/merchant-risk correlation structure. Privacy on (releasable).
+
+intent:
+  task: detector_training
+  label_col: is_fraud
+  rare_mode: label        # is_fraud == the minority class is the rare event
+  rare_value: 1
+  rare_ratio: 0.25        # amplify fraud to 25% of the batch
+  focus_features:         # the columns the researcher most cares to observe
+    - amount
+    - merchant_risk
+  n_rows: 400
+  seed: 7
+  mode: balanced
+
+gates:
+  privacy: floored        # parametric + verbatim guard + δ-floor (NOT diff. privacy)
+  delta: 0.5
+  # coverage/correlation thresholds omitted → generate() uses its per-mode defaults
+
+# Per-column semantics. role/dtype/unit/bounds are declarations the vetting gate
+# (G-B) will check against the observed data; here they document the use case.
+columns:
+  - {name: amount,        role: feature, dtype: float,   unit: "currency",     min: 0.0, integer: false, source: user, notes: "transaction amount"}
+  - {name: n_prior_txns,  role: feature, dtype: integer, unit: "count",        min: 0.0, integer: true,  source: user}
+  - {name: hour,          role: feature, dtype: float,   unit: "hour_of_day",  min: 0.0, max: 24.0, integer: false, source: user}
+  - {name: merchant_risk, role: feature, dtype: float,   unit: "ratio[0,1]",   min: 0.0, max: 1.0,  integer: false, source: user}
+  - {name: is_fraud,      role: target,  dtype: boolean, source: user}

@@ -49,6 +49,7 @@ def build_manifest(
     rare_ratio: float = 0.0,
     privacy: str = "none",
     delta: float = 0.0,
+    scenario: Any = None,
 ) -> BatchManifest:
     return BatchManifest(
         seed=seed,
@@ -61,6 +62,7 @@ def build_manifest(
         rare_ratio=rare_ratio,
         privacy=privacy,
         delta=delta,
+        scenario=scenario,
     )
 
 

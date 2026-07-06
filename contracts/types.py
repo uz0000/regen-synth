@@ -194,6 +194,10 @@ class BatchManifest:
     # when privacy="none").
     privacy: str = "none"
     delta: float = 0.0
+    # The vetted ScenarioSpec (as a dict) this batch was generated under, so the
+    # use-case context is reproducible from disk — Invariant 2 extended to the
+    # contract (G-A). None for legacy batches generated before the contract.
+    scenario: Optional[Dict[str, Any]] = None
 
     def to_json(self) -> str:
         return json.dumps(
@@ -208,6 +212,7 @@ class BatchManifest:
                 "rare_ratio": self.rare_ratio,
                 "privacy": self.privacy,
                 "delta": self.delta,
+                "scenario": self.scenario,
             },
             sort_keys=True,
         )

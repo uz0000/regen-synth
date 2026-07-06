@@ -241,3 +241,31 @@ Done together per the audit (same files/context as P0-2).
   build (floored degrades low-card integer data; floored costs fidelity on all-categorical high-card
   data; a low-severity pandas int64 FutureWarning on floor write-back). Each cross-refs the BUILDLOG
   repro and G-E.
+
+---
+
+## Session 2026-07-06 (cont.) — Stage 2: customizable & explainable
+
+### G-A — ScenarioSpec contract + manifest round-trip
+
+- **New `contracts/scenario.py`** (pure dataclasses, no engine import): `ColumnSemantics` (the L1
+  contract from SEMANTIC_FIDELITY_PLAN §3 — role/dtype/unit/bounds/categories/integer + per-column
+  provenance: `source`/`confidence`/`proposal_id`), `ScenarioIntent` (task, rare-event def,
+  rare_ratio, focus_features, n_rows, seed, mode), `ScenarioGates` (fidelity thresholds or default,
+  privacy+delta, min-utility), and `ScenarioSpec` (columns+intent+gates+provenance, JSON **and** YAML
+  round-trip). `columns_from_field_dict()` fills Source-1 structural semantics deterministically.
+- **`BatchManifest` gains `scenario`** (the vetted spec dict); `build_manifest`/`_write_manifest`
+  thread it. `generate()`, `run_campaign()`, `screen()` all accept `scenario=` (loose params kept as
+  conveniences that construct one — no API break; `run_campaign`/`screen` label_col/rare_def now
+  default so a spec-only call works). When a spec is supplied its intent+gates are authoritative;
+  otherwise `generate()` builds one from the resolved params. Every batch now ships a spec: persisted
+  in the manifest, echoed in the summary, and written as `scenario.yaml` next to the batch.
+- **Invariant 2 extended + verified:** `generate(...seed=42,privacy="floored")` → persist spec →
+  reconstruct `ScenarioSpec.from_dict(manifest["scenario"])` → `generate(scenario=spec)` reproduces the
+  batch **bit-identically** (row-hash `40933a2b` all three: original, no-scenario, spec-replay). The
+  no-scenario path is bit-identical to before (spec is metadata; generation params unchanged).
+- **Example:** `examples/scenario_fraud.yaml` (researcher-authored fraud-detector-training scenario)
+  drives an end-to-end run and round-trips.
+- **Tests:** `tests/test_scenario.py` (8: JSON/YAML round-trip, rare_def build, structural fill,
+  manifest replay bit-identity, YAML-drives-generation, campaign+screen accept a spec). Suite
+  **106 → 114 green**.

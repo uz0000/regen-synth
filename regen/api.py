@@ -44,6 +44,12 @@ from contracts.types import (
     RareMode,
     ScreenResult,
 )
+from contracts.scenario import (
+    ScenarioSpec,
+    ScenarioIntent,
+    ScenarioGates,
+    columns_from_field_dict,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -449,8 +455,8 @@ def _enforce_rare_floor(
 
 def run_campaign(
     filepath: str,
-    label_col: str,
-    rare_def: RareEventDef,
+    label_col: str = "",
+    rare_def: Optional[RareEventDef] = None,
     seed: int = 42,
     n_rows: int = 300,
     max_passes: int = 5,
@@ -463,6 +469,7 @@ def run_campaign(
     noise_scale: float = 0.10,
     privacy: str = "none",
     delta: float = 0.5,
+    scenario: Optional[ScenarioSpec] = None,
 ) -> CampaignResult:
     """Run a full multi-pass REGEN amplification campaign.
 
@@ -498,6 +505,17 @@ def run_campaign(
         CampaignResult with best_lift, pass history, output paths, etc. The
         privacy regime is recorded in campaign_summary.json and the manifest.
     """
+    # A ScenarioSpec is authoritative for the use-case fields (G-A). Loose params
+    # remain for direct callers.
+    if scenario is not None:
+        label_col = scenario.intent.label_col
+        rare_def = scenario.intent.rare_def()
+        seed = scenario.intent.seed
+        n_rows = scenario.intent.n_rows
+        privacy = scenario.gates.privacy
+        delta = scenario.gates.delta
+    if rare_def is None:
+        rare_def = _auto_rare_def()
     if privacy not in ("none", "floored"):
         raise ValueError(f"privacy must be 'none' or 'floored', got {privacy!r}")
     if not (0.0 < delta <= 2.0):
@@ -802,6 +820,7 @@ def generate(
     privacy: str = "floored",
     delta: float = 0.5,
     out_dir: Optional[str] = None,
+    scenario: Optional["ScenarioSpec"] = None,
 ) -> Dict[str, Any]:
     """The simple primary path: generate a synthetic *dataset* as a CSV-ready batch.
 
@@ -874,6 +893,24 @@ def generate(
     from engine.auditor import AuditorConfig
     from engine.examiner import ExaminerConfig
     from engine.scout import ScoutConfig
+
+    # A ScenarioSpec, when supplied, is the authoritative statement of the use
+    # case (G-A): its intent + gates drive generation, overriding the loose
+    # convenience params. Loose params remain the no-spec path (which builds a
+    # spec below), so there is no API break.
+    if scenario is not None:
+        _in, _g = scenario.intent, scenario.gates
+        label_col = _in.label_col
+        rare_def = _in.rare_def()
+        n_rows = _in.n_rows
+        mode = _in.mode
+        seed = _in.seed
+        if _in.rare_ratio is not None:
+            rare_ratio = _in.rare_ratio
+        privacy = _g.privacy
+        delta = _g.delta
+        if _g.coverage_threshold is not None:
+            coverage_threshold = _g.coverage_threshold
 
     if mode not in _GENERATE_MODES:
         raise ValueError(f"mode must be one of {_GENERATE_MODES}, got {mode!r}")
@@ -1033,12 +1070,53 @@ def generate(
         auditor_passed and (privacy_report.passed if privacy_report is not None else True)
     )
 
+    # Build the *vetted* ScenarioSpec that this batch was generated under (G-A) —
+    # the whole use case as one object. Columns are the structural (Source 1)
+    # semantics unless the caller supplied a richer spec (its columns/notes/
+    # provenance are carried through). Intent + gates record the *resolved* values
+    # actually used, so a re-run from this spec reproduces the batch bit-for-bit.
+    _struct_cols = columns_from_field_dict(result.field_dict, result.label_col)
+    _cols = (scenario.columns if (scenario is not None and scenario.columns)
+             else _struct_cols)
+    vetted_spec = ScenarioSpec(
+        columns=_cols,
+        intent=ScenarioIntent(
+            task=(scenario.intent.task if scenario is not None else "detector_training"),
+            label_col=result.label_col,
+            rare_mode=rare_def.mode.value,
+            rare_value=rare_def.label_value,
+            percentile=rare_def.percentile,
+            tail=rare_def.tail,
+            imbalance_ratio=rare_def.imbalance_ratio,
+            rare_ratio=round(rare_ratio_resolved, 6),
+            focus_features=(scenario.intent.focus_features if scenario is not None else []),
+            n_rows=n_rows,
+            seed=seed,
+            mode=mode,
+        ),
+        gates=ScenarioGates(
+            coverage_threshold=coverage_threshold,
+            privacy=privacy,
+            delta=delta,
+            min_tail_lift=(scenario.gates.min_tail_lift if scenario is not None else None),
+        ),
+        notes=(scenario.notes if scenario is not None else ""),
+        provenance=(dict(scenario.provenance) if scenario is not None else {}),
+    )
+    scenario_dict = vetted_spec.to_dict()
+    # Save the spec next to the batch — the unit a researcher saves/shares/re-runs.
+    try:
+        vetted_spec.save_yaml(str(out_path / "scenario.yaml"))
+    except Exception:  # yaml optional; the manifest is the source of truth
+        pass
+
     # Persist the manifest so the batch is reproducible from disk (Invariant 2):
-    # seed + configs + schema hash + rare split + privacy regime + code version
-    # fully determine the output.
+    # seed + configs + schema hash + rare split + privacy regime + the vetted
+    # ScenarioSpec + code version fully determine the output.
     manifest_path = _write_manifest(
         out_path, final_seed, result, prior_cfg, amp_cfg, target_region,
         len(full_df), rare_ratio_resolved, privacy=privacy, delta=delta,
+        scenario=scenario_dict,
     )
 
     fidelity = {
@@ -1118,6 +1196,7 @@ def generate(
         "output_dir": str(out_path),
         "best_batch_path": batch_path,
         "manifest_path": manifest_path,
+        "scenario": scenario_dict,
         "seed": final_seed,
     }
     # Write a minimal campaign_summary.json so get_results()/download work.
@@ -1136,6 +1215,7 @@ def _write_manifest(
     rare_ratio: float = 0.0,
     privacy: str = "none",
     delta: float = 0.0,
+    scenario: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Build and persist the batch manifest (Invariant 2).
 
@@ -1161,6 +1241,7 @@ def _write_manifest(
         rare_ratio=rare_ratio,
         privacy=privacy,
         delta=delta,
+        scenario=scenario,
     )
     path = out_path / "manifest.json"
     path.write_text(manifest.to_json())
@@ -1212,10 +1293,11 @@ _HETEROGENEITY_THRESHOLD = 0.5
 
 def screen(
     filepath: str,
-    label_col: str,
-    rare_def: RareEventDef,
+    label_col: str = "",
+    rare_def: Optional[RareEventDef] = None,
     seed: int = 42,
     quick_campaign: bool = True,
+    scenario: Optional[ScenarioSpec] = None,
 ) -> ScreenResult:
     """Predict which method (REGEN or SMOTE) is likely to win on this data.
 
@@ -1252,6 +1334,14 @@ def screen(
     from engine.auditor import AuditorConfig, audit
     from engine.examiner import ExaminerConfig, measure_lift
     from engine.scout import ScoutConfig, select_target
+
+    # ScenarioSpec supplies the target when given (screen stays non-private, P1-5).
+    if scenario is not None:
+        label_col = scenario.intent.label_col
+        rare_def = scenario.intent.rare_def()
+        seed = scenario.intent.seed
+    if rare_def is None:
+        rare_def = _auto_rare_def()
 
     # 1. Ingest
     result = ingest(filepath, label_col, rare_def)
