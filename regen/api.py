@@ -153,6 +153,8 @@ def _run_one_pass(
     label_col: str,
     rare_def: RareEventDef,
     explored_points: list,
+    privacy: str = "none",
+    delta: float = 0.5,
 ):
     """Run one full generation pass: Prior → Scout → Amplifier → Auditor → Examiner.
 
@@ -177,7 +179,7 @@ def _run_one_pass(
     # every rare example available).
     amp_df, target_region = _generate_amp_batch(
         result, prior_cfg, amp_cfg, scout_cfg, seed, n_rows, label_col, rare_def,
-        explored_points,
+        explored_points, privacy=privacy, delta=delta,
     )
 
     # Auditor: fidelity gate
@@ -213,24 +215,32 @@ def _generate_amp_batch(
     label_col: str,
     rare_def: RareEventDef,
     explored_points: list,
+    privacy: str = "none",
+    delta: float = 0.5,
 ):
     """Generation core: Prior → Scout → Amplifier → constraints → label → decode.
 
     Returns (amp_df, target_region). Shared by the deliverable path and the
     honest-lift path (which calls it on a train-only IngestResult), so neither
     duplicates the generation logic. Pure function of (result, configs, seed).
+
+    privacy="floored" switches the base from grounded sampling (real anchor +
+    jitter) to parametric generation (samples from the fitted rare-class
+    distribution — no copying) and enforces the δ-distance floor against the real
+    rare set after the GP correction. Campaign/screen leave privacy="none".
     """
-    from engine.prior import fit_prior, generate_base_batch
+    from engine.prior import fit_prior, generate_base_batch, generate_parametric_batch
     from engine.amplifier import fit_residuals, sample_residuals
     from engine.scout import select_target
+    from engine.privacy import guard_against_duplicates
 
-    # Two independent RNG substreams from one seed. `rng` drives the prior fit,
-    # Scout, and base-batch noise; `rng_res` drives residual sampling. Spawning
-    # via SeedSequence guarantees the two streams are statistically independent
-    # and stay so regardless of how many draws the upstream stages consume — the
-    # old code reseeded both from the raw `seed`, which only avoided correlation
-    # by accident of stream position and would silently couple if merged.
-    rng, rng_res = (np.random.default_rng(s) for s in np.random.SeedSequence(seed).spawn(2))
+    # Three independent RNG substreams from one seed. `rng` drives the prior fit,
+    # Scout, and base-batch noise; `rng_res` drives residual sampling; `rng_priv`
+    # drives the privacy floor/guard (when active). Spawning via SeedSequence
+    # keeps them statistically independent regardless of upstream draw counts.
+    rng, rng_res, rng_priv = (
+        np.random.default_rng(s) for s in np.random.SeedSequence(seed).spawn(3)
+    )
 
     # Prior + Amplifier are fit on the ingest data (not the generated batch)
     prior = fit_prior(result, prior_cfg, rng)
@@ -238,6 +248,8 @@ def _generate_amp_batch(
 
     # Scout: R-EPIG target selection. explored_points lets multi-pass runs
     # down-weight already-mapped anchors so budget goes to new tail structure.
+    # (In parametric/privacy mode Scout's fine sub-region targeting is carried by
+    # the GP rather than anchor selection — the whole rare class is sampled.)
     target_region = select_target(
         residual, prior._feature_cols, rng, scout_cfg,
         explored_points=explored_points or None,
@@ -245,13 +257,32 @@ def _generate_amp_batch(
     if target_region.get("candidate_point"):
         explored_points.append(target_region["candidate_point"])
 
-    # Prior: base batch in the targeted region
-    base = generate_base_batch(prior, n_rows, target_region, rng,
-                               noise_scale=prior_cfg.noise_scale)
+    # Prior: base batch in the targeted region. Privacy mode samples from the
+    # fitted rare-class distribution (no real-row copying) instead of grounding
+    # on real rare anchors. Falls back to grounded sampling if the class is too
+    # small to fit a stable covariance.
+    if privacy == "floored":
+        try:
+            base = generate_parametric_batch(prior, n_rows, rng, which_class="rare")
+        except Exception:
+            logger.warning("Parametric rare base failed; falling back to grounded.")
+            base = generate_base_batch(prior, n_rows, target_region, rng,
+                                       noise_scale=prior_cfg.noise_scale)
+    else:
+        base = generate_base_batch(prior, n_rows, target_region, rng,
+                                   noise_scale=prior_cfg.noise_scale)
 
     # Amplifier: ResidualGP tail correction (independent substream — see above)
     _, _, X_res = sample_residuals(residual, base.values.astype(np.float64), rng_res)
     amp_df = pd.DataFrame(base.values + X_res, columns=base.columns)
+
+    # NOTE: the privacy δ-distance floor is intentionally NOT applied here. The
+    # constraint layer + the combined-batch re-constrain (see generate) clip
+    # continuous values *after* this point, which would shave a floored row back
+    # inside δ and silently break the guarantee. The floor is therefore enforced
+    # by generate() as the final numeric step on the delivered rare rows, where
+    # nothing downstream can re-violate it. rng_priv stays reserved for the
+    # per-part verbatim guard below so RNG consumption is unchanged.
 
     # Constrain to observed support + dtype (clip continuous, round integers, snap
     # binaries); see _apply_domain_constraints.
@@ -266,6 +297,14 @@ def _generate_amp_batch(
 
     # Decode categoricals back to real values so the Auditor compares apples to apples
     amp_df = _decode_categoricals(amp_df, result)
+
+    # Verbatim-attribute guard: no released row duplicates a real row's full
+    # (non-identifier) attribute set. Catches the measure-zero accidental copy
+    # that parametric sampling can still produce.
+    if privacy == "floored":
+        amp_df, _ = guard_against_duplicates(
+            amp_df, result.rare_df, result.field_dict, label_col, rng_priv,
+        )
     return amp_df, target_region
 
 
@@ -275,24 +314,42 @@ def _generate_normal_batch(
     seed: int,
     n_rows: int,
     label_col: str,
+    privacy: str = "none",
+    delta: float = 0.5,
 ) -> pd.DataFrame:
     """Generate n_rows synthetic *normal*-class rows for the full-dataset path.
 
     Mirror of the generation core, but for the majority class: fit the Prior
-    (anchored on the normal covariate support, ``_X_train``) and ground-sample
-    from it via ``generate_normal_batch`` — no Scout, no Amplifier (those exist
-    to densify the rare tail, which the normal class does not have). Then apply
-    the same domain constraints + categorical decode as the rare path, and
-    attach the normal label so the row is usable downstream. Pure function of
-    (result, config, seed).
+    (anchored on the normal covariate support, ``_X_train``) and sample from it
+    — no Scout, no Amplifier (those exist to densify the rare tail, which the
+    normal class does not have). Then apply the same domain constraints +
+    categorical decode as the rare path, and attach the normal label so the row
+    is usable downstream. Pure function of (result, config, seed).
+
+    privacy="floored" samples parametrically (no real-row copying) and applies
+    the verbatim-attribute guard. The δ-distance floor is intentionally NOT
+    applied here: the normal/bulk set is dense (real rows sit ~0.3σ apart), so a
+    δ-shell is infeasible and would push rows out of the distribution, destroying
+    the marginal. The bulk is protected by crowd anonymity + parametric sampling
+    + the duplicate guard rather than by isolation.
     """
-    from engine.prior import fit_prior, generate_normal_batch
+    from engine.prior import fit_prior, generate_normal_batch, generate_parametric_batch
+    from engine.privacy import guard_against_duplicates
 
     rng = np.random.default_rng(seed)
     prior = fit_prior(result, prior_cfg, rng)
-    normal_df = generate_normal_batch(
-        prior, n_rows, rng, noise_scale=prior_cfg.noise_scale,
-    )
+    if privacy == "floored":
+        try:
+            normal_df = generate_parametric_batch(prior, n_rows, rng, which_class="normal")
+        except Exception:
+            logger.warning("Parametric normal base failed; falling back to grounded.")
+            normal_df = generate_normal_batch(
+                prior, n_rows, rng, noise_scale=prior_cfg.noise_scale,
+            )
+    else:
+        normal_df = generate_normal_batch(
+            prior, n_rows, rng, noise_scale=prior_cfg.noise_scale,
+        )
 
     # Clip continuous, round integers, snap binaries (shared constraint layer).
     normal_df = _apply_domain_constraints(normal_df, result)
@@ -304,6 +361,11 @@ def _generate_normal_batch(
         normal_df[label_col] = result.normal_df[label_col].mode().iloc[0]
 
     normal_df = _decode_categoricals(normal_df, result)
+
+    if privacy == "floored":
+        normal_df, _ = guard_against_duplicates(
+            normal_df, result.normal_df, result.field_dict, label_col, rng,
+        )
     return normal_df
 
 
@@ -612,6 +674,8 @@ def generate(
     noise_scale: Optional[float] = None,
     coverage_threshold: Optional[float] = None,
     rare_ratio: Optional[float] = None,
+    privacy: str = "floored",
+    delta: float = 0.5,
     out_dir: Optional[str] = None,
 ) -> Dict[str, Any]:
     """The simple primary path: generate a synthetic *dataset* as a CSV-ready batch.
@@ -662,6 +726,13 @@ def generate(
             DEFAULT_MIN_RARE_FRAC)`` — amplifies any true minority to at least 25%
             so the detector always gets strong rare signal, without de-amplifying
             a class that is already well represented.
+        privacy: "floored" (default) or "none". "floored" generates parametrically
+            (no copying of real rows) and enforces a per-record δ-distance floor
+            on the rare part plus a verbatim-attribute guard on both parts. This
+            is a real, checked guarantee but NOT differential privacy — see the
+            summary's "privacy" block for exactly what is and isn't guaranteed.
+        delta: The δ-distance floor for the rare part, in σ-normalized units
+            (default 0.5). Only meaningful when privacy="floored".
         out_dir: Where to persist the batch + summary. Auto-tempdir if None.
 
     Returns:
@@ -681,6 +752,10 @@ def generate(
 
     if mode not in _GENERATE_MODES:
         raise ValueError(f"mode must be one of {_GENERATE_MODES}, got {mode!r}")
+    if privacy not in ("none", "floored"):
+        raise ValueError(f"privacy must be 'none' or 'floored', got {privacy!r}")
+    if not (0.0 < delta <= 2.0):
+        raise ValueError(f"delta must be in (0, 2] σ-units, got {delta!r}")
 
     # 1. Ingest + auto-detect the rare class if the caller didn't specify
     rare_def = rare_def or _auto_rare_def()
@@ -726,9 +801,12 @@ def generate(
     final_seed = seed + 9000
 
     # 3a. Rare part: Prior → Scout → Amplifier, gated against the rare reference.
+    #     privacy threads into _generate_amp_batch (parametric base + δ-floor on
+    #     the rare set + verbatim guard) via _run_one_pass.
     rare_df_synth, rare_report, lift, target_region = _run_one_pass(
         result, prior_cfg, amp_cfg, aud_cfg, exam_cfg, scout_cfg,
         final_seed, n_rare, result.label_col, rare_def, [],
+        privacy=privacy, delta=delta,
     )
 
     # 3b. Normal part: grounded sampling on the normal covariate support, gated
@@ -739,6 +817,7 @@ def generate(
     #     pipeline's RNG consumption.
     normal_df_synth = _generate_normal_batch(
         result, prior_cfg, final_seed + 7777, n_normal, result.label_col,
+        privacy=privacy, delta=delta,
     )
     from engine.auditor import audit
     normal_report = audit(
@@ -754,22 +833,110 @@ def generate(
     # combined frame to re-mint identifiers across the whole batch (unique again);
     # the clip/snap steps are idempotent on the already-constrained columns.
     full_df = _apply_domain_constraints(full_df, result)
+
+    # Privacy δ-distance floor (rare part), enforced HERE — as the final numeric
+    # mutation before persistence — so the guarantee holds on the data the user
+    # actually receives. Doing it earlier lets the constraint layer clip floored
+    # rows back inside δ. The floor moves only continuous columns and clamps to
+    # the observed [min,max], so binary/categorical snaps stay valid; integer-
+    # valued continuous columns still need re-rounding afterward (which nudges a
+    # row by ≤0.5 raw units), so we enforce to δ plus that worst-case rounding
+    # margin and the delivered distance clears δ even after the round.
+    # Deterministic: a dedicated substream off final_seed (Invariant 2).
+    if privacy == "floored":
+        from engine.privacy import enforce_distance_floor, _continuous_cols
+        rare_val = (result.rare_df[result.label_col].mode().iloc[0]
+                    if result.label_col and len(result.rare_df) else None)
+        cont_cols = _continuous_cols(full_df, result.field_dict, result.label_col)
+        if result.label_col and rare_val is not None and cont_cols:
+            rare_mask = full_df[result.label_col] == rare_val
+            if rare_mask.any():
+                # Worst-case L2 displacement (σ-normalized) from re-rounding the
+                # integer-valued continuous columns: ≤0.5 raw unit each.
+                sig = result.rare_df[cont_cols].to_numpy(dtype=float).std(axis=0)
+                sig = np.where(sig < 1e-8, 1.0, sig)
+                int_mask = np.array(
+                    [bool(getattr(result.field_dict[c], "is_integer", False))
+                     for c in cont_cols]
+                )
+                margin = float(np.sqrt(np.sum(((0.5 / sig) * int_mask) ** 2)))
+                rng_floor = np.random.default_rng(final_seed + 4242)
+                floored, _ = enforce_distance_floor(
+                    full_df.loc[rare_mask], result.rare_df, result.field_dict,
+                    result.label_col, delta + margin, rng_floor,
+                )
+                # Write back ONLY the continuous columns the floor adjusts (not
+                # identifiers/label), widening integer ones to float first — the
+                # re-round below restores int64. Avoids a pandas incompatible-
+                # dtype assignment into int columns.
+                full_df[cont_cols] = full_df[cont_cols].astype(float)
+                full_df.loc[rare_mask, cont_cols] = floored[cont_cols].values
+                # Restore integer dtype/rounding the floor's float output broke.
+                for c in cont_cols:
+                    meta = result.field_dict[c]
+                    if getattr(meta, "is_integer", False):
+                        col = full_df[c].clip(meta.min_val, meta.max_val).round()
+                        full_df[c] = col.astype("int64")
+
     batch_path = str(out_path / "pass_1_accepted.parquet")
     full_df.to_parquet(batch_path, index=False)
 
-    overall_passed = bool(rare_report.overall_passed and normal_report.overall_passed)
+    # The Auditor gate (Invariant 3) — purely a fidelity verdict on both halves.
+    # Privacy is a separate guarantee folded into the top-level `passed` below, so
+    # a privacy miss never masquerades as a fidelity failure.
+    auditor_passed = bool(rare_report.overall_passed and normal_report.overall_passed)
+
+    # Privacy assessment on the DELIVERED data (honest post-constraint measure).
+    # Isolate the rare rows of the delivered batch to check the δ-floor against
+    # the real rare set; check verbatim-attribute duplicates across the whole
+    # batch against the full real set. Skipped (None) when privacy is off.
+    if privacy == "floored":
+        from engine.privacy import assess_privacy
+        rare_val = (result.rare_df[result.label_col].mode().iloc[0]
+                    if result.label_col and len(result.rare_df) else None)
+        rare_delivered = (
+            full_df[full_df[result.label_col] == rare_val]
+            if result.label_col and rare_val is not None else full_df.iloc[:0]
+        )
+        real_full = pd.concat([result.normal_df, result.rare_df], ignore_index=True)
+        privacy_report = assess_privacy(
+            rare_delivered, result.rare_df, full_df, real_full,
+            result.field_dict, result.label_col, delta,
+        )
+        privacy_out = {
+            "mode": "floored",
+            "delta": delta,
+            "min_distance": round(privacy_report.min_distance, 4),
+            "distance_p50": (round(privacy_report.distance_p50, 4)
+                             if privacy_report.distance_p50 is not None else None),
+            "n_verbatim_duplicates": int(privacy_report.n_respawned),
+            "passed": bool(privacy_report.passed),
+            "note": ("Per-record δ-distance floor on the rare class + "
+                     "verbatim-attribute guard on the whole batch. NOT differential "
+                     "privacy — see docs."),
+        }
+    else:
+        privacy_out = None
+        privacy_report = None
+
+    # Top-level verdict: fidelity AND (privacy, when enforced). The fidelity block
+    # keeps its own Auditor-only `passed` (Invariant 3); this is the shippable-batch
+    # verdict the caller checks.
+    overall_passed = bool(
+        auditor_passed and (privacy_report.passed if privacy_report is not None else True)
+    )
 
     # Persist the manifest so the batch is reproducible from disk (Invariant 2):
-    # seed + configs + schema hash + rare split + code version fully determine
-    # the output.
+    # seed + configs + schema hash + rare split + privacy regime + code version
+    # fully determine the output.
     manifest_path = _write_manifest(
         out_path, final_seed, result, prior_cfg, amp_cfg, target_region,
-        len(full_df), rare_ratio_resolved,
+        len(full_df), rare_ratio_resolved, privacy=privacy, delta=delta,
     )
 
     fidelity = {
         "score": round(_fidelity_score(rare_report), 4),
-        "passed": overall_passed,
+        "passed": auditor_passed,
         "coverage": round(rare_report.coverage_rate, 4),
         # Cross-column correlation-structure gate (B2): None when too few numeric
         # columns/rows to estimate.
@@ -818,11 +985,14 @@ def generate(
         "rare_ratio": round(rare_ratio_resolved, 4),
         "natural_prevalence": round(natural_prevalence, 4),
         "n_features": len(result.field_dict) - (1 if result.label_col else 0),
+        # Shippable-batch verdict: fidelity gate AND privacy guarantee (when on).
+        "passed": overall_passed,
         # What the system chose for you (and what you could override). None when
         # both label_col and rare value were supplied explicitly.
         "detection": result.detection.as_dict() if result.detection else None,
         "fidelity": fidelity,
         "normal_fidelity": normal_fidelity,
+        "privacy": privacy_out,
         "lift": lift_out,
         "config_used": {
             "mode": mode,
@@ -851,13 +1021,15 @@ def _write_manifest(
     target_region: Dict[str, Any],
     n_rows: int,
     rare_ratio: float = 0.0,
+    privacy: str = "none",
+    delta: float = 0.0,
 ) -> str:
     """Build and persist the batch manifest (Invariant 2).
 
     Captures everything that determines the output — seed, schema hash, prior
-    and amplifier configs, the Scout target, n_rows, the rare:normal split, and
-    the code version — so the batch can be regenerated bit-for-bit from what is
-    saved on disk. Returns the manifest file path.
+    and amplifier configs, the Scout target, n_rows, the rare:normal split, the
+    privacy regime, and the code version — so the batch can be regenerated
+    bit-for-bit from what is saved on disk. Returns the manifest file path.
     """
     from dataclasses import asdict, is_dataclass
     from engine.manifest import build_manifest
@@ -874,6 +1046,8 @@ def _write_manifest(
         amplifier_params=_cfg(amp_cfg),
         n_rows=n_rows,
         rare_ratio=rare_ratio,
+        privacy=privacy,
+        delta=delta,
     )
     path = out_path / "manifest.json"
     path.write_text(manifest.to_json())

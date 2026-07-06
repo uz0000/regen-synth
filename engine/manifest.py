@@ -47,6 +47,8 @@ def build_manifest(
     amplifier_params: Dict[str, Any],
     n_rows: int,
     rare_ratio: float = 0.0,
+    privacy: str = "none",
+    delta: float = 0.0,
 ) -> BatchManifest:
     return BatchManifest(
         seed=seed,
@@ -57,6 +59,8 @@ def build_manifest(
         code_version=_code_version(),
         n_rows=n_rows,
         rare_ratio=rare_ratio,
+        privacy=privacy,
+        delta=delta,
     )
 
 

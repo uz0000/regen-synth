@@ -105,7 +105,15 @@ def run(data: Path, label_col: str, rare_value, seed: int, passes: int) -> int:
     print(f"      fidelity: rare {gs['fidelity']['score']:.2f} "
           f"(coverage {gs['fidelity']['coverage']:.2f}), "
           f"normal {gs['normal_fidelity']['score']:.2f}  "
-          f"[overall {'PASS' if gs['fidelity']['passed'] else 'FAIL'}]")
+          f"[fidelity gate {'PASS' if gs['fidelity']['passed'] else 'FAIL'}]")
+    if gs.get("privacy"):
+        pv = gs["privacy"]
+        print(f"      privacy: δ-floor {pv['delta']:.2f}σ, "
+              f"nearest real row {pv['min_distance']:.2f}σ, "
+              f"{pv['n_verbatim_duplicates']} verbatim copies  "
+              f"[{'PASS' if pv['passed'] else 'FAIL'}]  (not differential privacy)")
+    print(f"      → shippable: {'PASS' if gs['passed'] else 'FAIL'} "
+          f"(fidelity gate AND privacy guarantee)")
     if gs["lift"]:
         print(f"      detection lift: recall {gs['lift']['baseline_recall']:.3f} → "
               f"{gs['lift']['amplified_recall']:.3f}  ({gs['lift']['tail_lift']:+.3f})")

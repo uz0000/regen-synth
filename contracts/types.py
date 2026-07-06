@@ -187,6 +187,13 @@ class BatchManifest:
     # (the rest is the synthetic normal part). 0.0 = rare-only (legacy/pre-split
     # batches); recorded so a full-dataset run can be reproduced row-for-row.
     rare_ratio: float = 0.0
+    # Privacy mode the batch was generated under. "none" = legacy grounded
+    # sampling (no copy prevention); "floored" = parametric generation + the
+    # enforced δ-distance floor. Recorded so the privacy regime is reproducible
+    # and auditable from disk. delta is the floor in σ-normalized units (0.0
+    # when privacy="none").
+    privacy: str = "none"
+    delta: float = 0.0
 
     def to_json(self) -> str:
         return json.dumps(
@@ -199,6 +206,8 @@ class BatchManifest:
                 "code_version": self.code_version,
                 "n_rows": self.n_rows,
                 "rare_ratio": self.rare_ratio,
+                "privacy": self.privacy,
+                "delta": self.delta,
             },
             sort_keys=True,
         )
@@ -234,6 +243,54 @@ class FidelityReport:
     # scrambled dependence fails here even though every column passes.
     correlation_delta: Optional[float] = None
     correlation_passed: bool = True
+
+
+# ── Privacy report (distance-floor output) ───────────────────────────────────
+
+@dataclass
+class PrivacyReport:
+    """Outcome of the privacy δ-distance floor (engine.privacy).
+
+    A checked, enforced per-record guarantee: when ``passed`` is True, *every*
+    released row is at least ``delta`` (in σ-normalized numeric space) from
+    *every* real row. This closes the near-copy leak that grounded sampling
+    creates. It is NOT differential privacy — it does not bound aggregate or
+    membership-inference attacks that don't rely on near-copies.
+
+    Attributes:
+        mode:         "floored" (floor enforced) or "none".
+        delta:        The enforced floor, in σ-normalized units.
+        min_distance: Smallest released-row → nearest-real-row distance found
+                      (≥ delta when passed).
+        n_moved:      Rows projected out to the δ-shell.
+        n_respawned:  Rows that couldn't be resolved by projection and were
+                      re-drawn from the generator.
+        passed:       True iff min_distance ≥ delta (the guarantee holds).
+        distance_p10/p50/p90: Spread of nearest-neighbor distances, for judging
+                      how much headroom the batch has above the floor.
+    """
+    mode: str = "floored"
+    delta: float = 0.0
+    min_distance: float = 0.0
+    n_moved: int = 0
+    n_respawned: int = 0
+    passed: bool = True
+    distance_p10: Optional[float] = None
+    distance_p50: Optional[float] = None
+    distance_p90: Optional[float] = None
+
+    def to_dict(self) -> dict:
+        return {
+            "mode": self.mode,
+            "delta": self.delta,
+            "min_distance": self.min_distance,
+            "n_moved": self.n_moved,
+            "n_respawned": self.n_respawned,
+            "passed": self.passed,
+            "distance_p10": self.distance_p10,
+            "distance_p50": self.distance_p50,
+            "distance_p90": self.distance_p90,
+        }
 
 
 # ── Examiner output ───────────────────────────────────────────────────────────

@@ -11,10 +11,11 @@ The base batch covers the average case well; the Amplifier corrects the tail.
 """
 
 from .grounded import (
-    PriorConfig, PriorModel, fit_prior, generate_base_batch, generate_normal_batch,
+    PriorConfig, PriorModel, fit_prior,
+    generate_base_batch, generate_normal_batch, generate_parametric_batch,
 )
 
 __all__ = [
     "PriorConfig", "PriorModel", "fit_prior",
-    "generate_base_batch", "generate_normal_batch",
+    "generate_base_batch", "generate_normal_batch", "generate_parametric_batch",
 ]

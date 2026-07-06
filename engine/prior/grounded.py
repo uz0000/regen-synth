@@ -69,6 +69,13 @@ class PriorModel:
 
     Scoring uses a class-conditional diagonal-Gaussian estimator (O(1) per row)
     that captures the "normal vs rare" contrast.
+
+    Privacy (parametric generation): per-class discrete frequency tables and the
+    continuous-column indices are stored so ``generate_parametric_batch`` can
+    draw fresh rows from a Gaussian-copula fit of the class distribution instead
+    of perturbing real anchor rows. ``_cont_idx``/``_disc_idx`` split the encoded
+    feature columns into copula-sampled (continuous) and frequency-sampled
+    (categorical + binary) groups.
     """
     _scorer: object              # GaussianPrior — P(normal|x) density scorer
     _feature_cols: List[str]
@@ -80,6 +87,10 @@ class PriorModel:
     _is_continuous: np.ndarray   # bool mask: which feature columns are continuous
     schema_graph: SchemaGraph
     _field_dict: object = None   # ingest field_dict → canonical categorical encoding
+    # ── Parametric (privacy) parameters ───────────────────────────────────────
+    _cont_idx: object = None     # np.ndarray of continuous column indices
+    _disc_idx: object = None     # np.ndarray of discrete column indices
+    _disc_freq: object = None    # {class: {col: np.ndarray freq over codes}}
 
     def score(self, df: pd.DataFrame) -> pd.Series:
         """
@@ -233,6 +244,18 @@ def fit_prior(
     ], dtype=bool)
     logger.info("Continuous features: %d/%d", int(is_continuous.sum()), len(feature_cols))
 
+    # ── Parametric (privacy) parameters ───────────────────────────────────────
+    # Column-index split + per-class discrete (categorical+binary) frequency
+    # tables. The privacy path samples continuous features from a Gaussian copula
+    # built on demand from the stored class arrays (_X_train/_X_rare) at
+    # generation time — no per-class moments are precomputed here.
+    cont_idx = np.where(is_continuous)[0]
+    disc_idx = np.where(~is_continuous)[0]
+    disc_freq = {
+        cls_name: _fit_discrete_freq(X_cls, disc_idx, feature_cols, field_dict)
+        for cls_name, X_cls in (("normal", X), ("rare", X_rare))
+    }
+
     return PriorModel(
         _scorer=scorer,
         _feature_cols=feature_cols,
@@ -244,6 +267,9 @@ def fit_prior(
         _is_continuous=is_continuous,
         schema_graph=schema_graph,
         _field_dict=field_dict,
+        _cont_idx=cont_idx,
+        _disc_idx=disc_idx,
+        _disc_freq=disc_freq,
     )
 
 
@@ -333,7 +359,192 @@ def generate_normal_batch(
     return pd.DataFrame(X_base, columns=feature_cols)
 
 
+def generate_parametric_batch(
+    prior: PriorModel,
+    n: int,
+    rng: np.random.Generator,
+    which_class: str = "rare",
+) -> pd.DataFrame:
+    """Generate n rows by sampling from the fitted per-class distribution.
+
+    This is the privacy-safe generator: unlike ``generate_base_batch`` /
+    ``generate_normal_batch`` (which perturb a *real anchor row* and so emit
+    near-copies of real individuals), this never touches a real row. Continuous
+    features are drawn from a **Gaussian copula** fit on demand from the stored
+    class array (``_X_rare``/``_X_train``): each continuous column is mapped to
+    standard-normal scores, the latent correlation is estimated, fresh latent
+    rows are drawn from that correlation, then mapped back through the column's
+    empirical quantiles. This preserves each marginal exactly (values lie on the
+    real support) **and** the correlation structure — the two things the Auditor
+    gates on — without ever copying a real row. Categorical/binary features are
+    drawn from per-class frequency tables (so discrete values are no longer
+    copied verbatim from a real row, which was the strongest re-id signal).
+
+    Returns a feature-only DataFrame in *encoded* space — the same contract as
+    ``generate_base_batch`` — so the downstream ResidualGP correction,
+    constraint layer, and categorical decode apply unchanged. The privacy
+    δ-distance floor (engine.privacy) is enforced by the caller after any GP
+    correction, against the full real set.
+
+    Args:
+        prior:      Fitted PriorModel (carries the per-class arrays + freq tables).
+        n:          Number of rows to generate.
+        rng:        Seeded Generator.
+        which_class: "rare" or "normal" — which class distribution to sample.
+
+    Returns:
+        DataFrame with columns matching prior._feature_cols (encoded space).
+    """
+    feature_cols = prior._feature_cols
+    p = len(feature_cols)
+    X = np.zeros((n, p), dtype=np.float64)
+
+    cont_idx = prior._cont_idx
+    disc_idx = prior._disc_idx
+    disc_freq = prior._disc_freq or {}
+
+    key = which_class
+    # The real class array the copula + frequency tables were derived from.
+    class_X = (prior._X_rare if key == "rare" else prior._X_train)
+    class_X = np.asarray(class_X, dtype=np.float64)
+
+    # Continuous block: Gaussian copula built on demand from class_X (no real
+    # row is reused — only its per-column marginal and the latent correlation).
+    if cont_idx is not None and cont_idx.size and class_X.shape[0] > 0:
+        real_cont = class_X[:, cont_idx]                       # (m, k) real values
+        Xc = _gaussian_copula_sample(real_cont, n, rng)        # (n, k) fresh draws
+        X[:, cont_idx] = Xc
+
+    # Discrete block: sample codes from the per-class frequency tables.
+    if disc_idx is not None and disc_idx.size and key in disc_freq:
+        for j in disc_idx:
+            col = feature_cols[j]
+            freq = disc_freq[key].get(col)
+            if freq is None or freq.size == 0:
+                continue
+            codes = np.arange(freq.size)
+            X[:, j] = rng.choice(codes, size=n, p=freq).astype(np.float64)
+
+    return pd.DataFrame(X, columns=feature_cols)
+
+
 # ── Internals ──────────────────────────────────────────────────────────────────
+
+def _normal_scores(x: np.ndarray) -> np.ndarray:
+    """Map a 1-D sample to standard-normal scores via the empirical CDF
+    (rank → uniform → Φ⁻¹). Constant columns map to 0. This is the latent-
+    Gaussian representation a Gaussian copula samples from."""
+    from scipy.stats import norm, rankdata
+    x = np.asarray(x, dtype=np.float64)
+    if x.size == 0:
+        return x
+    if np.allclose(x.std(), 0):
+        return np.zeros_like(x)
+    u = rankdata(x, method="average") / (x.size + 1.0)
+    return norm.ppf(u)
+
+
+def _quantile_inverse(real_col: np.ndarray, u: np.ndarray) -> np.ndarray:
+    """Map uniform values ``u`` back to the scale of ``real_col`` via linear
+    interpolation over its sorted empirical quantiles. Preserves the marginal
+    distribution exactly (output values lie on the real support)."""
+    sv = np.sort(np.asarray(real_col, dtype=np.float64))
+    if sv.size == 0:
+        return np.zeros_like(u)
+    if sv.size == 1:
+        return np.full_like(u, sv[0])
+    pos = np.clip(u, 0.0, 1.0) * (sv.size - 1)
+    lo = np.floor(pos).astype(int)
+    hi = np.minimum(lo + 1, sv.size - 1)
+    frac = pos - lo
+    return sv[lo] * (1.0 - frac) + sv[hi] * frac
+
+
+def _gaussian_copula_sample(
+    real_cont: np.ndarray, n: int, rng: np.random.Generator,
+) -> np.ndarray:
+    """Draw ``n`` fresh continuous rows from a Gaussian copula fit on
+    ``real_cont`` (shape (m, k)).
+
+    The copula factors a joint distribution into (marginals) × (dependence):
+      1. Map each real column to standard-normal scores (``_normal_scores``) →
+         the latent Gaussian space where dependence is a plain correlation.
+      2. Estimate that latent correlation and draw ``n`` fresh latent rows from
+         it. With <2 real rows or a degenerate/non-finite correlation, fall back
+         to the identity (independent columns): marginals still match exactly,
+         only cross-column correlation is dropped.
+      3. Push each latent column through Φ to a uniform, then through the real
+         column's empirical quantiles (``_quantile_inverse``) → values that lie
+         on the real support with the real marginal, but belong to no real row.
+
+    No real row is ever emitted: every output coordinate is an interpolation of
+    sorted real values selected by an independently drawn latent rank.
+    """
+    from scipy.stats import norm
+
+    m, k = real_cont.shape
+    if k == 0:
+        return np.zeros((n, 0), dtype=np.float64)
+
+    # 1. Latent normal scores per column.
+    Z = np.column_stack([_normal_scores(real_cont[:, c]) for c in range(k)])
+
+    # 2. Latent correlation + fresh draws. np.corrcoef needs ≥2 rows and varying
+    #    columns; guard both and ridge-regularize so the Cholesky/eigendecomp in
+    #    multivariate_normal stays well-conditioned.
+    corr = np.eye(k)
+    if m >= 2:
+        with np.errstate(invalid="ignore", divide="ignore"):
+            c = np.corrcoef(Z, rowvar=False)
+        c = np.atleast_2d(c)
+        if c.shape == (k, k) and np.all(np.isfinite(c)):
+            corr = 0.999 * c + 0.001 * np.eye(k)  # pull toward identity
+    L = rng.multivariate_normal(np.zeros(k), corr, size=n)
+
+    # 3. Latent → uniform → real marginal.
+    U = norm.cdf(L)
+    out = np.empty((n, k), dtype=np.float64)
+    for c in range(k):
+        out[:, c] = _quantile_inverse(real_cont[:, c], U[:, c])
+    return out
+
+
+def _fit_discrete_freq(
+    X: np.ndarray, disc_idx: np.ndarray, feature_cols: List[str], field_dict,
+) -> Dict[str, np.ndarray]:
+    """Per-class empirical frequency table for each discrete (categorical/binary)
+    column, over its canonical code range.
+
+    Sampling from these tables (instead of copying an anchor's value) is what
+    stops categorical values being reproduced verbatim — the strongest
+    re-identification signal in the old grounded sampler. Unseen codes get a
+    small epsilon so the sampler never starves a real category. Length matches
+    the canonical category count where known, so sampled codes decode cleanly.
+    """
+    out: Dict[str, np.ndarray] = {}
+    if disc_idx.size == 0:
+        return out
+    Xn = np.asarray(X, dtype=np.float64)
+    for j in disc_idx:
+        col = feature_cols[j]
+        codes = np.rint(Xn[:, j]).astype(int)
+        meta = field_dict.get(col) if field_dict is not None else None
+        if meta is not None and getattr(meta, "categories", None) is not None:
+            n_codes = len(meta.categories)
+        elif meta is not None and meta.field_type == FieldType.BINARY:
+            n_codes = 2
+        else:
+            n_codes = int(codes.max()) + 1 if codes.size else 1
+        n_codes = max(n_codes, 1)
+        counts = np.bincount(
+            np.clip(codes, 0, n_codes - 1), minlength=n_codes,
+        ).astype(np.float64)
+        # Floor every category so a class that never shows a value can still
+        # produce it rarely (smooths the tail, avoids zero-probability traps).
+        counts = counts + 0.5
+        out[col] = counts / counts.sum()
+    return out
+
 
 def _encode_features(df: pd.DataFrame, field_dict=None) -> np.ndarray:
     """Convert DataFrame to float32 array. Categorical → label-encoded.
