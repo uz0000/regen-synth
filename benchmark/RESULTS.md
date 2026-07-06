@@ -1,3 +1,7 @@
+> **⚠️ Superseded (2026-07-06).** These numbers predate the full-synthesis change
+> and the privacy layer. For the current privacy-on-vs-off comparison see
+> [`RESULTS_PRIVACY.md`](RESULTS_PRIVACY.md). Kept as historical record.
+
 # REGEN Benchmark Results
 
 > **⚠ SUPERSEDED** — These are single-pass results from 2026-06-18.

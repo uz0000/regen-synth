@@ -180,3 +180,36 @@ Done together per the audit (same files/context as P0-2).
   bogus` and `delta: 9.0` → 400; floored campaign response shows `privacy.mode=floored`.
 - **Tests:** new `tests/test_server.py` (6 tests via FastAPI `TestClient`: floored/none/invalid on
   both endpoints). Suite **97 → 103 green**.
+
+### P1-6 — Benchmark privacy sweep (floored vs none, 11 datasets)
+
+- **Harness:** `benchmark/run_privacy_sweep.py` — fixed config (n_rows=400, seed=7, auto-tune OFF so
+  floored-vs-none isolates the privacy cost), rare class auto-detected, per dataset records fidelity,
+  coverage, corr-delta, gate, tail lift, floor_applied, min-distance, verbatim count, wall time.
+  Writes `benchmark/RESULTS_PRIVACY.{md,json}` stamped with run date + git `code_version`
+  (`c2ec51a`). Superseded older RESULTS files (`RESULTS.md`, `RESULTS_BREADTH.md`,
+  `RESULTS_MULTIPASS.md`) with a header pointing here (kept, not deleted — §6.6).
+- **Headline (observed):** on the 6 datasets with continuous features that pass the gate, floored
+  preserves fidelity — coverage cost ≤ 0.03 (e.g. hypothyroid 0.980→0.947, creditcard 0.980→0.919)
+  and corr-delta stays under the 0.25 gate (often *improves*: ozone 0.079→0.062, wilt 0.077→0.052).
+  Floor min-distance clears δ=0.5 everywhere it applies (0.5–4.1σ). Verified at scale.
+- **Crash found + FIXED:** solar_flare `privacy="floored"` crashed (coincident-row inf) — fixed in
+  `c2ec51a` (see the fix entry above), now runs.
+- **Findings FILED (repro + routed to G-E capability matrix), not silently accepted:**
+  1. **Low-cardinality integer data degrades under the floor.** `solar_flare` floored: coverage
+     collapses 1.00→0.039, fidelity 1.0→0.7, gate FAILS. Its "continuous" features are 3–6-value
+     integer codes; the δ-floor (+integer rounding margin) shoves the tiny integer-grid rare cluster
+     far off its own region. Repro: `generate("benchmark/data/solar_flare.csv", label_col="Class",
+     rare_def=None, n_rows=400, auto=False, seed=7, privacy="floored")`. → G-E: **degraded** for
+     low-cardinality integer/ordinal features; preflight should warn.
+  2. **All-categorical high-cardinality data loses fidelity under parametric sampling.**
+     `open_payments` floored: fidelity 0.80→0.40 (floor correctly skipped, `floor_applied=False`,
+     `no_continuous_features`). Parametric frequency-table sampling + the copula degrade high-card
+     categorical TVD vs grounded anchoring. Repro: same call on `open_payments.csv`. → G-E:
+     **degraded** for all-categorical high-cardinality; the floor gives no extra protection there
+     (verbatim guard + k-anonymity do).
+  3. **Lift reads a bare 0.0 on small rare sets** (creditcard_subset/satellite/creditcard, both
+     modes) — the P2-7 degeneracy; addressed next.
+  4. **Not privacy-induced:** bank_marketing / churn fail the gate in **both** modes at this config
+     (a column TVD exceeds threshold) → lift not measured. Pre-existing gate behaviour, noted.
+- Suite **104 green** (crash-fix regression test included).

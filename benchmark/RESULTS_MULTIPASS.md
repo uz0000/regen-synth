@@ -1,3 +1,7 @@
+> **⚠️ Superseded (2026-07-06).** Predates the full-synthesis change and the
+> privacy layer. Current privacy sweep: [`RESULTS_PRIVACY.md`](RESULTS_PRIVACY.md).
+> Kept as historical record.
+
 # REGEN Multi-Pass Benchmark Results
 
 > **⚠ SUPERSEDED** — These are early multi-pass results from 2026-06-18 (3 datasets).

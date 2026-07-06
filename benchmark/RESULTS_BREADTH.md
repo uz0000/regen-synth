@@ -1,3 +1,7 @@
+> **⚠️ Superseded (2026-07-06).** Predates the full-synthesis change and the
+> privacy layer. Current privacy sweep: [`RESULTS_PRIVACY.md`](RESULTS_PRIVACY.md).
+> Kept as historical record.
+
 # REGEN Breadth Benchmark — Testing the Heterogeneity Hypothesis
 
 **Date:** 2026-06-22 (re-run with noise=0.10)
