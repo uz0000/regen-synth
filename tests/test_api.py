@@ -526,6 +526,62 @@ def test_measure_lift_no_synth_means_zero_lift():
     rep = measure_lift(res, ExaminerConfig(n_estimators=20), generate_synth_fn=None)
     assert rep.tail_lift == 0.0
     assert rep.n_synthetic_used == 0
+    assert rep.status == "ok"          # 60 rare → ~18 held out, enough to measure
+
+
+# ── P2-7: lift degeneracy on tiny rare folds ─────────────────────────────────
+
+def test_lift_flags_insufficient_rare_rows(tmp_path):
+    """P2-7: a held-out rare fold below MIN_TEST_RARE is reported as a status,
+    not a bare 0.0. Synthetic fixture with ~14 rare rows → ~4 held out."""
+    import numpy as np
+    import pandas as pd
+    from engine.examiner import measure_lift, ExaminerConfig
+    from engine.examiner.detector import MIN_TEST_RARE
+    from regen.api import ingest as api_ingest
+    from contracts.types import RareEventDef, RareMode
+
+    rng = np.random.default_rng(0)
+    n_norm, n_rare = 300, 14
+    df = pd.concat([
+        pd.DataFrame({"a": rng.normal(0, 1, n_norm), "b": rng.normal(0, 1, n_norm),
+                      "y": 0}),
+        pd.DataFrame({"a": rng.normal(3, 1, n_rare), "b": rng.normal(3, 1, n_rare),
+                      "y": 1}),
+    ], ignore_index=True)
+    path = str(tmp_path / "small_rare.csv")
+    df.to_csv(path, index=False)
+
+    res = api_ingest(path, "y", RareEventDef(mode=RareMode.LABEL, label_value=1))
+    rep = measure_lift(res, ExaminerConfig(n_estimators=20), generate_synth_fn=None)
+    assert rep.n_test_rare < MIN_TEST_RARE
+    assert rep.status == "insufficient_rare_rows"
+
+
+def test_generate_lift_out_nulls_tail_lift_when_insufficient(tmp_path):
+    """The generate() summary reports {status, n_test_rare, tail_lift=None} rather
+    than a misleading 0.0 when the rare fold is too small (P2-7)."""
+    import numpy as np
+    import pandas as pd
+    from regen.api import generate
+
+    rng = np.random.default_rng(1)
+    n_norm, n_rare = 400, 16
+    df = pd.concat([
+        pd.DataFrame({"a": rng.normal(0, 1, n_norm), "b": rng.normal(0, 1, n_norm),
+                      "y": 0}),
+        pd.DataFrame({"a": rng.normal(4, 1, n_rare), "b": rng.normal(4, 1, n_rare),
+                      "y": 1}),
+    ], ignore_index=True)
+    path = str(tmp_path / "small_rare2.csv")
+    df.to_csv(path, index=False)
+
+    s = generate(path, label_col="y", n_rows=300, auto=False, seed=3,
+                 privacy="none", out_dir=str(tmp_path / "out"))
+    lift = s["lift"]
+    if lift is not None and lift["status"] == "insufficient_rare_rows":
+        assert lift["tail_lift"] is None
+        assert lift["n_test_rare"] < 10
 
 
 # ── Batch B2: Auditor checks cross-column correlation structure ───────────────

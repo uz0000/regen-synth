@@ -323,6 +323,13 @@ class LiftReport:
     tail_lift: float          # primary number Scout uses
     n_synthetic_used: int
     manifest: Optional[BatchManifest] = None
+    # Held-out real rare rows the lift was measured on. Below a floor the
+    # estimate is degenerate (a handful of test rows → recall snaps between a few
+    # discrete values, and a 0.0 is indistinguishable from "no benefit"). status
+    # flags that so a bare 0.0 is never reported as if it were a measurement
+    # (P2-7). "ok" | "insufficient_rare_rows".
+    n_test_rare: int = 0
+    status: str = "ok"
 
 
 # ── Campaign output ───────────────────────────────────────────────────────────

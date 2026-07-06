@@ -213,3 +213,20 @@ Done together per the audit (same files/context as P0-2).
   4. **Not privacy-induced:** bank_marketing / churn fail the gate in **both** modes at this config
      (a column TVD exceeds threshold) → lift not measured. Pre-existing gate behaviour, noted.
 - Suite **104 green** (crash-fix regression test included).
+
+### P2-7 — Lift degeneracy reporting (no more bare 0.0 on tiny rare folds)
+
+- **Before (repro):** `generate("benchmark/data/creditcard_subset.csv", label_col="Class",
+  rare_def=None, n_rows=400, auto=False, seed=7, privacy="none")` → `lift.tail_lift = 0.0` — but only
+  ~7 real rare rows are held out, so recall can only take a few discrete values and 0.0 is an
+  artifact, indistinguishable from "no benefit."
+- **Change:** documented floor `MIN_TEST_RARE = 10` in the Examiner; `LiftReport` gains
+  `n_test_rare` + `status` (`ok` / `insufficient_rare_rows`); the leakage-free protocol is **unchanged**
+  (git 57a45fc) — only its reliability is annotated. `generate()`'s `lift` block now reports
+  `{status, n_test_rare, baseline_recall, amplified_recall, tail_lift}` with `tail_lift=None` when
+  insufficient (not a bare 0.0). CLI `generate` prints "n/a (only k held-out rare rows)".
+- **After (same repro):** `lift = {status: "insufficient_rare_rows", n_test_rare: 7, tail_lift: None,
+  ...}`. Healthy case (transactions, 18 held-out) → `status: "ok", tail_lift: 0.2778`.
+- **Tests:** `test_lift_flags_insufficient_rare_rows` + `test_generate_lift_out_nulls_tail_lift_when_insufficient`
+  (synthetic small-rare fixtures); existing no-synth lift test now also asserts `status=="ok"`.
+  Suite **104 → 106 green**. `generate()` bit-identical (hash `40933a2b`).

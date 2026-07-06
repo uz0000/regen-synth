@@ -28,6 +28,14 @@ logger = logging.getLogger(__name__)
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
+# Minimum held-out real rare rows for a non-degenerate lift estimate. Below this,
+# recall is computed over so few positives that it can only take a few discrete
+# values and a 0.0 is indistinguishable from "no benefit" — so we report a status
+# instead of a bare number (P2-7). Chosen at 10: recall then resolves to steps of
+# ≤0.1, enough to distinguish a real lift from noise.
+MIN_TEST_RARE = 10
+
+
 @dataclass
 class ExaminerConfig:
     n_estimators: int = 100
@@ -143,9 +151,18 @@ def measure_lift(
 
     tail_lift = amp_recall - base_recall
 
+    # Degeneracy guard (P2-7): the lift is measured on the held-out rare fold. With
+    # too few test-fold rare rows the estimate can only take a few discrete values
+    # and a 0.0 is an artifact, not "no benefit". Flag it rather than emit a bare
+    # number. The measurement is NOT weakened — the honest leakage-free protocol is
+    # unchanged (git 57a45fc); we only annotate its reliability.
+    n_test_rare = int(len(r_test))
+    status = "ok" if n_test_rare >= MIN_TEST_RARE else "insufficient_rare_rows"
+
     logger.info(
-        "Examiner: baseline recall=%.3f, amplified recall=%.3f, lift=%.3f (held-out, leakage-free)",
-        base_recall, amp_recall, tail_lift,
+        "Examiner: baseline recall=%.3f, amplified recall=%.3f, lift=%.3f "
+        "(held-out, leakage-free; n_test_rare=%d, status=%s)",
+        base_recall, amp_recall, tail_lift, n_test_rare, status,
     )
 
     return LiftReport(
@@ -156,6 +173,8 @@ def measure_lift(
         tail_lift=tail_lift,
         n_synthetic_used=n_synth_used,
         manifest=manifest,
+        n_test_rare=n_test_rare,
+        status=status,
     )
 
 

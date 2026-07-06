@@ -1073,9 +1073,15 @@ def generate(
     lift_out = None
     if lift is not None:
         lift_out = {
-            "tail_lift": round(lift.tail_lift, 4),
+            "status": lift.status,
+            "n_test_rare": lift.n_test_rare,
             "baseline_recall": round(lift.baseline_recall, 4),
             "amplified_recall": round(lift.amplified_recall, 4),
+            # tail_lift is None (not a bare 0.0) when the held-out rare fold is
+            # too small to trust the estimate (P2-7). The recall numbers are kept
+            # for context but flagged by status.
+            "tail_lift": (round(lift.tail_lift, 4)
+                          if lift.status == "ok" else None),
         }
 
     summary = {
@@ -1163,12 +1169,14 @@ def _write_manifest(
 
 def _save_generate_summary(summary: Dict[str, Any], out_path: Path) -> None:
     """Persist a campaign-shaped summary so get_results()/load_synthetic() work."""
+    _tl = (summary["lift"] or {}).get("tail_lift")
+    _tl = _tl if _tl is not None else 0.0   # None (insufficient rare fold, P2-7) → 0.0 on disk
     cr_like = {
-        "best_lift": (summary["lift"]["tail_lift"] if summary["lift"] else 0.0),
+        "best_lift": _tl,
         "passes": [{
             "pass_num": 1,
             "status": "accepted" if summary["fidelity"]["passed"] else "rejected",
-            "tail_lift": summary["lift"]["tail_lift"] if summary["lift"] else 0.0,
+            "tail_lift": _tl,
             "coverage": summary["fidelity"]["coverage"],
         }],
         "n_accepted": 1 if summary["fidelity"]["passed"] else 0,

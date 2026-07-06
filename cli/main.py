@@ -314,8 +314,12 @@ def _cmd_generate(args):
         print(f"               {floor}; NOT differential privacy")
     else:
         print(f"  Privacy:     none")
-    if summary.get("lift"):
-        print(f"  Detection lift: {summary['lift']['tail_lift']:+.4f}")
+    lift = summary.get("lift")
+    if lift and lift.get("status") == "ok" and lift.get("tail_lift") is not None:
+        print(f"  Detection lift: {lift['tail_lift']:+.4f}")
+    elif lift and lift.get("status") == "insufficient_rare_rows":
+        print(f"  Detection lift: n/a (only {lift['n_test_rare']} held-out rare "
+              f"rows — too few to measure)")
     print(f"  Shippable:   {'PASS' if summary['passed'] else 'FAIL'}  (fidelity AND privacy)")
     print(f"  Output:      {out_dir.resolve()}")
     print("=" * 62)
