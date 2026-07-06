@@ -133,3 +133,29 @@ Done together per the audit (same files/context as P0-2).
   `examples/transactions.csv` is generated. No real rows in tests.
 - Suite **92 → 94 green**. _(P2-10a + P2-10b handled here; P2-10c KNOWN_ISSUES header deferred to the
   P2-10 housekeeping step.)_
+
+### P1-5 — Campaign/screen privacy (decision + plumbing)
+
+- **Decision (surfaced per §6 rule 5).** The audit offered (A) thread privacy through the signatures
+  vs (B) document them as non-private with a visible regime, preferring (A) "if cheap." Investigation
+  showed the δ-floor lived only inside `generate()`, so passing `privacy="floored"` into `run_campaign`
+  would have given parametric+guard but **no floor** — a silent gap. I chose **(A), done properly**:
+  extracted the floor into a shared helper `_enforce_rare_floor()` (verified `generate()` stays
+  **bit-identical** — row-hash `40933a2b`, a pure move) and threaded `privacy`/`delta` through
+  `run_campaign` end-to-end (default `"none"` for backward compat). This *fixes* the audit's
+  inconsistency (campaign emitting near-copies while generate didn't) rather than papering over it.
+  `screen()` stays **non-private by design** (it returns a recommendation, persists no rows, and its
+  REGEN-vs-SMOTE lift must be apples-to-apples) — documented in its docstring, no param added.
+  **Reversal:** to make campaign default to floored, flip the default; to force screen private, add a
+  param and a matched-privacy SMOTE arm.
+- **Change:** `run_campaign` validates + threads `privacy`/`delta`; each accepted batch is floored via
+  the shared helper before persistence; the regime is recorded in `campaign_summary.json` (`privacy`
+  block) and the manifest. `_save_campaign_summary` gained the block.
+- **After (observed):** `run_campaign(privacy="floored")` best batch → `min_dist=0.520`, `passed=True`,
+  `n_verbatim=0`; summary `privacy.mode=floored`, manifest `privacy=floored, delta=0.5`. Default run →
+  `privacy.mode=none` with an explicit note. `generate()` bit-identical (hash `40933a2b`).
+- **Tests:** `TestP15CampaignPrivacy` (floored batches carry the floor; default regime visible; bad
+  privacy rejected). Suite **94 → 97 green**.
+- **Docs pending (tracked):** `run_campaign` gained params, so `docs/REGEN_DOCUMENTATION.md` needs the
+  new signature — deferred to the P1-3 docs pass because G-A will change these same signatures again
+  (adding `ScenarioSpec`); updating twice is churn. Docstrings are current now.

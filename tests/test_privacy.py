@@ -349,3 +349,43 @@ class TestP09LoudFloorSkip:
                          out_dir=tmp)
         assert s["privacy"]["floor_applied"] is True
         assert s["privacy"]["floor_skip_reason"] is None
+
+
+# ── P1-5: campaign privacy plumbing + visible regime ──────────────────────────
+
+class TestP15CampaignPrivacy:
+    """P1-5: run_campaign threads privacy end-to-end (same floor helper as
+    generate) and always records the regime; screen is non-private by design."""
+
+    def test_floored_campaign_batches_carry_the_floor(self):
+        import pandas as pd
+        from regen.api import run_campaign, ingest
+        from engine.privacy import assess_privacy
+        with tempfile.TemporaryDirectory() as out:
+            cr = run_campaign(SAMPLE_CSV, LABEL_COL, RARE_DEF, seed=42, n_rows=150,
+                              max_passes=2, out_dir=out, privacy="floored", delta=0.5)
+            summ = json.loads((Path(out) / "campaign_summary.json").read_text())
+            man = json.loads((Path(out) / "manifest.json").read_text())
+            res = ingest(SAMPLE_CSV, LABEL_COL, RARE_DEF)
+            df = pd.read_parquet(cr.best_batch_path)
+        assert summ["privacy"]["mode"] == "floored"
+        assert man["privacy"] == "floored" and man["delta"] == 0.5
+        rep = assess_privacy(df, res.rare_df, df,
+                             pd.concat([res.normal_df, res.rare_df], ignore_index=True),
+                             res.field_dict, LABEL_COL, 0.5)
+        assert rep.passed
+        assert rep.min_distance >= 0.5 - 1e-3
+
+    def test_default_campaign_regime_is_none_and_visible(self):
+        from regen.api import run_campaign
+        with tempfile.TemporaryDirectory() as out:
+            run_campaign(SAMPLE_CSV, LABEL_COL, RARE_DEF, seed=42, n_rows=120,
+                         max_passes=1, out_dir=out)
+            summ = json.loads((Path(out) / "campaign_summary.json").read_text())
+        assert summ["privacy"]["mode"] == "none"
+
+    def test_campaign_rejects_bad_privacy(self):
+        from regen.api import run_campaign
+        with pytest.raises(ValueError):
+            run_campaign(SAMPLE_CSV, LABEL_COL, RARE_DEF, n_rows=50, max_passes=1,
+                         privacy="bogus")

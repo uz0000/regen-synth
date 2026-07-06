@@ -379,6 +379,70 @@ def _generate_normal_batch(
     return normal_df
 
 
+def _enforce_rare_floor(
+    full_df: pd.DataFrame,
+    result: IngestResult,
+    delta: float,
+    seed: int,
+) -> tuple[pd.DataFrame, bool, Optional[str]]:
+    """Enforce the privacy δ-distance floor on the rare rows of a delivered batch.
+
+    This is the FINAL numeric mutation before a batch is persisted, so the
+    guarantee holds on the data the caller actually receives — applying it
+    earlier lets the constraint layer clip floored rows back inside δ. The floor
+    moves only continuous columns and clamps to the observed [min,max], so
+    binary/categorical snaps stay valid; integer-valued continuous columns still
+    need re-rounding afterward (which nudges a row by ≤0.5 raw units), so we
+    enforce to δ plus that worst-case rounding margin and the delivered distance
+    clears δ even after the round. Deterministic: a dedicated substream off
+    ``seed`` (Invariant 2).
+
+    Shared by generate() (full-dataset path) and run_campaign() (rare-only
+    diagnostic path) so the floor is enforced identically — one implementation,
+    no drift (P1-5). Mutates and returns ``full_df``.
+
+    Returns (full_df, floor_applied, floor_skip_reason). The floor is skipped
+    (and said so, never silently — P2-9) when the data can't support a δ-shell:
+    ``no_label`` / ``no_continuous_features`` / ``no_rare_rows``.
+    """
+    from engine.privacy import enforce_distance_floor, _continuous_cols
+    rare_val = (result.rare_df[result.label_col].mode().iloc[0]
+                if result.label_col and len(result.rare_df) else None)
+    cont_cols = _continuous_cols(full_df, result.field_dict, result.label_col)
+    if not (result.label_col and rare_val is not None):
+        return full_df, False, "no_label"
+    if not cont_cols:
+        return full_df, False, "no_continuous_features"
+    rare_mask = full_df[result.label_col] == rare_val
+    if not rare_mask.any():
+        return full_df, False, "no_rare_rows"
+
+    # Worst-case L2 displacement (σ-normalized) from re-rounding the integer-
+    # valued continuous columns: ≤0.5 raw unit each.
+    sig = result.rare_df[cont_cols].to_numpy(dtype=float).std(axis=0)
+    sig = np.where(sig < 1e-8, 1.0, sig)
+    int_mask = np.array(
+        [bool(getattr(result.field_dict[c], "is_integer", False)) for c in cont_cols]
+    )
+    margin = float(np.sqrt(np.sum(((0.5 / sig) * int_mask) ** 2)))
+    rng_floor = np.random.default_rng(seed + 4242)
+    floored, _ = enforce_distance_floor(
+        full_df.loc[rare_mask], result.rare_df, result.field_dict,
+        result.label_col, delta + margin, rng_floor,
+    )
+    # Write back ONLY the continuous columns the floor adjusts (not identifiers/
+    # label), widening integer ones to float first — the re-round below restores
+    # int64. Avoids a pandas incompatible-dtype assignment into int columns.
+    full_df[cont_cols] = full_df[cont_cols].astype(float)
+    full_df.loc[rare_mask, cont_cols] = floored[cont_cols].values
+    for c in cont_cols:
+        meta = result.field_dict[c]
+        if getattr(meta, "is_integer", False):
+            col = full_df[c].clip(meta.min_val, meta.max_val).round()
+            full_df[c] = col.astype("int64")
+    return full_df, True, None
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # 2. RUN CAMPAIGN
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -397,6 +461,8 @@ def run_campaign(
     n_estimators: int = 100,
     num_candidates: int = 100,
     noise_scale: float = 0.10,
+    privacy: str = "none",
+    delta: float = 0.5,
 ) -> CampaignResult:
     """Run a full multi-pass REGEN amplification campaign.
 
@@ -420,10 +486,22 @@ def run_campaign(
         n_estimators: Number of trees in Examiner's RandomForest.
         num_candidates: Candidate pool size for Scout.
         noise_scale: Prior perturbation scale (fraction of rare std-dev).
+        privacy: "none" (default) or "floored". The campaign is a multi-pass
+            *diagnostic* path (it maps the lift trajectory across rare regions),
+            so it defaults to "none" — but when a persisted pass batch is meant
+            for release, pass "floored" and each accepted batch gets the same
+            parametric generation + verbatim guard + δ-distance floor that
+            generate() applies (P1-5: same guarantee, one implementation).
+        delta: δ-distance floor in σ-units (only meaningful when privacy="floored").
 
     Returns:
-        CampaignResult with best_lift, pass history, output paths, etc.
+        CampaignResult with best_lift, pass history, output paths, etc. The
+        privacy regime is recorded in campaign_summary.json and the manifest.
     """
+    if privacy not in ("none", "floored"):
+        raise ValueError(f"privacy must be 'none' or 'floored', got {privacy!r}")
+    if not (0.0 < delta <= 2.0):
+        raise ValueError(f"delta must be in (0, 2] σ-units, got {delta!r}")
     from engine.ingest.loader import persist_ingest
     from engine.prior import PriorConfig, fit_prior, generate_base_batch
     from engine.amplifier import AmplifierConfig, fit_residuals, sample_residuals
@@ -473,10 +551,13 @@ def run_campaign(
     best_seed: Optional[int] = None
     best_target: Dict[str, Any] = {}
 
+    floor_applied_any = False
+    floor_skip_reason: Optional[str] = None
     for pass_num in range(max_passes):
         amp_df, report, lift, target_region = _run_one_pass(
             result, prior_cfg, amp_cfg, aud_cfg, exam_cfg, scout_cfg,
             seed + pass_num, n_rows, label_col, rare_def, explored_points,
+            privacy=privacy, delta=delta,
         )
 
         if not report.overall_passed:
@@ -502,6 +583,17 @@ def run_campaign(
             amplified_precision=lift.amplified_precision,
         ))
 
+        # Under privacy="floored", enforce the δ-distance floor on the accepted
+        # batch as the final numeric step before persistence — the same helper
+        # generate() uses, so a released campaign batch carries the identical
+        # guarantee (P1-5). The batch is rare-only (all rows are the rare class),
+        # so the floor applies to the whole frame.
+        if privacy == "floored":
+            amp_df, fa, fr = _enforce_rare_floor(amp_df, result, delta, seed + pass_num)
+            floor_applied_any = floor_applied_any or fa
+            if not fa:
+                floor_skip_reason = fr
+
         # Save the accepted batch (carries the rare label, see _generate_amp_batch).
         batch_path = str(out_path / f"pass_{pass_num + 1}_accepted.parquet")
         amp_df.to_parquet(batch_path, index=False)
@@ -512,7 +604,8 @@ def run_campaign(
     # Persist the manifest for the best (last accepted) batch so it is
     # reproducible from disk (Invariant 2).
     if best_batch_path is not None:
-        _write_manifest(out_path, best_seed, result, prior_cfg, amp_cfg, best_target, n_rows)
+        _write_manifest(out_path, best_seed, result, prior_cfg, amp_cfg, best_target,
+                        n_rows, privacy=privacy, delta=delta)
 
     n_features = len(result.field_dict) - 1
 
@@ -529,16 +622,38 @@ def run_campaign(
         best_batch_path=best_batch_path,
     )
 
+    # Privacy regime — always visible in the summary so the diagnostic-vs-private
+    # distinction is never ambiguous (P1-5).
+    if privacy == "floored":
+        privacy_block = {
+            "mode": "floored",
+            "delta": delta,
+            "floor_applied": floor_applied_any,
+            "floor_skip_reason": None if floor_applied_any else floor_skip_reason,
+            "note": ("Each accepted pass batch carries parametric generation + "
+                     "verbatim guard + δ-distance floor (same as generate()). "
+                     "NOT differential privacy — see docs/PRIVACY.md."),
+        }
+    else:
+        privacy_block = {
+            "mode": "none",
+            "note": ("Diagnostic campaign path — batches are grounded-sampled and "
+                     "may contain near-copies of real rows. Use privacy='floored' "
+                     "(or generate(privacy='floored')) for a released dataset."),
+        }
+
     # Persist campaign summary for later retrieval via get_results()
-    _save_campaign_summary(cr, out_path)
+    _save_campaign_summary(cr, out_path, privacy_block)
 
     return cr
 
 
-def _save_campaign_summary(cr: CampaignResult, out_path: Path) -> None:
+def _save_campaign_summary(cr: CampaignResult, out_path: Path,
+                           privacy_block: Optional[Dict[str, Any]] = None) -> None:
     """Write campaign_summary.json to the output directory."""
     summary = {
         "best_lift": cr.best_lift,
+        "privacy": privacy_block,
         "n_accepted": cr.n_accepted,
         "n_rejected": cr.n_rejected,
         "n_normal": cr.n_normal,
@@ -844,62 +959,16 @@ def generate(
     # the clip/snap steps are idempotent on the already-constrained columns.
     full_df = _apply_domain_constraints(full_df, result)
 
-    # Privacy δ-distance floor (rare part), enforced HERE — as the final numeric
-    # mutation before persistence — so the guarantee holds on the data the user
-    # actually receives. Doing it earlier lets the constraint layer clip floored
-    # rows back inside δ. The floor moves only continuous columns and clamps to
-    # the observed [min,max], so binary/categorical snaps stay valid; integer-
-    # valued continuous columns still need re-rounding afterward (which nudges a
-    # row by ≤0.5 raw units), so we enforce to δ plus that worst-case rounding
-    # margin and the delivered distance clears δ even after the round.
-    # Deterministic: a dedicated substream off final_seed (Invariant 2).
-    # Track whether the floor was actually enforced. When the data can't support
-    # a δ-shell (no continuous features, or no resolvable label/rare class) the
-    # floor is skipped — but that must be stated in the privacy block, not
-    # silently implied while the mode still reads "floored" (P2-9: fail loud).
+    # Privacy δ-distance floor (rare part), enforced as the final numeric mutation
+    # before persistence via the shared helper (also used by run_campaign), so the
+    # guarantee holds on the delivered data and there is one floor implementation
+    # (P1-5). floor_applied/reason feed the loud-skip reporting (P2-9).
     floor_applied = False
     floor_skip_reason: Optional[str] = None
     if privacy == "floored":
-        from engine.privacy import enforce_distance_floor, _continuous_cols
-        rare_val = (result.rare_df[result.label_col].mode().iloc[0]
-                    if result.label_col and len(result.rare_df) else None)
-        cont_cols = _continuous_cols(full_df, result.field_dict, result.label_col)
-        if not (result.label_col and rare_val is not None):
-            floor_skip_reason = "no_label"
-        elif not cont_cols:
-            floor_skip_reason = "no_continuous_features"
-        else:
-            rare_mask = full_df[result.label_col] == rare_val
-            if not rare_mask.any():
-                floor_skip_reason = "no_rare_rows"
-            if rare_mask.any():
-                floor_applied = True
-                # Worst-case L2 displacement (σ-normalized) from re-rounding the
-                # integer-valued continuous columns: ≤0.5 raw unit each.
-                sig = result.rare_df[cont_cols].to_numpy(dtype=float).std(axis=0)
-                sig = np.where(sig < 1e-8, 1.0, sig)
-                int_mask = np.array(
-                    [bool(getattr(result.field_dict[c], "is_integer", False))
-                     for c in cont_cols]
-                )
-                margin = float(np.sqrt(np.sum(((0.5 / sig) * int_mask) ** 2)))
-                rng_floor = np.random.default_rng(final_seed + 4242)
-                floored, _ = enforce_distance_floor(
-                    full_df.loc[rare_mask], result.rare_df, result.field_dict,
-                    result.label_col, delta + margin, rng_floor,
-                )
-                # Write back ONLY the continuous columns the floor adjusts (not
-                # identifiers/label), widening integer ones to float first — the
-                # re-round below restores int64. Avoids a pandas incompatible-
-                # dtype assignment into int columns.
-                full_df[cont_cols] = full_df[cont_cols].astype(float)
-                full_df.loc[rare_mask, cont_cols] = floored[cont_cols].values
-                # Restore integer dtype/rounding the floor's float output broke.
-                for c in cont_cols:
-                    meta = result.field_dict[c]
-                    if getattr(meta, "is_integer", False):
-                        col = full_df[c].clip(meta.min_val, meta.max_val).round()
-                        full_df[c] = col.astype("int64")
+        full_df, floor_applied, floor_skip_reason = _enforce_rare_floor(
+            full_df, result, delta, final_seed,
+        )
 
     batch_path = str(out_path / "pass_1_accepted.parquet")
     full_df.to_parquet(batch_path, index=False)
@@ -1150,6 +1219,14 @@ def screen(
     This is slower than a pure metric-based screen (~5-15 seconds) but
     actually reliable — it measures real lift on the user's data rather
     than predicting from proxy statistics.
+
+    Privacy (P1-5): screen is a **non-private diagnostic** and takes no privacy
+    parameter by design. It returns a method recommendation, not a dataset — no
+    synthetic rows are persisted or handed back — so output re-identification is
+    not in play. Its REGEN arm is generated non-privately on purpose, so the
+    REGEN-vs-SMOTE lift comparison is apples-to-apples (SMOTE has no privacy
+    mode; enforcing the δ-floor on only one arm would bias the comparison). For a
+    private *deliverable*, use generate(privacy="floored").
 
     Args:
         filepath: Path to input data (CSV/JSON/Parquet).
