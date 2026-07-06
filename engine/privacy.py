@@ -139,14 +139,19 @@ def enforce_distance_floor(
         nn = R_n[idx[viol]]
         diff = S_n[viol] - nn
         nd = np.linalg.norm(diff, axis=1, keepdims=True)
-        # A row coincident with a real point: nudge along a deterministic
-        # rng-chosen axis so the projection has a direction.
-        zero = (nd.ravel() == 0)
-        if zero.any():
+        # A row coincident with a real point (nd == 0) has no away-direction, so
+        # nudge it along a deterministic rng-chosen axis. Index the ACTUAL zero
+        # rows — a previous version wrote into diff[0:n_zero], which left a
+        # coincident row unfixed whenever it wasn't among the first n_zero of the
+        # violating subset, so nd stayed 0 and delta/nd produced inf and crashed
+        # the next KD-tree query. This surfaced on integer-coded / low-cardinality
+        # continuous columns (e.g. solar_flare), where synthetic rows land exactly
+        # on real ones far more often than on smooth continuous data. (P1-6.)
+        zero_rows = np.where(nd.ravel() == 0)[0]
+        if zero_rows.size:
             d = diff.shape[1]
-            axes = rng.integers(0, d, size=int(zero.sum()))
-            for k, ai in enumerate(axes):
-                diff[k, ai] = 1.0
+            axes = rng.integers(0, d, size=zero_rows.size)
+            diff[zero_rows, axes] = 1.0
             nd = np.linalg.norm(diff, axis=1, keepdims=True)
         S_n[viol] = nn + diff * (delta / nd)
         n_moved += int(viol.sum())

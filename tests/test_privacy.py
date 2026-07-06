@@ -86,6 +86,30 @@ class TestDistanceFloor:
         b, _ = enforce_distance_floor(synth, real, fd, "", 0.5, np.random.default_rng(7))
         pd.testing.assert_frame_equal(a, b)
 
+    def test_coincident_rows_at_nonleading_positions_do_not_crash(self):
+        """P1-6 regression: many synthetic rows landing exactly on real rows —
+        common on integer-coded / low-cardinality continuous columns — must not
+        produce inf via delta/nd. The coincident-row nudge previously indexed the
+        first n_zero rows of the violating subset instead of the actual zero
+        rows, so a coincident row past that prefix stayed at distance 0 and the
+        next KD-tree query crashed on a non-finite value (solar_flare)."""
+        fd = {c: FieldMeta(name=c, field_type=FieldType.CONTINUOUS, is_integer=True)
+              for c in CONT}
+        rng = np.random.default_rng(0)
+        # Low-cardinality integer grid → exact coincidences are common.
+        real = pd.DataFrame({c: rng.integers(0, 4, 60) for c in CONT})
+        # Synth: first row is far away (non-violating), the rest are exact copies
+        # of real rows — so the zero-distance rows are NOT the leading entries of
+        # the violating subset, which is exactly what tripped the old bug.
+        far = pd.DataFrame({c: [99] for c in CONT})
+        copies = real.iloc[5:20].copy()
+        synth = pd.concat([far, copies], ignore_index=True)
+        out, report = enforce_distance_floor(
+            synth, real, fd, label_col="", delta=0.5, rng=np.random.default_rng(1),
+        )
+        assert np.isfinite(out[CONT].to_numpy()).all()   # no inf/nan escaped
+        assert np.isfinite(report.min_distance)
+
     def test_empty_or_no_continuous_passes_trivially(self):
         fd = {"flag": FieldMeta(name="flag", field_type=FieldType.BINARY)}
         synth = pd.DataFrame({"flag": [0, 1, 1]})
