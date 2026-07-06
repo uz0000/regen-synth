@@ -44,6 +44,8 @@ def main():
         _cmd_ingest(args)
     elif args.command == "run":
         _cmd_run(args)
+    elif args.command == "generate":
+        _cmd_generate(args)
     elif args.command == "screen":
         _cmd_screen(args)
 
@@ -110,9 +112,46 @@ def _build_parser() -> argparse.ArgumentParser:
                        help="GP noise variance (default: 0.1)")
     run_p.add_argument("--max-features", type=int, default=0,
                        help="Max features for GP input (0=all). Speeds up high-dim data. (default: 0)")
+    run_p.add_argument("--privacy", type=str, default="none", choices=["none", "floored"],
+                       help="Privacy of persisted pass batches: 'floored' = parametric + "
+                            "verbatim guard + δ-floor (NOT differential privacy); 'none' = "
+                            "diagnostic default (may contain near-copies). (default: none)")
+    run_p.add_argument("--delta", type=float, default=0.5,
+                       help="δ-distance floor in σ-units when --privacy floored (default: 0.5)")
     run_p.add_argument("--json", action="store_true",
                        help="Output campaign summary as JSON")
     run_p.set_defaults(command="run")
+
+    # ── regen generate ────────────────────────────────────────────────────────
+    gen_p = sub.add_parser("generate", help="Generate a synthetic dataset (primary path)")
+    gen_p.add_argument("data", type=str, help="Path to input data (CSV/JSON/Parquet)")
+    gen_p.add_argument("--label", type=str, default="",
+                       help="Label column name (auto-detect if omitted)")
+    gen_p.add_argument("--rare-mode", type=str, default="label",
+                       choices=["label", "percentile", "imbalance_ratio"],
+                       help="How to identify rare events (default: label, auto rare value)")
+    gen_p.add_argument("--rare-value", type=str, default=None,
+                       help="Rare value for label mode (auto-detected if omitted)")
+    gen_p.add_argument("--percentile", type=float, default=0.05,
+                       help="Percentile threshold for percentile mode (default: 0.05)")
+    gen_p.add_argument("--imbalance-ratio", type=float, default=0.01,
+                       help="Imbalance ratio threshold (default: 0.01)")
+    gen_p.add_argument("--n-rows", type=int, default=300,
+                       help="Full synthetic dataset size (normal + rare) (default: 300)")
+    gen_p.add_argument("--mode", type=str, default="balanced",
+                       choices=["faithful", "balanced", "boost"],
+                       help="Objective (default: balanced)")
+    gen_p.add_argument("--seed", type=int, default=42, help="RNG seed (default: 42)")
+    gen_p.add_argument("--privacy", type=str, default="floored", choices=["floored", "none"],
+                       help="Delivered-data privacy: 'floored' (default) = parametric + "
+                            "verbatim guard + δ-floor (NOT differential privacy); 'none' = "
+                            "legacy grounded sampling.")
+    gen_p.add_argument("--delta", type=float, default=0.5,
+                       help="δ-distance floor in σ-units when --privacy floored (default: 0.5)")
+    gen_p.add_argument("--out", type=str, default="regen-output",
+                       help="Output directory (default: ./regen-output)")
+    gen_p.add_argument("--json", action="store_true", help="Output summary as JSON")
+    gen_p.set_defaults(command="generate")
 
     # ── regen screen ────────────────────────────────────────────────────────
     screen_p = sub.add_parser("screen", help="Predict whether REGEN or SMOTE will win on your data")
@@ -207,12 +246,79 @@ def _cmd_run(args):
         max_features=args.max_features,
         n_estimators=100,
         num_candidates=100,
+        privacy=args.privacy,
+        delta=args.delta,
     )
 
     if args.json:
         print(json.dumps(_cr_to_dict(result), indent=2))
     else:
         _print_summary(result, out_dir)
+        print(f"  Privacy:         {args.privacy}"
+              + (f" (δ={args.delta}σ, NOT differential privacy)"
+                 if args.privacy == "floored" else " (diagnostic; may contain near-copies)"))
+        print("=" * 62)
+
+
+# ── Command: generate ────────────────────────────────────────────────────────
+
+def _cmd_generate(args):
+    """Generate a synthetic dataset via the primary generate() path."""
+    from regen.api import generate
+    # generate() auto-detects the rare class when rare_def is None; only build an
+    # explicit one when the user gave enough to pin it (a rare value, a
+    # percentile, or imbalance mode). This lets `generate --label y` just work.
+    if args.rare_mode == "label" and args.rare_value is None:
+        rare_def = None
+    else:
+        rare_def = _build_rare_def(args)
+    out_dir = Path(args.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    print(f"[regen] Generating synthetic dataset from {args.data} ...", file=sys.stderr)
+    try:
+        summary = generate(
+            filepath=args.data,
+            label_col=args.label,
+            rare_def=rare_def,
+            n_rows=args.n_rows,
+            mode=args.mode,
+            seed=args.seed,
+            privacy=args.privacy,
+            delta=args.delta,
+            out_dir=str(out_dir),
+        )
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    if args.json:
+        print(json.dumps(summary, indent=2))
+        return
+
+    fid = summary["fidelity"]
+    print()
+    print("=" * 62)
+    print("  REGEN — SYNTHETIC DATASET")
+    print("=" * 62)
+    print(f"  Rows:        {summary['n_rows']}  "
+          f"({summary['n_synthetic_normal']} normal + {summary['n_synthetic_rare']} rare)")
+    print(f"  Fidelity:    score {fid['score']}  coverage {fid['coverage']}  "
+          f"[{'PASS' if fid['passed'] else 'FAIL'}]")
+    pv = summary.get("privacy")
+    if pv:
+        floor = ("δ-floor applied" if pv["floor_applied"]
+                 else f"δ-floor skipped ({pv['floor_skip_reason']})")
+        print(f"  Privacy:     {pv['mode']}  min-dist {pv['min_distance']}  "
+              f"{pv['n_verbatim_duplicates']} verbatim  [{'PASS' if pv['passed'] else 'FAIL'}]")
+        print(f"               {floor}; NOT differential privacy")
+    else:
+        print(f"  Privacy:     none")
+    if summary.get("lift"):
+        print(f"  Detection lift: {summary['lift']['tail_lift']:+.4f}")
+    print(f"  Shippable:   {'PASS' if summary['passed'] else 'FAIL'}  (fidelity AND privacy)")
+    print(f"  Output:      {out_dir.resolve()}")
+    print("=" * 62)
 
 
 def _print_summary(result, out_dir: Path):

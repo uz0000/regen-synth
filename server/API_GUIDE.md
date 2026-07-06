@@ -35,8 +35,16 @@ GET /api/demo            → generate + ingest the built-in fraud demo dataset
 ```
 POST /api/generate       → auto-tune + generate a synthetic dataset
 ```
-Body: `{ label_col?, rare_def?: {mode, label_value}, n_rows, mode, seed, auto }`
+Body: `{ label_col?, rare_def?: {mode, label_value}, n_rows, mode, seed, auto, privacy?, delta? }`
 where `mode` is `"faithful"` | `"balanced"` (default) | `"boost"`.
+
+**Privacy** (request): `privacy` is `"floored"` (default) | `"none"`, and `delta`
+is the δ-distance floor in σ-units (default `0.5`, must be in `(0, 2]`). `"floored"`
+generates the batch **parametrically** (no real row is copied) and enforces a
+per-record δ-distance floor on the rare part plus a verbatim-attribute guard on the
+whole batch against the full real set. This is a real, checked guarantee but **NOT
+differential privacy** — it prevents near-copy re-identification, not aggregate or
+membership-inference attacks. Invalid values return **400**.
 
 `label_col` and `rare_def` are **optional** — omit `label_col` (or send `""`)
 and omit/`null` `rare_def` to let REGEN auto-detect the target column and rare
@@ -54,7 +62,14 @@ few numeric columns to estimate), `lift` (held-out detection lift, or null),
 `config_used` (the chosen noise/mode), `candidates` (the auto-tune trail — one
 entry per noise candidate, for the fidelity-vs-lift frontier chart), and `seed`
 + `manifest_path` (the batch ships with a manifest that regenerates it
-bit-for-bit). The batch is saved in campaign layout, so
+bit-for-bit). When `privacy="floored"`, the response also carries a **`privacy`**
+block: `{ mode, delta, floor_applied, floor_skip_reason, min_distance,
+distance_p50, n_verbatim_duplicates, passed, note }` — the measured guarantee on
+the *delivered* data. `floor_applied` is `false` (with a `floor_skip_reason` of
+`"no_continuous_features"` / `"no_label"` / `"no_rare_rows"`) when the data can't
+support a δ-shell; the remaining protection (parametric sampling + verbatim guard)
+is then what holds. The top-level **`passed`** is fidelity **AND** privacy. With
+`privacy="none"` the `privacy` block is `null`. The batch is saved in campaign layout, so
 `/api/campaign/{run_id}/download`, `/preview`, and `/manifest` retrieve it with
 the returned `run_id`. If the target is ambiguous (two equally plausible
 columns) the endpoint returns **400** with the candidate list — resend with an
@@ -148,9 +163,19 @@ Content-Type: application/json
   "coverage_threshold": 0.50,
   "noise_scale": 0.10,
   "gp_noise": 0.1,
-  "max_features": 0
+  "max_features": 0,
+  "privacy": "none",
+  "delta": 0.5
 }
 ```
+
+**Privacy** (request): the campaign is a **diagnostic** path (it maps the lift
+trajectory across rare regions), so `privacy` defaults to `"none"`. Set
+`"floored"` when a persisted pass batch is meant for release — each accepted
+batch then gets the same parametric generation + verbatim guard + δ-distance floor
+that `/api/generate` applies (still **NOT** differential privacy). The response
+carries a `privacy` block `{mode, delta}`; the run's full regime is in its
+`campaign_summary.json` and `manifest`. Invalid values return **400**.
 
 Returns:
 ```json

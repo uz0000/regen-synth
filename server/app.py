@@ -83,6 +83,10 @@ class CampaignRequest(BaseModel):
     noise_scale: float = 0.25
     gp_noise: float = 0.1
     max_features: int = 0
+    # Campaign is a diagnostic path; privacy defaults to "none" (matches
+    # run_campaign). Set "floored" for released pass batches. See API_GUIDE.
+    privacy: str = "none"         # "none" | "floored"
+    delta: float = 0.5            # δ-distance floor in σ-units (privacy="floored")
 
 
 class GenerateRequest(BaseModel):
@@ -99,6 +103,12 @@ class GenerateRequest(BaseModel):
     seed: int = 42
     auto: bool = True
     rare_ratio: Optional[float] = None  # None → auto (amplify minority to >=25%)
+    # Privacy of the delivered dataset. "floored" (default) = parametric
+    # generation + verbatim guard + δ-distance floor on the rare part; "none" =
+    # legacy grounded sampling. NOT differential privacy. The response's
+    # "privacy" block reports exactly what held. See API_GUIDE.
+    privacy: str = "floored"      # "floored" | "none"
+    delta: float = 0.5            # δ-distance floor in σ-units (privacy="floored")
 
 
 class HealthResponse(BaseModel):
@@ -319,12 +329,20 @@ async def run_campaign_endpoint(req: CampaignRequest):
             noise_scale=req.noise_scale,
             gp_noise=req.gp_noise,
             max_features=req.max_features,
+            privacy=req.privacy,
+            delta=req.delta,
         )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Campaign failed: {str(e)}")
 
     response = result.to_dict()
     response["run_id"] = run_id
+    # Surface the privacy regime in the response (full detail is in the run's
+    # campaign_summary.json + manifest).
+    response["privacy"] = {"mode": req.privacy,
+                           "delta": req.delta if req.privacy == "floored" else 0.0}
     return response
 
 
@@ -359,6 +377,8 @@ async def generate_data(req: GenerateRequest):
             seed=req.seed,
             auto=req.auto,
             rare_ratio=req.rare_ratio,
+            privacy=req.privacy,
+            delta=req.delta,
             out_dir=out_dir,
         )
     except ValueError as e:

@@ -159,3 +159,24 @@ Done together per the audit (same files/context as P0-2).
 - **Docs pending (tracked):** `run_campaign` gained params, so `docs/REGEN_DOCUMENTATION.md` needs the
   new signature — deferred to the P1-3 docs pass because G-A will change these same signatures again
   (adding `ScenarioSpec`); updating twice is churn. Docstrings are current now.
+
+### P1-4 — Server + CLI privacy exposure
+
+- **Server:** added `privacy`/`delta` to `GenerateRequest` (default `floored`/`0.5`) and
+  `CampaignRequest` (default `none`/`0.5`), threaded into `generate()`/`run_campaign()`. Both
+  endpoints now return **400** on invalid privacy/delta (added `ValueError→400` to the campaign
+  endpoint). `/api/generate` already returns the full `privacy` block; `/api/campaign` response now
+  carries `{mode, delta}` (full regime in the run's `campaign_summary.json` + manifest).
+- **CLI:** added `--privacy {none,floored}` + `--delta` to `regen run`, and a new **`regen generate`**
+  subcommand (the audit flagged the missing generate surface) with `--privacy {floored,none}` +
+  `--delta` and a human-readable summary. `generate` auto-detects the rare class when `--rare-value` is
+  omitted in label mode.
+- **Docs:** updated `server/API_GUIDE.md` (§1 generate + §5 campaign) for the request fields and the
+  response `privacy` block, incl. the "NOT differential privacy" phrasing (endpoint change → same
+  commit, §6 rule 4).
+- **Observed:** `regen generate examples/transactions.csv --label is_fraud --n-rows 150 --privacy
+  floored` → Fidelity PASS (score 1.0), Privacy PASS (min-dist 0.5482, 0 verbatim, δ-floor applied),
+  lift +0.2778, Shippable PASS. Server: floored generate returns a passing privacy block; `privacy:
+  bogus` and `delta: 9.0` → 400; floored campaign response shows `privacy.mode=floored`.
+- **Tests:** new `tests/test_server.py` (6 tests via FastAPI `TestClient`: floored/none/invalid on
+  both endpoints). Suite **97 → 103 green**.
