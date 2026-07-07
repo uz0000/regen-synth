@@ -49,3 +49,9 @@ exclude = ["tests*", "examples*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Silence the thousands of GPy/paramz DeprecationWarnings ("Assigning the 'data'
+# attribute is an inherently unsafe operation") that otherwise bury real warnings
+# in the test output. Third-party internals — not our code. Ours are untouched.
+filterwarnings = [
+    "ignore:Assigning the 'data' attribute is an inherently unsafe operation:DeprecationWarning",
+]

@@ -284,7 +284,10 @@ def _fit_gp(
         kernel=kernel,
         noise_var=config.gp_noise_variance,
     )
-    gp.Gaussian_noise.variance.constrain_bounded(1e-4, 1.0)
+    # warning=False: the parameter already carries GPy's default positive
+    # constraint, and re-constraining it otherwise prints "reconstraining
+    # parameters ..." to stdout on every fit — junk for a library/server caller.
+    gp.Gaussian_noise.variance.constrain_bounded(1e-4, 1.0, warning=False)
 
     # Optimize with timeout guard
     optimized = True

@@ -64,3 +64,22 @@ def test_column_provenance_has_mechanism_for_each_column(run):
     # every non-label feature has a named production mechanism
     assert prov["amount"]["mechanism"]
     assert prov["is_fraud"]["mechanism"] == "label-attached"
+
+
+def test_generation_block_records_the_base(run):
+    """The base generator that actually ran is recorded (a parametric→grounded
+    fallback can't hide in a log)."""
+    s, _ = run
+    gen = s["explain"]["generation"]
+    assert gen["rare_base"] == "parametric"      # no fallback on this data
+    assert gen["normal_base"] == "parametric"
+
+
+def test_mechanism_reflects_fallback():
+    """Unit: when the rare base fell back to grounded, the per-column mechanism
+    says so rather than claiming copula-sampled."""
+    from regen.explain import _mechanism
+    from contracts.scenario import ColumnSemantics
+    col = ColumnSemantics(name="amount", role="feature", dtype="float")
+    assert "copula" in _mechanism(col, "floored", rare_fallback=False)
+    assert "fallback" in _mechanism(col, "floored", rare_fallback=True)

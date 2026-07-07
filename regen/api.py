@@ -164,6 +164,7 @@ def _run_one_pass(
     explored_points: list,
     privacy: str = "none",
     delta: float = 0.5,
+    diagnostics: Optional[Dict[str, Any]] = None,
 ):
     """Run one full generation pass: Prior → Scout → Amplifier → Auditor → Examiner.
 
@@ -188,7 +189,7 @@ def _run_one_pass(
     # every rare example available).
     amp_df, target_region = _generate_amp_batch(
         result, prior_cfg, amp_cfg, scout_cfg, seed, n_rows, label_col, rare_def,
-        explored_points, privacy=privacy, delta=delta,
+        explored_points, privacy=privacy, delta=delta, diagnostics=diagnostics,
     )
 
     # Auditor: fidelity gate
@@ -226,6 +227,7 @@ def _generate_amp_batch(
     explored_points: list,
     privacy: str = "none",
     delta: float = 0.5,
+    diagnostics: Optional[Dict[str, Any]] = None,
 ):
     """Generation core: Prior → Scout → Amplifier → constraints → label → decode.
 
@@ -273,10 +275,16 @@ def _generate_amp_batch(
     if privacy == "floored":
         try:
             base = generate_parametric_batch(prior, n_rows, rng, which_class="rare")
+            if diagnostics is not None:
+                diagnostics["rare_base"] = "parametric"
         except Exception:
             logger.warning("Parametric rare base failed; falling back to grounded.")
             base = generate_base_batch(prior, n_rows, target_region, rng,
                                        noise_scale=prior_cfg.noise_scale)
+            # A mechanism switch must never hide in a log — record it so the
+            # explanation's per-column provenance reflects what actually ran.
+            if diagnostics is not None:
+                diagnostics["rare_base"] = "grounded_fallback"
     else:
         base = generate_base_batch(prior, n_rows, target_region, rng,
                                    noise_scale=prior_cfg.noise_scale)
@@ -331,6 +339,7 @@ def _generate_normal_batch(
     label_col: str,
     privacy: str = "none",
     delta: float = 0.5,
+    diagnostics: Optional[Dict[str, Any]] = None,
 ) -> pd.DataFrame:
     """Generate n_rows synthetic *normal*-class rows for the full-dataset path.
 
@@ -356,11 +365,15 @@ def _generate_normal_batch(
     if privacy == "floored":
         try:
             normal_df = generate_parametric_batch(prior, n_rows, rng, which_class="normal")
+            if diagnostics is not None:
+                diagnostics["normal_base"] = "parametric"
         except Exception:
             logger.warning("Parametric normal base failed; falling back to grounded.")
             normal_df = generate_normal_batch(
                 prior, n_rows, rng, noise_scale=prior_cfg.noise_scale,
             )
+            if diagnostics is not None:
+                diagnostics["normal_base"] = "grounded_fallback"
     else:
         normal_df = generate_normal_batch(
             prior, n_rows, rng, noise_scale=prior_cfg.noise_scale,
@@ -968,13 +981,17 @@ def generate(
 
     final_seed = seed + 9000
 
+    # Records which base generator actually ran per part, so a parametric→grounded
+    # fallback is reflected in the explanation's provenance, not just a log (G-C).
+    gen_diag: Dict[str, Any] = {}
+
     # 3a. Rare part: Prior → Scout → Amplifier, gated against the rare reference.
     #     privacy threads into _generate_amp_batch (parametric base + δ-floor on
     #     the rare set + verbatim guard) via _run_one_pass.
     rare_df_synth, rare_report, lift, target_region = _run_one_pass(
         result, prior_cfg, amp_cfg, aud_cfg, exam_cfg, scout_cfg,
         final_seed, n_rare, result.label_col, rare_def, [],
-        privacy=privacy, delta=delta,
+        privacy=privacy, delta=delta, diagnostics=gen_diag,
     )
 
     # 3b. Normal part: grounded sampling on the normal covariate support, gated
@@ -985,7 +1002,7 @@ def generate(
     #     pipeline's RNG consumption.
     normal_df_synth = _generate_normal_batch(
         result, prior_cfg, final_seed + 7777, n_normal, result.label_col,
-        privacy=privacy, delta=delta,
+        privacy=privacy, delta=delta, diagnostics=gen_diag,
     )
     from engine.auditor import audit
     normal_report = audit(
@@ -1153,6 +1170,7 @@ def generate(
         normal_report=normal_report, conformance=conformance,
         privacy_out=privacy_out, lift=lift, target_region=target_region,
         aud_cfg=aud_cfg, coverage_threshold=coverage_threshold,
+        generation=gen_diag,
     )
     (out_path / "explanation.json").write_text(json.dumps(explanation, indent=2, default=str))
 

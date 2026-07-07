@@ -47,20 +47,23 @@ def feature_informativeness(result) -> List[Dict[str, Any]]:
     return out
 
 
-def _mechanism(col, privacy: str) -> str:
-    """How the column's values were produced."""
+def _mechanism(col, privacy: str, rare_fallback: bool = False) -> str:
+    """How the column's values were produced. Reflects a parametric→grounded
+    fallback when it actually happened (never hidden in a log)."""
     if col.role == "identifier":
         return "identifier-minted"
     if col.role == "target":
         return "label-attached"
-    if privacy == "floored":
+    if privacy == "floored" and not rare_fallback:
         if col.dtype in ("categorical", "boolean"):
             return "copula-frequency-sampled"
         return "copula-sampled + GP tail correction (rare)"
+    if privacy == "floored" and rare_fallback:
+        return "grounded-sampled (parametric fallback) + GP tail correction (rare)"
     return "grounded-sampled + GP tail correction (rare)"
 
 
-def _column_provenance(vetted_spec, privacy: str) -> List[Dict[str, Any]]:
+def _column_provenance(vetted_spec, privacy: str, rare_fallback: bool = False) -> List[Dict[str, Any]]:
     verdicts = vetted_spec.verdicts
     prov = []
     for name, col in vetted_spec.columns.items():
@@ -73,7 +76,7 @@ def _column_provenance(vetted_spec, privacy: str) -> List[Dict[str, Any]]:
             "column": name,
             "role": col.role,
             "source": col.source,
-            "mechanism": _mechanism(col, privacy),
+            "mechanism": _mechanism(col, privacy, rare_fallback),
             "constraints_applied": applied,
             "constraints_rejected": rejected,
         })
@@ -92,8 +95,11 @@ def build_explanation(
     target_region: Dict[str, Any],
     aud_cfg,
     coverage_threshold: float,
+    generation: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Assemble the explanation dict for a generate() run (all computed numbers)."""
+    generation = generation or {}
+    rare_fallback = generation.get("rare_base") == "grounded_fallback"
     # -- per-gate account (statistic, threshold, verdict) --------------------
     def _cols_summary(rep):
         return {"n_passed": sum(1 for c in rep.column_results if c.passed),
@@ -150,8 +156,13 @@ def build_explanation(
             "method": "class-separation Fisher score (μ_rare−μ_normal)²/(σ²_rare+σ²_normal)",
             "ranked": feature_informativeness(result),
         },
-        "column_provenance": _column_provenance(vetted_spec, vetted_spec.gates.privacy),
+        "column_provenance": _column_provenance(
+            vetted_spec, vetted_spec.gates.privacy, rare_fallback),
         "scout": scout,
         "utility": utility,
         "privacy": privacy_out,
+        # Which base generator actually ran per part — records a
+        # parametric→grounded fallback so a mechanism switch is never silent.
+        "generation": {"rare_base": generation.get("rare_base"),
+                       "normal_base": generation.get("normal_base")},
     }

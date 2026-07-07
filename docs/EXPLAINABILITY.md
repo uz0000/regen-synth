@@ -52,6 +52,13 @@ fold was too small to trust); `status = not_measured` when the batch failed the
 fidelity gate (lift is only measured on a passing batch). `protocol` states the
 leakage-free train/test discipline.
 
+### `generation`
+`{rare_base, normal_base}` — which base generator actually ran for each part
+(`"parametric"` or `"grounded_fallback"`). Under `privacy="floored"` the parametric
+copula is used; if it can't fit (a degenerate class) generation falls back to
+grounded sampling, and that switch is recorded here **and** reflected in each
+column's `mechanism` — a mechanism change never hides in a log.
+
 ### `privacy`
 The privacy account: `{mode, delta, floor_applied, floor_skip_reason, min_distance,
 distance_p50, n_verbatim_duplicates, passed, note}`. `floor_applied=false` (with a
