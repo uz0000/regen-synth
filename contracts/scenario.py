@@ -78,6 +78,32 @@ class ColumnSemantics:
         ) if k in d})
 
 
+# ── Vetting verdict (G-B: nothing silent, rule 7) ─────────────────────────────
+
+@dataclass
+class VettingVerdict:
+    """One record of how a proposed constraint was resolved by the vetting gate.
+
+    Every accept / reject / override / fallback is logged with the rule that
+    decided it and a human rationale, so the contract is explainable (rule 7) and
+    the record can be surfaced in explanation.json (G-C).
+    """
+    field: str                 # "<column>.<attr>" e.g. "amount.min"
+    decision: str              # "accepted" | "rejected" | "fallback" | "unchanged"
+    rule: str                  # which vetting rule fired (e.g. "data_is_ground_truth")
+    source: str                # who proposed it ("user" | "model" | "structural")
+    rationale: str = ""
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {"field": self.field, "decision": self.decision, "rule": self.rule,
+                "source": self.source, "rationale": self.rationale}
+
+    @classmethod
+    def from_dict(cls, d: Dict[str, Any]) -> "VettingVerdict":
+        return cls(**{k: d.get(k, "") for k in
+                      ("field", "decision", "rule", "source", "rationale")})
+
+
 # ── Intent: what is being simulated and why ───────────────────────────────────
 
 @dataclass
@@ -164,6 +190,9 @@ class ScenarioSpec:
     # Provenance for non-column fields, e.g. {"intent.label_col": "user"}.
     # Per-column provenance lives on each ColumnSemantics (source/confidence).
     provenance: Dict[str, str] = field(default_factory=dict)
+    # The vetting gate's record (G-B rule 7: nothing silent). Empty until a spec
+    # has been vetted against data.
+    verdicts: List["VettingVerdict"] = field(default_factory=list)
     spec_version: int = 1
 
     # -- serialization -------------------------------------------------------
@@ -174,6 +203,7 @@ class ScenarioSpec:
             "intent": self.intent.to_dict(),
             "gates": self.gates.to_dict(),
             "provenance": dict(self.provenance),
+            "verdicts": [v.to_dict() for v in self.verdicts],
             # column order preserved (dict is insertion-ordered)
             "columns": [c.to_dict() for c in self.columns.values()],
         }
@@ -187,6 +217,7 @@ class ScenarioSpec:
             gates=ScenarioGates.from_dict(d.get("gates", {})),
             notes=d.get("notes", ""),
             provenance=dict(d.get("provenance", {})),
+            verdicts=[VettingVerdict.from_dict(v) for v in d.get("verdicts", [])],
             spec_version=int(d.get("spec_version", 1)),
         )
 

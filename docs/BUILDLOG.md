@@ -269,3 +269,30 @@ Done together per the audit (same files/context as P0-2).
 - **Tests:** `tests/test_scenario.py` (8: JSON/YAML round-trip, rare_def build, structural fill,
   manifest replay bit-identity, YAML-drives-generation, campaign+screen accept a spec). Suite
   **106 → 114 green**.
+
+### G-B — Vetting gate + Sources 1+2 + conformance audit (the differentiator)
+
+- **`regen/vetting.py` — `vet_scenario(proposed, ingest)`**: merges Source 1 (structural) + Source 2
+  (researcher declaration) into vetted columns + a list of `VettingVerdict`s, enforcing the gate rules
+  in code (each with a test): closed vocabulary (role/dtype), data-is-ground-truth (proposed bounds
+  must *contain* observed range; category set must be a *superset*; integrality must match),
+  tighten-toward-validity (a wider safe bound like currency ≥ 0 is accepted, a clipping one rejected),
+  authority order (researcher > structural), per-field confidence fallback, declared-column-must-exist,
+  and nothing-silent (every accept/reject/fallback logged with rule + rationale). Rule 1 (metadata
+  only) is structural — `ColumnSemantics` has no value field (tested). Rules 8/10 (replay/one-model-
+  call) belong to Source 3 (item 16).
+- **`engine/auditor/conformance.py` — `check_conformance(df, spec)`**: the Auditor's contract gate
+  (rule 9). The delivered batch must obey every vetted constraint — bounds, integrality, categorical
+  value-set, identifier uniqueness — reporting violation *counts* (never row values, G-F). A
+  conformance failure fails the batch like a fidelity failure (Invariant 3 extended). Exported from
+  `engine.auditor`.
+- **Wired into `generate()`**: vetting runs each generation → verdicts persisted in the spec (and thus
+  the manifest); conformance runs on the delivered batch → folded into `overall_passed = fidelity AND
+  conformance AND privacy`; both surfaced in the summary (`scenario.verdicts`, `conformance`).
+- **Observed:** `generate()` bit-identical (hash `40933a2b`); the example scenario's 5 user
+  declarations all vet **accepted**, conformance passes. **G-B done-when demonstrated:** the same
+  `transactions.csv` under a *fraud-detector* spec (label is_fraud) vs a *tail-risk* spec (percentile
+  top-5% of amount) yields two correspondingly different, gate-passing, conformant batches (different
+  row-hashes).
+- **Tests:** `tests/test_vetting.py` (11: one failing-then-passing per data-facing rule + conformance
+  violation/uniqueness + the two-specs-differ demo). Suite **114 → 126 green**.

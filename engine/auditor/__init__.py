@@ -14,5 +14,6 @@ faithfully. Switch to soft only deliberately (see INVARIANTS.md §7).
 """
 
 from .fidelity import AuditorConfig, audit
+from .conformance import ConformanceReport, check_conformance
 
-__all__ = ["AuditorConfig", "audit"]
+__all__ = ["AuditorConfig", "audit", "ConformanceReport", "check_conformance"]

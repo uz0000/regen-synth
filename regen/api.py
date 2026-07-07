@@ -1063,23 +1063,15 @@ def generate(
         privacy_out = None
         privacy_report = None
 
-    # Top-level verdict: fidelity AND (privacy, when enforced). The fidelity block
-    # keeps its own Auditor-only `passed` (Invariant 3); this is the shippable-batch
-    # verdict the caller checks.
-    overall_passed = bool(
-        auditor_passed and (privacy_report.passed if privacy_report is not None else True)
-    )
-
-    # Build the *vetted* ScenarioSpec that this batch was generated under (G-A) —
-    # the whole use case as one object. Columns are the structural (Source 1)
-    # semantics unless the caller supplied a richer spec (its columns/notes/
-    # provenance are carried through). Intent + gates record the *resolved* values
-    # actually used, so a re-run from this spec reproduces the batch bit-for-bit.
-    _struct_cols = columns_from_field_dict(result.field_dict, result.label_col)
-    _cols = (scenario.columns if (scenario is not None and scenario.columns)
-             else _struct_cols)
+    # Build the *vetted* ScenarioSpec this batch was generated under (G-A/G-B).
+    # The vetting gate merges Source 1 (structural) + Source 2 (researcher
+    # declaration in `scenario`) under the 10 rules, dropping any proposal that
+    # contradicts the data and logging every decision (rule 7). Intent + gates
+    # record the *resolved* values actually used, so a re-run reproduces the batch.
+    from regen.vetting import vet_scenario
+    vetted_cols, verdicts = vet_scenario(scenario, result)
     vetted_spec = ScenarioSpec(
-        columns=_cols,
+        columns=vetted_cols,
         intent=ScenarioIntent(
             task=(scenario.intent.task if scenario is not None else "detector_training"),
             label_col=result.label_col,
@@ -1102,7 +1094,24 @@ def generate(
         ),
         notes=(scenario.notes if scenario is not None else ""),
         provenance=(dict(scenario.provenance) if scenario is not None else {}),
+        verdicts=verdicts,
     )
+
+    # Conformance audit (G-B rule 9): the delivered batch must obey every vetted
+    # constraint. A conformance failure fails the batch exactly like a fidelity
+    # failure (Invariant 3 extended to the contract).
+    from engine.auditor import check_conformance
+    conformance = check_conformance(full_df, vetted_spec, result.label_col)
+    conformance_out = conformance.to_dict()
+
+    # Top-level verdict: fidelity AND conformance AND (privacy, when enforced).
+    # The fidelity block keeps its own Auditor-only `passed` (Invariant 3).
+    overall_passed = bool(
+        auditor_passed
+        and conformance.passed
+        and (privacy_report.passed if privacy_report is not None else True)
+    )
+
     scenario_dict = vetted_spec.to_dict()
     # Save the spec next to the batch — the unit a researcher saves/shares/re-runs.
     try:
@@ -1197,6 +1206,7 @@ def generate(
         "best_batch_path": batch_path,
         "manifest_path": manifest_path,
         "scenario": scenario_dict,
+        "conformance": conformance_out,
         "seed": final_seed,
     }
     # Write a minimal campaign_summary.json so get_results()/download work.
