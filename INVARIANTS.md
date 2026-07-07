@@ -68,10 +68,36 @@ Deterministic engine (pure Python — produces all numbers)
     Auditor        fidelity gate (marginal calibration, tail dependence, correlation structure)
 
 Entry points
-    cli/           `regen` CLI (run / ingest / screen / results)
+    cli/           `regen` CLI (generate / run / ingest / screen / doctor / verify)
     server/        FastAPI server for frontend integration
-    examples/      runnable demo scripts
+    examples/      runnable demo scripts + example ScenarioSpec YAML
 ```
+
+### API-layer contract & assurance (regen/, above the engine)
+
+The engine implements the math once; a **use case is a validated configuration of
+that math, never a fork**. These deterministic layers (all outside `engine/`)
+carry the use-case context and the assurances around a batch:
+
+- **ScenarioSpec** (`contracts/scenario.py`) — one typed object carrying the whole
+  use case (per-column semantics + intent + gates + provenance). Persisted in the
+  manifest; the unit a researcher saves/shares/re-runs. `generate()` /
+  `run_campaign()` / `screen()` all accept one (loose params still work).
+- **Vetting gate** (`regen/vetting.py`) — merges structural inference (Source 1) +
+  researcher declaration (Source 2) + an optional cached model proposal (Source 3,
+  `regen/semantics.py`, outside `engine/`) under fixed rules (authority
+  researcher > structural > model; a proposal that contradicts the data is dropped
+  and logged). Metadata only — never a value.
+- **Privacy** (`engine/privacy.py`) — parametric generation + δ-distance floor +
+  verbatim guard (Invariant 6; `docs/PRIVACY.md`).
+- **Conformance** (`engine/auditor/conformance.py`) — the Auditor also gates the
+  delivered batch against the vetted contract.
+- **Explainability** (`regen/explain.py`) — every batch ships `explanation.json`
+  from computed numbers only (`docs/EXPLAINABILITY.md`).
+- **Auditability** (`regen/audit_bundle.py`, `regen/metrics.py`) — `regen verify`
+  recomputes every statistic from a self-contained bundle (`docs/METHODS.md`).
+- **Preflight** (`regen/preflight.py`) — `regen doctor` checks a dataset against
+  the supported envelope before generation (`docs/CAPABILITY_MATRIX.md`).
 
 ### The active-learning loop (one pass)
 
@@ -225,6 +251,18 @@ These are intentionally unresolved. Do not pick a default silently — surface t
 4. Model/LLM output never becomes a synthetic data value — only decisions, metrics, and narration.
 5. The active-learning loop is a single deterministic Python function call (`regen.api.run_campaign`),
    runnable and testable with no runtime, no model, and no network.
+6. **Privacy (`privacy="floored"`).** When the report says `passed`, every released *rare* row is
+   ≥ δ (σ-normalised, continuous features) from every real rare row, and no released row
+   verbatim-duplicates a *uniquely-identifying* real record. It is **NOT** differential privacy
+   (see `docs/PRIVACY.md`). When the floor cannot apply (no continuous features / no label), the
+   report says so (`floor_applied: false` + reason) — never silently. A batch's shippable verdict
+   is **fidelity AND conformance AND privacy**.
+7. **Contract reproducibility.** Every batch's manifest carries the *vetted `ScenarioSpec`* it was
+   generated under; the batch reproduces bit-for-bit from that spec **including its use-case context,
+   with zero model calls** (Invariant 2 extended). Every reported statistic is independently
+   recomputable from the audit bundle (`regen verify`); no engine statistical routine branches on a
+   *use case* — use cases exist only as vetted ScenarioSpec parameters. Model proposals (the optional
+   Source 3) are metadata only, vetted by deterministic code before they can affect generation.
 
 ---
 

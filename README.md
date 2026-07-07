@@ -11,18 +11,33 @@ deterministic statistical engine — no LLM hallucination, no black box.
 ```bash
 pip install regen-synth
 
-# Run a campaign
+# Generate a synthetic dataset (primary path) — privacy on by default
+regen generate my_data.csv --label is_fraud
+
+# Preflight: does this dataset fit the supported envelope?
+regen doctor my_data.csv --label is_fraud
+
+# Independently verify a produced batch (recompute its reported stats)
+regen verify regen-output/
+
+# Run a multi-pass campaign
 regen run my_data.csv --label is_fraud --rare-mode label --rare-value 1
 
-# Inspect a dataset first
+# Inspect a dataset / screen REGEN vs SMOTE
 regen ingest my_data.csv
-
-# Screen: predict whether REGEN or SMOTE will win on your data
 regen screen my_data.csv --label is_fraud --rare-mode label --rare-value 1
 
 # Run tests
 regen test
 ```
+
+Every generated batch ships a **ScenarioSpec** (the use case, in the manifest),
+an **`explanation.json`** (per-gate stats, feature informativeness, provenance —
+computed, never narrated), and an audit bundle you can re-check with `regen
+verify`. Output privacy is **on by default** (`--privacy floored`): parametric
+generation + a δ-distance floor + a verbatim guard. This prevents near-copy
+re-identification but is **not differential privacy** — see
+[`docs/PRIVACY.md`](docs/PRIVACY.md).
 
 ## Benchmark
 
@@ -66,7 +81,12 @@ Scout (R-EPIG) → Prior → Amplifier (ResidualGP) → Auditor → Examiner
 
 ## Documentation
 
-Full system documentation: [`docs/REGEN_DOCUMENTATION.md`](docs/REGEN_DOCUMENTATION.md)
+- Full system reference: [`docs/REGEN_DOCUMENTATION.md`](docs/REGEN_DOCUMENTATION.md)
+- Privacy (what's guaranteed and what isn't): [`docs/PRIVACY.md`](docs/PRIVACY.md)
+- Explainability (`explanation.json` fields): [`docs/EXPLAINABILITY.md`](docs/EXPLAINABILITY.md)
+- Statistical methods + verification: [`docs/METHODS.md`](docs/METHODS.md)
+- Supported / degraded / unsupported data shapes: [`docs/CAPABILITY_MATRIX.md`](docs/CAPABILITY_MATRIX.md)
+- Build log (every change, before/after observed): [`docs/BUILDLOG.md`](docs/BUILDLOG.md)
 
 ## Dependencies
 

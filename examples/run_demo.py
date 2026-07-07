@@ -112,12 +112,30 @@ def run(data: Path, label_col: str, rare_value, seed: int, passes: int) -> int:
               f"nearest real row {pv['min_distance']:.2f}σ, "
               f"{pv['n_verbatim_duplicates']} verbatim copies  "
               f"[{'PASS' if pv['passed'] else 'FAIL'}]  (not differential privacy)")
+    print(f"      conformance: {'PASS' if gs['conformance']['passed'] else 'FAIL'} "
+          f"({gs['conformance']['n_checked']} columns vs the vetted contract)")
     print(f"      → shippable: {'PASS' if gs['passed'] else 'FAIL'} "
-          f"(fidelity gate AND privacy guarantee)")
-    if gs["lift"]:
-        print(f"      detection lift: recall {gs['lift']['baseline_recall']:.3f} → "
-              f"{gs['lift']['amplified_recall']:.3f}  ({gs['lift']['tail_lift']:+.3f})")
+          f"(fidelity AND conformance AND privacy)")
+    lift = gs["lift"]
+    if lift and lift.get("status") == "ok" and lift.get("tail_lift") is not None:
+        print(f"      detection lift: recall {lift['baseline_recall']:.3f} → "
+              f"{lift['amplified_recall']:.3f}  ({lift['tail_lift']:+.3f})")
+    elif lift and lift.get("status") == "insufficient_rare_rows":
+        print(f"      detection lift: n/a (only {lift['n_test_rare']} held-out rare rows)")
+    # Explainability highlights (G-C): the features worth observing, from computed
+    # class-separation — never narrated.
+    top = gs["explain"]["feature_informativeness"]["ranked"][:3]
+    if top:
+        print("      features worth observing (Fisher separation): "
+              + ", ".join(f"{f['feature']}={f['fisher_score']:.2f}" for f in top))
     print(f"      full dataset:  {gs['best_batch_path']}")
+    # Independent auditability (G-G): recompute the reported stats from the bundle.
+    with _quiet():
+        from regen.audit_bundle import verify_bundle
+        vr = verify_bundle(gs["output_dir"])
+    print(f"      audit: `regen verify` → {'VERIFIED' if vr['passed'] else 'FAILED'} "
+          f"(recomputed {sum(1 for s in vr['stats'] if s['status']=='checked')} stats "
+          f"+ {len(vr['integrity'])} artifact hashes)")
 
     # ── 3. Full multi-pass campaign ───────────────────────────────────────────
     print(f"\n[3/3] Running {passes}-pass REGEN campaign...")

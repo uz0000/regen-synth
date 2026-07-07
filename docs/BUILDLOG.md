@@ -412,3 +412,41 @@ Done together per the audit (same files/context as P0-2).
   persisted `source=model` column → replay with no caller makes **no further calls**.
 - **Tests:** `tests/test_semantics.py` (9, fully offline). `generate()` bit-identical (`40933a2b`);
   engine boundary green. Suite **150 → 159 green**.
+
+### P1-3 + Part II docs (written last, from observed numbers)
+
+- **`docs/PRIVACY.md`** (new): threat model (near-copy re-identification), the three-layer mechanism
+  (parametric copula + δ-floor + verbatim guard), the exact guarantee, the explicit non-guarantees
+  ("**not differential privacy**", bulk not δ-floored, all-categorical skip), how to read the `privacy`
+  block, and the δ↔fidelity trade-off with **observed** numbers (demo nearest 0.52–0.53σ; creditcard
+  coverage 0.980→0.919; hypothyroid 0.980→0.947; corr often improves).
+- **`INVARIANTS.md`**: §8 gains Invariant 6 (privacy) + Invariant 7 (contract reproducibility + verify +
+  math/config boundary); §3 gains the API-layer contract/vetting/privacy/conformance/explain/audit/
+  preflight map.
+- **`README.md`**: new quick-start commands (`generate`/`doctor`/`verify`), the "ships a ScenarioSpec +
+  explanation + audit bundle; privacy on by default, NOT differential privacy" note, and doc links.
+- **`docs/REGEN_DOCUMENTATION.md` §5.8**: `generate()` privacy/delta/scenario/accept_contract params;
+  the ScenarioSpec + vetting paragraph; the full returns list (privacy/conformance/scenario/explain/
+  semantics), `passed = fidelity AND conformance AND privacy`, and the audit-bundle/`regen verify`/
+  `regen doctor` surface. (This also clears the P1-5 doc-pending item — signatures now documented.)
+- **Demo (`examples/run_demo.py`)** updated to print explainability highlights (top Fisher-separation
+  features), the conformance verdict, and a `regen verify → VERIFIED` line (G-C/G-G done-when).
+
+### Consistency self-review (§6 rule 7 — required, unprompted)
+
+Re-ran, this session, on the final tree:
+- **Full suite:** `python -m pytest tests/ -q` → **159 passed** (from 85 baseline; +74 across the build).
+- **Demo:** `python examples/run_demo.py` → fidelity PASS, conformance PASS, privacy PASS (nearest
+  0.53σ ≥ 0.50σ, 0 verbatim), **shippable PASS**, detection lift **+0.278**, features-worth-observing
+  printed, `regen verify → VERIFIED`, campaign **3/3 accepted**, best tail lift **+0.2778**.
+- **P0-2 repro:** floored corr_delta **0.1011 PASS**, none **0.0478 PASS** — the default path is fixed.
+- **Invariant 2** (incl. contract replay): label-mode row-hash `40933a2b` held after **every**
+  generation-touching change; spec round-trip reproduces bit-for-bit with zero model calls.
+- **Doc claims** checked against observed output this session (numbers above match PRIVACY.md/README/
+  REGEN_DOCUMENTATION).
+- **`git status`:** clean after the final commit; every commit passed the pre-commit test hook.
+
+**Build complete.** All Part I defects (P0-1, P0-2, P1-3/4/5/6, P2-7/8/9/10) and all Part II
+workstreams (G-A…G-G) landed as per-finding commits with before/after observations. Known, filed
+limitations (floored on low-cardinality-integer / all-categorical high-cardinality data; a low-sev
+pandas int64 FutureWarning) are recorded in `docs/KNOWN_ISSUES.md` and the capability matrix.
