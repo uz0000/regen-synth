@@ -1629,45 +1629,6 @@ def _compute_fisher_cv(ingest_result: IngestResult) -> float:
     return round(cv, 4)
 
 
-def _compute_ard_cv(residual) -> tuple[float, float, float, bool]:
-    """Compute the coefficient of variation of ARD inverse-lengthscales.
-
-    Returns (cv, ls_min, ls_max, optimized) where:
-        cv:       Coefficient of variation of the inverse-lengthscales.
-        ls_min:   Minimum fitted lengthscale.
-        ls_max:   Maximum fitted lengthscale.
-        optimized: Whether the GP was successfully optimized.
-    """
-    if not residual._gp_optimized:
-        # Fallback: use variance-based relevance if GP didn't optimize
-        # This still gives a signal, just from the fallback proxy.
-        logger.warning(
-            "GP optimization did not converge for screen(). "
-            "Using variance-based relevance proxy for heterogeneity metric."
-        )
-        rarity = residual._gp_feature_idx.size
-        if rarity > 1:
-            # Use the feature variance as a proxy
-            X_data = residual._X_train
-            if X_data.shape[1] > 1:
-                var_proxy = X_data.var(axis=0)
-                cv_est = float(np.std(var_proxy) / (np.mean(var_proxy) + 1e-8))
-            else:
-                cv_est = 0.0
-        else:
-            cv_est = 0.0
-        return cv_est, 0.0, 0.0, False
-
-    try:
-        ls = residual._gp.kern.lengthscale.values.copy()
-        inv_ls = 1.0 / (ls + 1e-8)
-        cv = float(np.std(inv_ls) / (np.mean(inv_ls) + 1e-8))
-        return cv, float(ls.min()), float(ls.max()), True
-    except Exception as exc:
-        logger.warning("Could not extract ARD lengthscales: %s", exc)
-        return 0.0, 0.0, 0.0, False
-
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # 4. RESULTS LOADING
 # ═══════════════════════════════════════════════════════════════════════════════

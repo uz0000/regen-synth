@@ -152,6 +152,9 @@ def _build_parser() -> argparse.ArgumentParser:
                             "legacy grounded sampling.")
     gen_p.add_argument("--delta", type=float, default=0.5,
                        help="δ-distance floor in σ-units when --privacy floored (default: 0.5)")
+    gen_p.add_argument("--scenario", type=str, default=None,
+                       help="Path to a ScenarioSpec YAML — the saved use case drives "
+                            "generation (its intent/gates are authoritative).")
     gen_p.add_argument("--out", type=str, default="regen-output",
                        help="Output directory (default: ./regen-output)")
     gen_p.add_argument("--accept-contract", action="store_true",
@@ -293,9 +296,14 @@ def _cmd_run(args):
 def _cmd_generate(args):
     """Generate a synthetic dataset via the primary generate() path."""
     from regen.api import generate
+    # A saved ScenarioSpec YAML is authoritative when supplied. Otherwise
     # generate() auto-detects the rare class when rare_def is None; only build an
-    # explicit one when the user gave enough to pin it (a rare value, a
-    # percentile, or imbalance mode). This lets `generate --label y` just work.
+    # explicit one when the user gave enough to pin it. This lets `generate
+    # --label y` and `generate --scenario s.yaml` both just work.
+    spec = None
+    if args.scenario:
+        from contracts.scenario import ScenarioSpec
+        spec = ScenarioSpec.load_yaml(args.scenario)
     if args.rare_mode == "label" and args.rare_value is None:
         rare_def = None
     else:
@@ -315,6 +323,7 @@ def _cmd_generate(args):
             privacy=args.privacy,
             delta=args.delta,
             out_dir=str(out_dir),
+            scenario=spec,
             accept_contract=args.accept_contract,
         )
     except ValueError as e:

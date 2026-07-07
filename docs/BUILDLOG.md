@@ -450,3 +450,27 @@ Re-ran, this session, on the final tree:
 workstreams (G-A…G-G) landed as per-finding commits with before/after observations. Known, filed
 limitations (floored on low-cardinality-integer / all-categorical high-cardinality data; a low-sev
 pandas int64 FutureWarning) are recorded in `docs/KNOWN_ISSUES.md` and the capability matrix.
+
+### Post-build screen (logging + gap review, owner-requested)
+
+- **Log noise cut.** GPy's `reconstraining parameters ...` printed 14 lines/call to stderr on every
+  GP fit → silenced at source (`constrain_bounded(..., warning=False)`), so bare API/server calls are
+  clean without the demo's blunt stream redirect. paramz `DeprecationWarning`s (5058/test-run) filtered
+  via `pyproject.toml [tool.pytest.ini_options] filterwarnings` (the canonical place — a conftest
+  import-time filter is reset per-test). **Test warnings 5058 → 2.**
+- **Silent mechanism switch closed.** A parametric→grounded base fallback was only a log line while
+  `explanation.json` still claimed `copula-sampled`. Threaded a diagnostics dict → the explanation now
+  records `generation.{rare_base,normal_base}` and the per-column `mechanism` reflects a fallback
+  ("nothing silent", G-C).
+- **Gap screen fixes:** (1) `explanation.json` now **cites metric IDs + versions** from the registry
+  (`correlation_delta`/`coverage_rate`/`fisher_separation`/`tail_lift`) — closes the §7 "versioned IDs
+  that explanation.json cites" miss. (2) Removed dead `_compute_ard_cv()` (no call sites). (3) Added
+  CLI **`regen generate --scenario <yaml>`** so a saved ScenarioSpec drives generation (verified: the
+  example YAML → 400 rows @ 25% rare, shippable PASS).
+- **Flagged for owner decision (not changed):** (a) the fidelity gate is measured *pre-floor* while the
+  delivered data is *post-floor* — empirically negligible (demo coverage gap **0.0**), and `regen
+  verify` already marks correlation uncheckable-under-floor, but strictly the gate approves data it
+  doesn't ship; re-auditing post-floor could flip verdicts on adversarial data. (b) `run_campaign`
+  emits no explanation/audit-bundle/vetted-scenario (diagnostic path). (c) No server `/doctor` or
+  `/verify` endpoints (CLI + API only).
+- `generate()` bit-identical (`40933a2b`). Suite **159 → 161 green**.

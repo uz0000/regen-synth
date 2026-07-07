@@ -19,6 +19,14 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 
+from regen.metrics import METRICS
+
+
+def _cite(metric_id: str) -> Dict[str, Any]:
+    """A metric-registry citation (id + version) so an explanation number is
+    traceable to its formal definition in docs/METHODS.md (G-G)."""
+    return {"metric_id": metric_id, "metric_version": METRICS.get(metric_id, {}).get("version")}
+
 
 def feature_informativeness(result) -> List[Dict[str, Any]]:
     """Per-feature relevance for the rare class, ranked. Uses the class-separation
@@ -109,11 +117,12 @@ def build_explanation(
         "fidelity": {
             "coverage": {"value": round(rare_report.coverage_rate, 4),
                          "threshold": coverage_threshold,
-                         "passed": bool(rare_report.coverage_passed)},
+                         "passed": bool(rare_report.coverage_passed), **_cite("coverage_rate")},
             "correlation": {"value": (round(rare_report.correlation_delta, 4)
                                       if rare_report.correlation_delta is not None else None),
                             "threshold": aud_cfg.correlation_threshold,
-                            "passed": bool(rare_report.correlation_passed)},
+                            "passed": bool(rare_report.correlation_passed),
+                            **_cite("correlation_delta")},
             "columns": _cols_summary(rare_report),
             "passed": bool(rare_report.overall_passed),
         },
@@ -140,6 +149,7 @@ def build_explanation(
             "protocol": ("Leakage-free: real rare rows split train/test first; "
                          "synthetic generated from the train fold only; both "
                          "detectors scored on held-out real rare rows."),
+            **_cite("tail_lift"),
         }
     else:
         utility = {"status": "not_measured",
@@ -154,6 +164,7 @@ def build_explanation(
         "gates": gates,
         "feature_informativeness": {
             "method": "class-separation Fisher score (μ_rare−μ_normal)²/(σ²_rare+σ²_normal)",
+            **_cite("fisher_separation"),
             "ranked": feature_informativeness(result),
         },
         "column_provenance": _column_provenance(
