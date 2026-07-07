@@ -1119,18 +1119,9 @@ def generate(
     except Exception:  # yaml optional; the manifest is the source of truth
         pass
 
-    # Persist the manifest so the batch is reproducible from disk (Invariant 2):
-    # seed + configs + schema hash + rare split + privacy regime + the vetted
-    # ScenarioSpec + code version fully determine the output.
-    manifest_path = _write_manifest(
-        out_path, final_seed, result, prior_cfg, amp_cfg, target_region,
-        len(full_df), rare_ratio_resolved, privacy=privacy, delta=delta,
-        scenario=scenario_dict,
-    )
-
     # Explainability (G-C): every batch explains itself from computed numbers.
-    # Persisted next to the manifest and echoed in the summary. Built AFTER the
-    # privacy block (privacy_out) exists so its numbers match exactly.
+    # Built AFTER the privacy block so its numbers match exactly, and written
+    # BEFORE the manifest so the manifest can hash it (G-G).
     from regen.explain import build_explanation
     explanation = build_explanation(
         result=result, vetted_spec=vetted_spec, rare_report=rare_report,
@@ -1139,6 +1130,32 @@ def generate(
         aud_cfg=aud_cfg, coverage_threshold=coverage_threshold,
     )
     (out_path / "explanation.json").write_text(json.dumps(explanation, indent=2, default=str))
+
+    # Audit bundle (G-G): reference aggregates of the REAL data (disclosure-
+    # bounded), then the manifest carrying the SHA-256 of every artifact + the
+    # metric versions, so a third party can `regen verify` the batch and detect
+    # tampering. The manifest is written LAST because it hashes the others.
+    from regen.audit_bundle import (
+        build_reference_aggregates, sha256_file, BATCH_NAME, EXPLAIN_NAME, AGG_NAME,
+    )
+    from regen.metrics import metric_versions
+    agg = build_reference_aggregates(result, n_normal, n_rare)
+    (out_path / AGG_NAME).write_text(json.dumps(agg, indent=2, default=str))
+    artifact_sha256 = {
+        BATCH_NAME: sha256_file(out_path / BATCH_NAME),
+        EXPLAIN_NAME: sha256_file(out_path / EXPLAIN_NAME),
+        AGG_NAME: sha256_file(out_path / AGG_NAME),
+    }
+
+    # Persist the manifest so the batch is reproducible from disk (Invariant 2):
+    # seed + configs + schema hash + rare split + privacy regime + the vetted
+    # ScenarioSpec + artifact hashes + metric versions fully determine + attest it.
+    manifest_path = _write_manifest(
+        out_path, final_seed, result, prior_cfg, amp_cfg, target_region,
+        len(full_df), rare_ratio_resolved, privacy=privacy, delta=delta,
+        scenario=scenario_dict, artifact_sha256=artifact_sha256,
+        metric_versions=metric_versions(),
+    )
 
     fidelity = {
         "score": round(_fidelity_score(rare_report), 4),
@@ -1239,6 +1256,8 @@ def _write_manifest(
     privacy: str = "none",
     delta: float = 0.0,
     scenario: Optional[Dict[str, Any]] = None,
+    artifact_sha256: Optional[Dict[str, str]] = None,
+    metric_versions: Optional[Dict[str, int]] = None,
 ) -> str:
     """Build and persist the batch manifest (Invariant 2).
 
@@ -1265,6 +1284,8 @@ def _write_manifest(
         privacy=privacy,
         delta=delta,
         scenario=scenario,
+        artifact_sha256=artifact_sha256,
+        metric_versions=metric_versions,
     )
     path = out_path / "manifest.json"
     path.write_text(manifest.to_json())

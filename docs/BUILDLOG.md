@@ -318,3 +318,32 @@ Done together per the audit (same files/context as P0-2).
   mechanism). Suite **126 → 131 green**.
 - **Demo highlights (pending):** printing explanation highlights in `run_demo.py` is deferred to the
   final self-review per the owner's "set the demo aside for now" — the JSON + docs + tests are in.
+
+### G-G — Independent auditability (audit bundle + `regen verify`)
+
+- **`regen/metrics.py`** — shared metrics registry: every scored quantity with a version, a verify
+  tolerance, and whether it is recomputable from aggregates alone. Consumed by generation,
+  explanation, and verify so a metric can't mean two things.
+- **Audit bundle**: every batch's run dir is now self-contained — `pass_1_accepted.parquet`,
+  `explanation.json`, `reference_aggregates.json` (real-data aggregates under a **disclosure policy**:
+  class counts, real-rare correlation matrix, per-class column moments, rare deciles *only* above a
+  min-bucket floor; **no per-row values, ever**), and `manifest.json` extended with
+  `manifest_schema_version`, the **SHA-256 of every artifact**, and the metric versions. Manifest is
+  written last (it hashes the others).
+- **`regen/audit_bundle.py::verify_bundle` + CLI `regen verify <dir>`**: pure recomputation from the
+  bundle — integrity first (artifact hashes vs manifest), then values (correlation delta from delivered
+  rare rows + the real corr matrix; Fisher from disclosed moments; class counts). Stats needing raw
+  reference rows (coverage, privacy min-distance, tail-lift) are honestly reported **UNCHECKABLE**, not
+  faked (G-G point 4). When the δ-floor was applied, the gate's correlation was measured pre-floor (not
+  in the bundle), so verify reports the delivered post-floor value informationally rather than
+  PASS/FAIL. Exit non-zero on any integrity/value mismatch.
+- **`docs/METHODS.md`**: formal definition of every registry metric (formula, detects/can't-detect,
+  threshold + rationale, recomputable-from-aggregates), versioned IDs, and the tolerance + disclosure
+  policy.
+- **Observed:** `generate()` bit-identical (`40933a2b`). Clean floored bundle → VERIFIED (correlation
+  uncheckable-by-floor; integrity+fisher+class_counts pass). Clean `none` bundle → correlation
+  **checked** and matches (0.0374=0.0374). Tampering a rare row → integrity FAILS naming the parquet
+  **and** correlation_delta FAILS. CLI `regen verify` prints per-stat PASS/FAIL and exits non-zero on
+  failure.
+- **Tests:** `tests/test_audit.py` (6: floored/none clean verify, rare-row tamper fails integrity+stat,
+  manifest attestation, disclosure bucket-floor suppress/publish). Suite **131 → 137 green**.

@@ -198,6 +198,12 @@ class BatchManifest:
     # use-case context is reproducible from disk — Invariant 2 extended to the
     # contract (G-A). None for legacy batches generated before the contract.
     scenario: Optional[Dict[str, Any]] = None
+    # Audit bundle (G-G): a version stamp, the SHA-256 of every artifact in the
+    # bundle (so tampering is detectable), and the version of every metric used
+    # (so results are never silently compared across metric-definition changes).
+    manifest_schema_version: int = 1
+    artifact_sha256: Optional[Dict[str, str]] = None
+    metric_versions: Optional[Dict[str, int]] = None
 
     def to_json(self) -> str:
         return json.dumps(
@@ -213,6 +219,9 @@ class BatchManifest:
                 "privacy": self.privacy,
                 "delta": self.delta,
                 "scenario": self.scenario,
+                "manifest_schema_version": self.manifest_schema_version,
+                "artifact_sha256": self.artifact_sha256,
+                "metric_versions": self.metric_versions,
             },
             sort_keys=True,
         )

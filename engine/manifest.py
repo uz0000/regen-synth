@@ -50,6 +50,8 @@ def build_manifest(
     privacy: str = "none",
     delta: float = 0.0,
     scenario: Any = None,
+    artifact_sha256: Any = None,
+    metric_versions: Any = None,
 ) -> BatchManifest:
     return BatchManifest(
         seed=seed,
@@ -63,6 +65,8 @@ def build_manifest(
         privacy=privacy,
         delta=delta,
         scenario=scenario,
+        artifact_sha256=artifact_sha256,
+        metric_versions=metric_versions,
     )
 
 

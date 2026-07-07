@@ -46,6 +46,8 @@ def main():
         _cmd_run(args)
     elif args.command == "generate":
         _cmd_generate(args)
+    elif args.command == "verify":
+        _cmd_verify(args)
     elif args.command == "screen":
         _cmd_screen(args)
 
@@ -152,6 +154,13 @@ def _build_parser() -> argparse.ArgumentParser:
                        help="Output directory (default: ./regen-output)")
     gen_p.add_argument("--json", action="store_true", help="Output summary as JSON")
     gen_p.set_defaults(command="generate")
+
+    # ── regen verify ──────────────────────────────────────────────────────────
+    verify_p = sub.add_parser("verify", help="Independently verify an audit bundle (a run dir)")
+    verify_p.add_argument("bundle", type=str,
+                          help="Path to the run directory (the audit bundle)")
+    verify_p.add_argument("--json", action="store_true", help="Emit the full report as JSON")
+    verify_p.set_defaults(command="verify")
 
     # ── regen screen ────────────────────────────────────────────────────────
     screen_p = sub.add_parser("screen", help="Predict whether REGEN or SMOTE will win on your data")
@@ -353,6 +362,39 @@ def _print_summary(result, out_dir: Path):
         df = pd.read_parquet(result.best_batch_path)
         print(f"    {len(df)} rows, {len(df.columns)} columns")
     print("=" * 62)
+
+
+# ── Command: verify ──────────────────────────────────────────────────────────
+
+def _cmd_verify(args):
+    """Recompute an audit bundle's statistics and report PASS/FAIL — exit
+    non-zero on any integrity or value mismatch."""
+    from regen.audit_bundle import verify_bundle
+    rep = verify_bundle(args.bundle)
+    if args.json:
+        print(json.dumps(rep, indent=2))
+        sys.exit(0 if rep["passed"] else 1)
+
+    print()
+    print("=" * 62)
+    print(f"  REGEN — AUDIT VERIFY  ({args.bundle})")
+    print("=" * 62)
+    print("  Integrity (artifact hashes vs manifest):")
+    for a in rep["integrity"]:
+        print(f"    {'✓' if a['passed'] else '✗'} {a['artifact']}")
+    print("  Statistics (recomputed from delivered data + reference aggregates):")
+    for s in rep["stats"]:
+        if s["status"] == "uncheckable":
+            print(f"    – {s['metric']}: UNCHECKABLE ({s['note']})")
+        else:
+            mark = "✓" if s["passed"] else "✗"
+            print(f"    {mark} {s['metric']}: reported={s['reported']} recomputed={s['recomputed']}")
+    for n in rep.get("notes", []):
+        print(f"  note: {n}")
+    print("-" * 62)
+    print(f"  RESULT: {'VERIFIED' if rep['passed'] else 'FAILED'}")
+    print("=" * 62)
+    sys.exit(0 if rep["passed"] else 1)
 
 
 # ── Command: screen ────────────────────────────────────────────────────────
