@@ -16,6 +16,7 @@ instead of producing a surprising batch.
 | High-cardinality categoricals (> 50) | **Degraded** | Top-K TVD path; per-category fidelity is approximate. |
 | All-categorical (no continuous features) | **Degraded** | δ-distance floor **cannot apply** (P2-9); privacy = parametric sampling + verbatim guard + k-anonymity. Floored fidelity can drop on high-card categoricals (P1-6 `open_payments`). Use `privacy="none"` if fidelity matters more. |
 | Low-cardinality **integer/ordinal** "continuous" features | **Degraded** | The δ-floor can collapse coverage (P1-6 `solar_flare`). Use `privacy="none"` or declare them categorical. |
+| Dense / low-dim rare tail + `privacy="floored"` (esp. percentile mode) | **Degraded** | The fidelity gate is measured on the **delivered** (post-floor) data. On a dense rare tail the δ-floor shifts marginals/correlation by up to ~δ, which can exceed the gate — the batch is then reported **not-shippable, loudly** (never a silent pass). Use `privacy="none"`, a smaller `delta`, or accept the loud downgrade. |
 | Very few rare rows (< 14) | **Degraded** | Amplifies, but the held-out lift reports `insufficient_rare_rows` (P2-7). |
 | Very few rare rows (< 10) | **Unsupported** | Below the amplification minimum; ingest refuses. |
 | High dimensionality vs rare count (D > n_rare) | **Degraded** | Residual GP underdetermined; set `max_features` 6–10. |

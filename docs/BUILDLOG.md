@@ -474,3 +474,29 @@ pandas int64 FutureWarning) are recorded in `docs/KNOWN_ISSUES.md` and the capab
   emits no explanation/audit-bundle/vetted-scenario (diagnostic path). (c) No server `/doctor` or
   `/verify` endpoints (CLI + API only).
 - `generate()` bit-identical (`40933a2b`). Suite **159 → 161 green**.
+
+### Fidelity gate now audits the DELIVERED (post-floor) data (owner-requested)
+
+- **Gap #4 fixed.** The fidelity verdict was measured on the pre-floor rare batch while the delivered
+  data is post-floor — so `passed=True` could describe a batch that isn't shipped. `generate()` now
+  **re-audits the delivered rare part** (`full_df.iloc[-n_rare:]`) after the floor when it moved rows,
+  and that report drives `fidelity`, `passed`, and the explanation. Parquet unchanged (`40933a2b`);
+  only the reported numbers now describe what ships.
+- **Consequence (surfaced, not hidden):** this exposed that `privacy="floored"` on a **dense percentile
+  tail** fails the gate on delivered data — the δ-floor moves rare rows ~0.5σ, pushing correlation
+  (0.101 pre-floor → **0.295 delivered**) and a marginal (`merchant_risk`) past their gates. This is
+  the fundamental dense-tail-vs-isolation tension the audit flagged; the correct outcome is a **loud
+  downgrade**, which the audit's P0-2 done-when explicitly sanctions ("pass OR fail loudly with a
+  machine-readable reason"). It now fails loudly (`fidelity.passed=False`, delivered corr reported,
+  `passed=False`); LABEL-mode demo unchanged (still fidelity/privacy PASS, lift +0.278, shippable).
+- **Tried and reverted:** a correlation-preserving respawn (draw floor respawns from the real rare
+  covariance instead of uniform-in-box) improved percentile corr 0.295→0.190 but (a) still didn't make
+  the batch shippable (the `merchant_risk` marginal still fails — inherent to a 0.5σ floor on a tight
+  tail) and (b) changed **every** floored output (demo hash + all baselines). Not worth the blast
+  radius for no shippability gain — reverted. Filed the correlation-preserving floor as a possible
+  future enhancement (measured benefit recorded here).
+- **Bonus:** because the reported correlation is now the delivered value, `regen verify` **checks**
+  correlation even under the floor (reported == recomputed) instead of marking it uncheckable.
+- **Metric-ID citation / dead code / CLI `--scenario`** (gap-screen items) also landed. Test updated
+  (`test_percentile_floored_verdict_is_honest_on_delivered_data`) to pin the honest no-silent-pass
+  behavior; `docs/CAPABILITY_MATRIX.md` records the dense-tail floored degraded case. Suite **161 green**.

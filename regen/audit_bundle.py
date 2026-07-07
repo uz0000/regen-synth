@@ -175,13 +175,7 @@ def verify_bundle(bundle_dir: str | Path) -> Dict[str, Any]:
     # Delivered rare rows are the last n_rare (generate concatenates normal then rare).
     rare_synth = delivered.iloc[len(delivered) - n_rare:] if n_rare else delivered.iloc[:0]
 
-    # The δ-floor perturbs the delivered rare rows AFTER the fidelity gate measured
-    # them, so the gate's correlation describes pre-floor data that is not in the
-    # bundle — verify cannot recompute that exact number when a floor was applied.
-    pv = explanation.get("privacy")
-    floor_applied = bool(pv.get("floor_applied")) if pv else False
-
-    _verify_correlation(report, explanation, agg, rare_synth, floor_applied)
+    _verify_correlation(report, explanation, agg, rare_synth)
     _verify_fisher(report, explanation, agg)
     _verify_class_counts(report, agg, delivered, label_col)
     _mark_uncheckable(report, explanation)
@@ -199,7 +193,7 @@ def _stat(report, metric, status, passed=None, reported=None, recomputed=None, n
     })
 
 
-def _verify_correlation(report, explanation, agg, rare_synth, floor_applied):
+def _verify_correlation(report, explanation, agg, rare_synth):
     reported = explanation.get("gates", {}).get("fidelity", {}).get("correlation", {}).get("value")
     real = agg.get("correlation_rare")
     if reported is None or real is None:
@@ -218,16 +212,10 @@ def _verify_correlation(report, explanation, agg, rare_synth, floor_applied):
     diffs = np.abs(real_corr[iu] - synth_corr[iu])
     diffs = diffs[np.isfinite(diffs)]
     recomputed = round(float(diffs.mean()), 4) if diffs.size else None
-    if floor_applied:
-        # The reported value was measured on the pre-floor rare batch; the
-        # delivered rows were then moved by the δ-floor, so the two legitimately
-        # differ. Report the recomputed delivered value, don't PASS/FAIL against
-        # the pre-floor gate number (G-G point 4 — honest about disclosure limits).
-        _stat(report, "correlation_delta", "uncheckable", reported=reported,
-              recomputed=recomputed,
-              note="δ-floor applied: gate measured pre-floor data, not in the bundle; "
-                   "recomputed value is the delivered post-floor correlation delta")
-        return
+    # The reported correlation is now measured on the DELIVERED (post-floor) rare
+    # rows — the same rows in the bundle — so it is recomputable and checked even
+    # under the floor. (Before the gate re-audited delivered data, this had to be
+    # marked uncheckable when a floor was applied.)
     ok = recomputed is not None and abs(recomputed - reported) <= max(tolerance("correlation_delta"), 5e-4)
     _stat(report, "correlation_delta", "checked", bool(ok), reported, recomputed)
 

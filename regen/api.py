@@ -1033,6 +1033,16 @@ def generate(
     batch_path = str(out_path / "pass_1_accepted.parquet")
     full_df.to_parquet(batch_path, index=False)
 
+    # Re-audit the DELIVERED rare part when the δ-floor actually moved rows, so the
+    # fidelity verdict describes what ships — not the pre-floor batch the gate first
+    # saw. The floor pushes rare rows ≥δ from real ones, which lowers coverage and
+    # perturbs correlation by construction; gating on the pre-floor batch could
+    # stamp a batch shippable whose delivered form fails. (The normal part is never
+    # floored; rare rows are the last n_rare — concat order is normal then rare.)
+    if floor_applied:
+        from engine.auditor import audit as _audit_delivered
+        rare_report = _audit_delivered(result, full_df.iloc[len(full_df) - n_rare:], aud_cfg)
+
     # The Auditor gate (Invariant 3) — purely a fidelity verdict on both halves.
     # Privacy is a separate guarantee folded into the top-level `passed` below, so
     # a privacy miss never masquerades as a fidelity failure.
