@@ -296,3 +296,25 @@ Done together per the audit (same files/context as P0-2).
   row-hashes).
 - **Tests:** `tests/test_vetting.py` (11: one failing-then-passing per data-facing rule + conformance
   violation/uniqueness + the two-specs-differ demo). Suite **114 → 126 green**.
+
+### G-C — Explainability (`explanation.json`)
+
+- **`regen/explain.py` — `build_explanation(...)`**: assembles, from the run's own report objects only
+  (no model narration): per-gate account (coverage/correlation/columns/conformance/privacy each with
+  statistic + threshold + verdict), per-column provenance (role, source, production **mechanism** —
+  copula-sampled+GP / copula-frequency-sampled / grounded / identifier-minted / label-attached — plus
+  applied and rejected constraints from the vetting verdicts), **feature informativeness** (per-feature
+  class-separation Fisher score, ranked), Scout rationale (target region), utility with honesty markers
+  (P2-7 status/n_test_rare/protocol), and the privacy account.
+- **Wired into `generate()`**: every batch writes `explanation.json` next to the manifest and echoes it
+  in the summary under `explain`. Built after the privacy block so the numbers match exactly.
+- **Observed:** `generate()` bit-identical (`40933a2b`); top informative feature `n_prior_txns`
+  (Fisher 3.08) — matches P0-2's finding that it drives the fraud signal; `explanation.json` on disk ==
+  `summary["explain"]`.
+- **Docs:** `docs/EXPLAINABILITY.md` defines every field + the maintainer rule (new gate/mechanism/
+  metric must add its explanation entry, §6 rule 10).
+- **Tests:** `tests/test_explain.py` (5: file ships + equals summary; gate numbers equal the fidelity/
+  conformance/privacy reports; utility equals the lift block; ranked informativeness; per-column
+  mechanism). Suite **126 → 131 green**.
+- **Demo highlights (pending):** printing explanation highlights in `run_demo.py` is deferred to the
+  final self-review per the owner's "set the demo aside for now" — the JSON + docs + tests are in.

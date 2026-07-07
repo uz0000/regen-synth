@@ -1128,6 +1128,18 @@ def generate(
         scenario=scenario_dict,
     )
 
+    # Explainability (G-C): every batch explains itself from computed numbers.
+    # Persisted next to the manifest and echoed in the summary. Built AFTER the
+    # privacy block (privacy_out) exists so its numbers match exactly.
+    from regen.explain import build_explanation
+    explanation = build_explanation(
+        result=result, vetted_spec=vetted_spec, rare_report=rare_report,
+        normal_report=normal_report, conformance=conformance,
+        privacy_out=privacy_out, lift=lift, target_region=target_region,
+        aud_cfg=aud_cfg, coverage_threshold=coverage_threshold,
+    )
+    (out_path / "explanation.json").write_text(json.dumps(explanation, indent=2, default=str))
+
     fidelity = {
         "score": round(_fidelity_score(rare_report), 4),
         "passed": auditor_passed,
@@ -1207,6 +1219,7 @@ def generate(
         "manifest_path": manifest_path,
         "scenario": scenario_dict,
         "conformance": conformance_out,
+        "explain": explanation,
         "seed": final_seed,
     }
     # Write a minimal campaign_summary.json so get_results()/download work.
