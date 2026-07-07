@@ -824,6 +824,9 @@ def generate(
     delta: float = 0.5,
     out_dir: Optional[str] = None,
     scenario: Optional["ScenarioSpec"] = None,
+    accept_contract: bool = False,
+    semantics_caller=None,
+    semantics_config=None,
 ) -> Dict[str, Any]:
     """The simple primary path: generate a synthetic *dataset* as a CSV-ready batch.
 
@@ -1072,7 +1075,22 @@ def generate(
     # contradicts the data and logging every decision (rule 7). Intent + gates
     # record the *resolved* values actually used, so a re-run reproduces the batch.
     from regen.vetting import vet_scenario
-    vetted_cols, verdicts = vet_scenario(scenario, result)
+    # Source 3 (optional, advisory): a single cached model proposal, applied only
+    # when the caller opts in. Off / offline → None, and vetting uses Sources 1+2
+    # only (generation never blocks). The raw proposal is persisted for audit +
+    # zero-call replay.
+    model_columns = None
+    semantics_proposal = None
+    if accept_contract:
+        from regen.semantics import propose_semantics
+        semantics_proposal = propose_semantics(
+            result, config=semantics_config, caller=semantics_caller,
+        )
+        if semantics_proposal is not None:
+            model_columns = {c.name: c for c in semantics_proposal.columns}
+            (out_path / "semantics_proposal.json").write_text(
+                json.dumps(semantics_proposal.to_dict(), indent=2, default=str))
+    vetted_cols, verdicts = vet_scenario(scenario, result, model_columns=model_columns)
     vetted_spec = ScenarioSpec(
         columns=vetted_cols,
         intent=ScenarioIntent(
@@ -1099,6 +1117,10 @@ def generate(
         provenance=(dict(scenario.provenance) if scenario is not None else {}),
         verdicts=verdicts,
     )
+    if semantics_proposal is not None:
+        # Provenance so the model source is visible + replayable (rule 7/8).
+        vetted_spec.provenance["model_proposal_id"] = semantics_proposal.proposal_id
+        vetted_spec.provenance["model_id"] = semantics_proposal.model_id
 
     # Conformance audit (G-B rule 9): the delivered batch must obey every vetted
     # constraint. A conformance failure fails the batch exactly like a fidelity
@@ -1240,6 +1262,17 @@ def generate(
         "scenario": scenario_dict,
         "conformance": conformance_out,
         "explain": explanation,
+        "semantics": ({
+            "applied": True,
+            "model_id": semantics_proposal.model_id,
+            "proposal_id": semantics_proposal.proposal_id,
+            "n_columns_proposed": len(semantics_proposal.columns),
+            "payload_sent": semantics_proposal.payload_sent,
+        } if semantics_proposal is not None else {
+            "applied": False,
+            "reason": ("advisory model source off (accept_contract=False)"
+                       if not accept_contract else "model source unavailable — Sources 1+2 only"),
+        }),
         "seed": final_seed,
     }
     # Write a minimal campaign_summary.json so get_results()/download work.

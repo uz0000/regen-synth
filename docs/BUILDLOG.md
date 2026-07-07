@@ -388,3 +388,27 @@ Done together per the audit (same files/context as P0-2).
 - **Tests:** `tests/test_preflight.py` (9 fixtures, one per rule: healthy/small-rare/too-few-rare/
   all-categorical/low-card-int/high-dim/constant/timestamp/high-card+free-text). Suite **141 → 150
   green**.
+
+### G-B Source 3 — optional advisory model proposal
+
+- **`regen/semantics.py`** (outside `engine/`; boundary test stays green): one cached, provider-agnostic
+  model call that reads the **deterministic profile only** and proposes column semantics.
+  `build_model_payload` redacts egress — ≤`REGEN_SEMANTICS_SAMPLES` example values/column, **zero** for
+  identifier columns, none when `SAMPLES=0` — and the exact payload sent is persisted. Default caller is
+  a urllib POST to an OpenAI-compatible endpoint (no SDK dependency); a caller is **injectable** so
+  tests never touch the network. Offline / no key / any error → returns `None`, generation falls back to
+  Sources 1+2 and never blocks. Cached by schema hash → at most one call per dataset.
+- **Vetting extended:** `vet_scenario(proposed, ingest, model_columns=...)` applies authority order
+  researcher > structural > **model** — the model fills gaps/tightens within the data, the researcher
+  overrides it, and the model proposal passes the **same** gate rules (a contradiction is dropped).
+- **`generate(accept_contract=False, semantics_caller=None, semantics_config=None)`** (+ CLI
+  `--accept-contract`, server `accept_contract`): advisory by default. When accepted, the proposal is
+  vetted, the vetted model columns persist in the manifest spec (`source="model"`), the raw proposal is
+  written to `semantics_proposal.json` + referenced in `provenance`, and a `semantics` block appears in
+  the summary. **Replay** from the persisted spec makes **zero** model calls.
+- **Observed (offline tests):** identifier columns egress zero values; `SAMPLES=0` egresses none; a
+  safe wider bound is vetted **accepted** and a clipping one **rejected**; researcher overrides model;
+  exactly **one** call (cache); offline → `applied:false` fallback; and `accept_contract` run →
+  persisted `source=model` column → replay with no caller makes **no further calls**.
+- **Tests:** `tests/test_semantics.py` (9, fully offline). `generate()` bit-identical (`40933a2b`);
+  engine boundary green. Suite **150 → 159 green**.

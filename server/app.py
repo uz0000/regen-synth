@@ -109,6 +109,9 @@ class GenerateRequest(BaseModel):
     # "privacy" block reports exactly what held. See API_GUIDE.
     privacy: str = "floored"      # "floored" | "none"
     delta: float = 0.5            # δ-distance floor in σ-units (privacy="floored")
+    # Apply the OPTIONAL advisory model semantic proposal (Source 3), vetted by
+    # the deterministic gate. Off by default; needs REGEN_SEMANTICS_* env.
+    accept_contract: bool = False
 
 
 class HealthResponse(BaseModel):
@@ -379,6 +382,7 @@ async def generate_data(req: GenerateRequest):
             rare_ratio=req.rare_ratio,
             privacy=req.privacy,
             delta=req.delta,
+            accept_contract=req.accept_contract,
             out_dir=out_dir,
         )
     except ValueError as e:

@@ -154,6 +154,10 @@ def _build_parser() -> argparse.ArgumentParser:
                        help="δ-distance floor in σ-units when --privacy floored (default: 0.5)")
     gen_p.add_argument("--out", type=str, default="regen-output",
                        help="Output directory (default: ./regen-output)")
+    gen_p.add_argument("--accept-contract", action="store_true",
+                       help="Apply the OPTIONAL advisory model semantic proposal "
+                            "(Source 3), vetted by the deterministic gate. Needs "
+                            "REGEN_SEMANTICS_* env; offline → Sources 1+2 only.")
     gen_p.add_argument("--json", action="store_true", help="Output summary as JSON")
     gen_p.set_defaults(command="generate")
 
@@ -311,6 +315,7 @@ def _cmd_generate(args):
             privacy=args.privacy,
             delta=args.delta,
             out_dir=str(out_dir),
+            accept_contract=args.accept_contract,
         )
     except ValueError as e:
         print(f"Error: {e}", file=sys.stderr)

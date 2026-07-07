@@ -39,13 +39,16 @@ CONFIDENCE_FLOOR = 0.5
 def vet_scenario(
     proposed: ScenarioSpec | None,
     ingest: IngestResult,
+    model_columns: Dict[str, ColumnSemantics] | None = None,
 ) -> Tuple[Dict[str, ColumnSemantics], List[VettingVerdict]]:
-    """Merge Source 1 (structural) + Source 2 (researcher) into vetted columns.
+    """Merge Source 1 (structural) + Source 3 (model) + Source 2 (researcher).
 
-    Returns (vetted_columns, verdicts). The structural baseline always exists;
-    each researcher-declared attribute is applied only if it passes the rules,
-    else the field keeps its structural value and a rejection/fallback verdict is
-    logged. Every column that exists structurally is present in the output.
+    Authority order (rule 5): researcher > structural > model. So we lay the
+    structural baseline, apply the vetted **model** proposal (lower authority,
+    fills gaps / tightens within the data), then apply the vetted **researcher**
+    declaration on top (it overrides the model where both speak). Every attribute
+    is checked against the observed data by the same rules regardless of source;
+    a violator is dropped and logged. Every structural column is in the output.
     """
     fd = ingest.field_dict
     label_col = ingest.label_col
@@ -53,26 +56,32 @@ def vet_scenario(
     verdicts: List[VettingVerdict] = []
 
     proposed_cols = (proposed.columns if proposed is not None else {})
+    model_cols = model_columns or {}
 
     vetted: Dict[str, ColumnSemantics] = {}
     for name, base in structural.items():
-        prop = proposed_cols.get(name)
-        if prop is None or prop.source == "structural":
-            vetted[name] = base
-            continue
-        col, col_verdicts = _vet_column(name, base, prop, fd.get(name))
-        vetted[name] = col
-        verdicts.extend(col_verdicts)
+        cur = base
+        mprop = model_cols.get(name)
+        if mprop is not None and mprop.source != "structural":
+            cur, vs = _vet_column(name, cur, mprop, fd.get(name))
+            verdicts.extend(vs)
+        uprop = proposed_cols.get(name)
+        if uprop is not None and uprop.source != "structural":
+            cur, vs = _vet_column(name, cur, uprop, fd.get(name))
+            verdicts.extend(vs)
+        vetted[name] = cur
 
-    # A declared column that does not exist in the data is dropped + logged
-    # (rule 3: data is ground truth — you cannot declare a column that isn't there).
-    for name in proposed_cols:
-        if name not in structural:
-            verdicts.append(VettingVerdict(
-                field=name, decision="rejected", rule="data_is_ground_truth",
-                source=proposed_cols[name].source,
-                rationale="declared column is not present in the data",
-            ))
+    # A declared/proposed column that does not exist in the data is dropped +
+    # logged (rule 3: data is ground truth — you cannot name a column that isn't
+    # there). Covers both the researcher and the model source.
+    for src_cols in (proposed_cols, model_cols):
+        for name in src_cols:
+            if name not in structural:
+                verdicts.append(VettingVerdict(
+                    field=name, decision="rejected", rule="data_is_ground_truth",
+                    source=src_cols[name].source,
+                    rationale="declared column is not present in the data",
+                ))
     return vetted, verdicts
 
 
