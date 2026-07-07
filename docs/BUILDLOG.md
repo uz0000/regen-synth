@@ -367,3 +367,24 @@ Done together per the audit (same files/context as P0-2).
   without threading timing hooks through every engine stage; per-stage timing is a clean follow-up.
 - **Tests:** `tests/test_regression_harness.py` (4, fast: `_compare` catches each drift kind + is clean
   on no-drift; committed baseline well-formed + all-verified). Suite **137 → 141 green**.
+
+### G-E — Preflight / capability matrix
+
+- **`regen/preflight.py::preflight(path, label_col, rare_def)`** (+ `regen.api.preflight` re-export,
+  CLI `regen doctor`): validates a dataset against the supported envelope *before* generation and
+  returns per-check verdicts (`ok`/`warn`/`degraded`/`unsupported`/`error`) with recommendations, plus
+  `ok_to_generate`. Rules (each observed): rare-count for amplification (`<10` unsupported) and for a
+  non-degenerate lift (`<14` warn, P2-7); all-categorical → floor can't apply (P2-9); low-cardinality
+  integer/ordinal features → floor can collapse coverage (P1-6 solar_flare); dimensionality > rare
+  count → GP underdetermined; high-cardinality categoricals → top-K TVD; free-text heuristic; constant
+  columns; dataset size; and out-of-scope **time-series** columns named plainly. Ingest refusals
+  (too-few-rare / ambiguous target) are reported as verdicts, not raised.
+- **`docs/CAPABILITY_MATRIX.md`**: supported / degraded / unsupported shapes with reason + workaround,
+  written from observed behavior; maps preflight levels to the matrix.
+- **Observed:** `regen doctor examples/transactions.csv --label is_fraud` → OK; `open_payments` →
+  degraded (all-categorical) + unsupported (free text) → `ok_to_generate: NO`.
+- **Fix found while testing:** continuous columns carry `cardinality=None`, so the low-card-integer
+  rule now counts distinct values from the data directly.
+- **Tests:** `tests/test_preflight.py` (9 fixtures, one per rule: healthy/small-rare/too-few-rare/
+  all-categorical/low-card-int/high-dim/constant/timestamp/high-card+free-text). Suite **141 → 150
+  green**.

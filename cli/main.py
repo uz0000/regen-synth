@@ -46,6 +46,8 @@ def main():
         _cmd_run(args)
     elif args.command == "generate":
         _cmd_generate(args)
+    elif args.command == "doctor":
+        _cmd_doctor(args)
     elif args.command == "verify":
         _cmd_verify(args)
     elif args.command == "screen":
@@ -154,6 +156,19 @@ def _build_parser() -> argparse.ArgumentParser:
                        help="Output directory (default: ./regen-output)")
     gen_p.add_argument("--json", action="store_true", help="Output summary as JSON")
     gen_p.set_defaults(command="generate")
+
+    # ── regen doctor ────────────────────────────────────────────────────────
+    doctor_p = sub.add_parser("doctor", help="Preflight a dataset against the supported envelope")
+    doctor_p.add_argument("data", type=str, help="Path to input data (CSV/JSON/Parquet)")
+    doctor_p.add_argument("--label", type=str, default="",
+                          help="Label column name (auto-detect if omitted)")
+    doctor_p.add_argument("--rare-mode", type=str, default="label",
+                          choices=["label", "percentile", "imbalance_ratio"])
+    doctor_p.add_argument("--rare-value", type=str, default=None)
+    doctor_p.add_argument("--percentile", type=float, default=0.05)
+    doctor_p.add_argument("--imbalance-ratio", type=float, default=0.01)
+    doctor_p.add_argument("--json", action="store_true")
+    doctor_p.set_defaults(command="doctor")
 
     # ── regen verify ──────────────────────────────────────────────────────────
     verify_p = sub.add_parser("verify", help="Independently verify an audit bundle (a run dir)")
@@ -362,6 +377,37 @@ def _print_summary(result, out_dir: Path):
         df = pd.read_parquet(result.best_batch_path)
         print(f"    {len(df)} rows, {len(df.columns)} columns")
     print("=" * 62)
+
+
+# ── Command: doctor ────────────────────────────────────────────────────────
+
+_LEVEL_MARK = {"ok": "✓", "warn": "!", "degraded": "~", "unsupported": "✗", "error": "✗"}
+
+
+def _cmd_doctor(args):
+    """Preflight a dataset and print the envelope verdicts."""
+    from regen.api import preflight
+    rare_def = None if (args.rare_mode == "label" and args.rare_value is None) \
+        else _build_rare_def(args)
+    rep = preflight(args.data, label_col=args.label, rare_def=rare_def)
+    if args.json:
+        print(json.dumps(rep, indent=2))
+        sys.exit(0 if rep["ok_to_generate"] else 1)
+
+    print()
+    print("=" * 62)
+    print(f"  REGEN — PREFLIGHT  ({args.data})")
+    print("=" * 62)
+    if "n_rare" in rep:
+        print(f"  label: {rep['label_col']}   rare: {rep['n_rare']}   total: {rep['n_total']}")
+    for c in rep["checks"]:
+        print(f"  {_LEVEL_MARK.get(c['level'], '?')} [{c['level']}] {c['check']}: {c['message']}")
+        if c["recommendation"]:
+            print(f"       → {c['recommendation']}")
+    print("-" * 62)
+    print(f"  OK to generate: {'yes' if rep['ok_to_generate'] else 'NO'}")
+    print("=" * 62)
+    sys.exit(0 if rep["ok_to_generate"] else 1)
 
 
 # ── Command: verify ──────────────────────────────────────────────────────────

@@ -50,6 +50,9 @@ from contracts.scenario import (
     ScenarioGates,
     columns_from_field_dict,
 )
+# Re-exported so `regen.api.preflight` works (G-E). preflight imports ingest from
+# here lazily inside its function, so there is no import cycle.
+from regen.preflight import preflight  # noqa: E402,F401
 
 logger = logging.getLogger(__name__)
 
