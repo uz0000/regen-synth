@@ -1,0 +1,64 @@
+{
+  "run_date": "2026-07-06",
+  "code_version": "4229da2",
+  "config": {
+    "seed": 11,
+    "n_rows": 400
+  },
+  "results": {
+    "creditcard_subset.csv__none": {
+      "fidelity_score": 1.0,
+      "coverage": 1.0,
+      "corr_delta": 0.0584,
+      "gate_passed": true,
+      "tail_lift": null,
+      "verified": true,
+      "wall_time_s": 8.18
+    },
+    "creditcard_subset.csv__floored": {
+      "fidelity_score": 1.0,
+      "coverage": 0.9565,
+      "corr_delta": 0.1289,
+      "gate_passed": true,
+      "tail_lift": null,
+      "verified": true,
+      "wall_time_s": 6.96
+    },
+    "hypothyroid.csv__none": {
+      "fidelity_score": 1.0,
+      "coverage": 0.9801,
+      "corr_delta": 0.0527,
+      "gate_passed": true,
+      "tail_lift": 0.0217,
+      "verified": true,
+      "wall_time_s": 14.26
+    },
+    "hypothyroid.csv__floored": {
+      "fidelity_score": 1.0,
+      "coverage": 0.947,
+      "corr_delta": 0.1129,
+      "gate_passed": true,
+      "tail_lift": 0.0217,
+      "verified": true,
+      "wall_time_s": 15.12
+    },
+    "wilt.csv__none": {
+      "fidelity_score": 1.0,
+      "coverage": 0.9962,
+      "corr_delta": 0.1047,
+      "gate_passed": true,
+      "tail_lift": 0.0127,
+      "verified": true,
+      "wall_time_s": 15.16
+    },
+    "wilt.csv__floored": {
+      "fidelity_score": 1.0,
+      "coverage": 1.0,
+      "corr_delta": 0.092,
+      "gate_passed": true,
+      "tail_lift": 0.0127,
+      "verified": true,
+      "wall_time_s": 15.2
+    }
+  }
+}

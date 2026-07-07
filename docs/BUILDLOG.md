@@ -347,3 +347,23 @@ Done together per the audit (same files/context as P0-2).
   failure.
 - **Tests:** `tests/test_audit.py` (6: floored/none clean verify, rare-row tamper fails integrity+stat,
   manifest attestation, disclosure bucket-floor suppress/publish). Suite **131 → 137 green**.
+
+### G-D — Standing regression harness + performance budgets
+
+- **`benchmark/run_regression.py`**: canonical datasets (creditcard_subset / hypothyroid / wilt) ×
+  (privacy none/floored) at a fixed seed; each produced bundle is **self-verified via `regen verify`**
+  (G-G). Every scored quantity is compared to committed baselines within explicit tolerances; **exits
+  non-zero** on any regression — fidelity/coverage drop, correlation increase, gate flip (PASS→FAIL),
+  lift drop, a bundle that fails verify, or a **runtime blow-up** past the per-run budget
+  (baseline×4 + 5s headroom — catches a gross blow-up, not jitter). `--update-baselines` writes them;
+  `--degrade` cranks noise to prove the harness catches drift. Pre-push/CI step; the pre-commit hook
+  stays tests-only.
+- **Baselines:** `benchmark/BASELINES/regression_baseline.json`, dated + `code_version`-stamped
+  (`4229da2`), all six runs verified.
+- **Observed:** clean check → "✓ No regression … all bundles verified" (exit 0); `--degrade` →
+  "REGRESSION DETECTED" (gate flip + fidelity 1.0→0.87 + corr 0.058→0.18) (exit 1).
+- **Perf budgets (scoped note):** the budget is whole-run generate wall-time per (dataset, privacy)
+  with wide headroom, not per-*stage* timing — enough to catch the audit's "runtime blow-up" concern
+  without threading timing hooks through every engine stage; per-stage timing is a clean follow-up.
+- **Tests:** `tests/test_regression_harness.py` (4, fast: `_compare` catches each drift kind + is clean
+  on no-drift; committed baseline well-formed + all-verified). Suite **137 → 141 green**.
