@@ -500,3 +500,45 @@ pandas int64 FutureWarning) are recorded in `docs/KNOWN_ISSUES.md` and the capab
 - **Metric-ID citation / dead code / CLI `--scenario`** (gap-screen items) also landed. Test updated
   (`test_percentile_floored_verdict_is_honest_on_delivered_data`) to pin the honest no-silent-pass
   behavior; `docs/CAPABILITY_MATRIX.md` records the dense-tail floored degraded case. Suite **161 green**.
+
+---
+
+## Session 2026-07-09 — Phase 2 (product direction, per docs/PRODUCT_SPEC.md)
+
+Building the new parts from the product spec. This phase is about turning the
+verified engine into a *certified surrogate* a non-expert can drive and a skeptic
+can check. Metric first, as the spec's build order requires.
+
+### §5.1 — TSTR harness (surrogate quality): the headline actionable metric
+
+- **What:** `engine/examiner/surrogate.py::measure_tstr` — train a model on the
+  synthetic surrogate (TSTR) and on real data (TRTR), score both on a held-out
+  **real** test set, report `recovered = TSTR / TRTR` across a model panel
+  (logreg / random-forest / gradient-boosting), averaged over seeds, on ROC-AUC
+  **and** PR-AUC (rare-class-sensitive). `contracts.types.TSTRReport` carries it.
+- **Leakage-free orchestration:** `regen.api.evaluate_surrogate` quarantines a real
+  test fold, generates the surrogate from the **train fold only** (via `generate`
+  on a temp copy), then measures — the same leakage discipline as the lift metric
+  (57a45fc). Degeneracy guard mirrors P2-7 (`insufficient_real_test` below
+  `MIN_REAL_TEST_RARE=10`).
+- **Honest reads baked in:** `recovered > 1` is **flagged, not celebrated**, with a
+  pointer to the privacy min-distance (high recovery + low min-distance =
+  memorization). TSTR needs raw real test rows, so it is a producer/auditor-side
+  metric — **not** recomputable from the audit bundle alone (consistent with the
+  disclosure policy).
+- **Observed (verify, don't assert):**
+  - *metric invariants:* perfect surrogate (synth = real-train) → recovered ROC
+    **1.0** exactly; signal-free noise surrogate → **0.53** (TSTR at chance ~0.5,
+    TRTR ~0.92). It discriminates.
+  - *end-to-end, leakage-free* on `examples/transactions.csv` (privacy=floored):
+    recovered ROC-AUC median **1.011**, PR-AUC **1.20**, over 3 models × held-out
+    600-row real test (18 rare) — and the report **flagged** it and printed
+    privacy min-distance **0.53σ** (healthy). Reads correctly as "recovers ~full
+    real performance AND provably not a copy."
+- **Scope note:** kept `generate()` untouched — TSTR is a separate entry point
+  (`evaluate_surrogate`), so the hot path is unchanged (no bit-identity impact) and
+  runtime isn't bloated by default. A future optimization can share the train-fold
+  synth with `measure_lift` so both come from one generation.
+- **Tests:** `tests/test_tstr.py` (5: perfect=1.0, noise<0.9, insufficient-guard,
+  end-to-end hold-out partition, JSON-serializable). Suite **161 → 167 green**.
+- **Spec status:** PRODUCT_SPEC §5.1 TSTR harness **[PLANNED] → [BUILT]**.

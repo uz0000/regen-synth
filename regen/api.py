@@ -1391,6 +1391,86 @@ def _auto_rare_def() -> RareEventDef:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# 2c. EVALUATE SURROGATE — TSTR (does the synthetic stand in for real?)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def evaluate_surrogate(
+    filepath: str,
+    label_col: str = "",
+    rare_def: Optional[RareEventDef] = None,
+    *,
+    test_size: float = 0.30,
+    seed: int = 42,
+    privacy: str = "none",
+    mode: str = "balanced",
+    auto: bool = False,
+    noise_scale: Optional[float] = None,
+    tstr_seeds=(42, 53, 61),
+) -> Dict[str, Any]:
+    """Measure how well a REGEN surrogate stands in for the real data (TSTR).
+
+    Leakage-free by construction (PRODUCT_SPEC §5.1): the real data is split into
+    a train fold and a **quarantined** real test fold; the surrogate is generated
+    from the **train fold only** (via generate() on a temp copy), so the generator
+    never sees the test rows; then a model panel is trained on the surrogate vs on
+    the real train fold and both are scored on the real test fold. Returns the
+    TSTR report (`recovered = train-synthetic / train-real` performance) plus the
+    surrogate's own shippable verdict.
+
+    Note: TSTR needs raw real test rows, so — like coverage / lift — it is NOT
+    recomputable from the audit bundle alone; it is a producer/auditor-side metric
+    (see docs/METHODS.md disclosure policy).
+    """
+    import os
+    import tempfile
+    from sklearn.model_selection import train_test_split
+    from engine.examiner import measure_tstr
+
+    rare_def = rare_def or _auto_rare_def()
+    result = ingest(filepath, label_col, rare_def)
+    label = result.label_col
+    real = pd.concat([result.normal_df, result.rare_df], ignore_index=True)
+    rare_val = (result.rare_df[label].mode().iloc[0]
+                if label and len(result.rare_df) else None)
+
+    # Stratified split so both folds keep the rare class. The test fold is never
+    # shown to the generator.
+    strat = (real[label] == rare_val).astype(int) if rare_val is not None else None
+    train_real, test_real = train_test_split(
+        real, test_size=test_size, random_state=seed, stratify=strat,
+    )
+
+    work = tempfile.mkdtemp(prefix="regen_tstr_")
+    train_csv = os.path.join(work, "train.csv")
+    train_real.to_csv(train_csv, index=False)
+
+    # Generate the surrogate from the TRAIN fold only (matched budget). This is the
+    # leakage-free surrogate a downstream user would actually train on.
+    s = generate(
+        train_csv, label_col=label, rare_def=rare_def, n_rows=len(train_real),
+        mode=mode, seed=seed, auto=auto, noise_scale=noise_scale,
+        privacy=privacy, out_dir=os.path.join(work, "gen"),
+    )
+    surrogate = pd.read_parquet(s["best_batch_path"])
+
+    report = measure_tstr(
+        surrogate, train_real.reset_index(drop=True), test_real.reset_index(drop=True),
+        label, result.field_dict, rare_value=rare_val, seeds=tuple(tstr_seeds),
+    )
+    return {
+        "tstr": report.to_dict(),
+        "n_train_real": len(train_real),
+        "n_test_real": len(test_real),
+        "surrogate": {
+            "passed": s["passed"],
+            "fidelity_score": s["fidelity"]["score"],
+            "privacy": (s["privacy"]["min_distance"] if s.get("privacy") else None),
+        },
+        "label_col": label,
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # 3. SCREEN — win-boundary predictor
 # ═══════════════════════════════════════════════════════════════════════════════
 

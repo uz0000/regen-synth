@@ -9,5 +9,7 @@ The Examiner never sees a batch that has not passed the Auditor gate.
 """
 
 from .detector import ExaminerConfig, measure_lift
+from .surrogate import measure_tstr, MIN_REAL_TEST_RARE, PANEL
 
-__all__ = ["ExaminerConfig", "measure_lift"]
+__all__ = ["ExaminerConfig", "measure_lift", "measure_tstr",
+           "MIN_REAL_TEST_RARE", "PANEL"]

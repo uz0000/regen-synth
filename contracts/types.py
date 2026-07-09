@@ -346,6 +346,49 @@ class LiftReport:
     status: str = "ok"
 
 
+# ── Surrogate quality: TSTR (Train on Synthetic, Test on Real) ────────────────
+
+@dataclass
+class TSTRReport:
+    """Does the synthetic surrogate *stand in* for real data?
+
+    Train a model on synthetic only (TSTR) and on real only (TRTR), score both on
+    a held-out REAL test set, and report the ratio `recovered = TSTR / TRTR` — how
+    much of the real-data performance the surrogate recovers. Reported across a
+    small model panel and averaged over seeds (no single lucky number). The gap
+    below 1.0 is expected — a perfect match would signal memorization, so read
+    `recovered` alongside the privacy min-distance.
+
+    status: "ok" | "insufficient_real_test" | "insufficient_train_classes".
+    per_model entries carry tstr/trtr ROC-AUC + PR-AUC and the per-metric
+    recovered ratios; the medians are the headline.
+    """
+    status: str = "ok"
+    metric: str = "roc_auc+pr_auc"
+    n_real_test: int = 0
+    n_real_test_rare: int = 0
+    n_synth_train: int = 0
+    seeds: List[int] = field(default_factory=list)
+    per_model: List[Dict[str, Any]] = field(default_factory=list)
+    recovered_roc_auc_median: Optional[float] = None
+    recovered_pr_auc_median: Optional[float] = None
+    note: str = ""
+
+    def to_dict(self) -> dict:
+        return {
+            "status": self.status,
+            "metric": self.metric,
+            "n_real_test": self.n_real_test,
+            "n_real_test_rare": self.n_real_test_rare,
+            "n_synth_train": self.n_synth_train,
+            "seeds": list(self.seeds),
+            "per_model": self.per_model,
+            "recovered_roc_auc_median": self.recovered_roc_auc_median,
+            "recovered_pr_auc_median": self.recovered_pr_auc_median,
+            "note": self.note,
+        }
+
+
 # ── Campaign output ───────────────────────────────────────────────────────────
 
 @dataclass

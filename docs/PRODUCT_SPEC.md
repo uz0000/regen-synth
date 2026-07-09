@@ -95,7 +95,7 @@ Two walls make the model work:
 | **Auditor — fidelity gate** [BUILT] | delivered batch vs real → pass/fail + stats | Stops a batch whose structure is broken from shipping. Measured on the **delivered** (post-floor) data, so the verdict describes what you actually get. |
 | **Auditor — conformance gate** [BUILT] | delivered batch vs ScenarioSpec → pass/fail | The delivered data must obey the *declared* contract (bounds, types, categories, id-uniqueness). Fails the batch like a fidelity failure. |
 | **Examiner — lift** [BUILT] | real + synthetic → recall lift (leakage-free) | Measures the *augmentation* benefit honestly. Real only when baseline recall is low; **conditional, not the headline.** |
-| **TSTR harness** [PLANNED] | train-on-synth, test-on-real → recovered % | The **headline actionable metric**: does the surrogate stand in for real data, and by how much (with a stated model + CI)? This is what turns "trust me" into "here's the number." |
+| **TSTR harness** [BUILT] | train-on-synth, test-on-real → recovered % | The **headline actionable metric**: does the surrogate stand in for real data, and by how much? `measure_tstr` (model panel, ROC-AUC+PR-AUC, multi-seed) + leakage-free `evaluate_surrogate`. Turns "trust me" into "here's the number," paired with the privacy min-distance to catch memorization. |
 
 ### Assurance / control plane (configures + certifies + informs; no values)
 
@@ -142,7 +142,7 @@ The ScenarioSpec threads through all of it; the manifest persists it; replay rep
 
 ## 7. Build order (what to add, in what sequence)
 
-1. **TSTR harness** — the metric everything references. [PLANNED]
+1. **TSTR harness** — the metric everything references. **[BUILT]** (`measure_tstr` + `evaluate_surrogate`; `tests/test_tstr.py`)
 2. **Intent → ScenarioSpec proposer** — extend the advisory layer so a non-expert can draft a run. [PARTIAL]
 3. **Decision-support surface** — frontier + diagnosis + recommend-with-override. [PLANNED]
 4. **Certified-surrogate demo** — two-party clean-room (producer emits package; a party who never saw the real data trains + `verify`s). [PLANNED]
