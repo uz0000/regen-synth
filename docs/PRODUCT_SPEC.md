@@ -145,7 +145,7 @@ The ScenarioSpec threads through all of it; the manifest persists it; replay rep
 1. **TSTR harness** — the metric everything references. **[BUILT]** (`measure_tstr` + `evaluate_surrogate`; `tests/test_tstr.py`)
 2. **Intent → ScenarioSpec proposer** — a non-expert drafts a run from a plain-language goal. **[BUILT]** (`propose_scenario`/`draft_scenario`; CLI `regen propose`; `tests/test_scenario_proposal.py`)
 3. **Decision-support surface** — frontier + diagnosis + recommend-with-override. **[BUILT]** (`explore_options`; CLI `regen explore`; `tests/test_explore.py`)
-4. **Certified-surrogate demo** — two-party clean-room (producer emits package; a party who never saw the real data trains + `verify`s). [PLANNED]
+4. **Certified-surrogate demo** — two-party clean-room (producer emits package; consumer trains + `verify`s without the real data). **[BUILT]** (`examples/certified_surrogate_demo.py`; `tests/test_cleanroom_demo.py`)
 5. **Closed-loop repair** — *only if* step 2's single shot underperforms, and only with uncertainty-aware metrics + human-approved final spec + the boundary intact. The prior "agent runtime" was removed for failing this bar; a new one must clear it. [DEFERRED]
 
 ## 8. Guardrails every new piece must pass

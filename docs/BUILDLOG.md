@@ -619,3 +619,27 @@ tradeoff, let the human decide.
 - **Tests:** `tests/test_explore.py` (6: diagnosis shippable/floored-low-cov/
   none-low-cov/correlation, frontier surfaces+recommends, returns-options-not-
   auto-commit). `generate()` bit-identical (`40933a2b`). Spec §5.3 → **[BUILT]**.
+
+---
+
+## Session 2026-07-09 (cont.) — §5.5 Certified-surrogate clean-room demo
+
+Ties the whole system into one showcase (and the last non-deferred build item).
+
+- **`examples/certified_surrogate_demo.py`** — stages the two-party story:
+  PRODUCER quarantines a real test slice, generates a leakage-free surrogate from
+  the train fold, and emits the data package (bundle); CONSUMER (never sees real
+  data) runs `regen verify` and trains a model on the surrogate alone;
+  AUDITOR (holds the real test slice) measures TSTR. Headline artifacts: **TSTR +
+  VERIFIED**, read against the privacy min-distance.
+- **Observed:** transactions → package emitted (floored, 0.53σ, 0 verbatim);
+  consumer `verify` → **VERIFIED** (3 stats + 3 hashes); auditor TSTR recovers
+  **101% ROC-AUC / 122% PR-AUC** — flagged suspicious and cross-checked against
+  the healthy 0.53σ distance (genuine, not memorization). The real data never moved.
+- **Tests:** `tests/test_cleanroom_demo.py` (1 smoke: runs end-to-end on a fixture,
+  asserts the three roles + VERIFIED + TSTR appear). Spec build-order #4 → **[BUILT]**.
+
+### Phase-2 status
+Build order 1–4 (TSTR · proposer · decision-support · clean-room demo) are **[BUILT]**.
+#5 closed-loop repair stays **[DEFERRED]** — build only if the single-shot proposer
+demonstrably underperforms, with anti-Goodhart discipline + human-approved final spec.
