@@ -165,6 +165,7 @@ def _run_one_pass(
     privacy: str = "none",
     delta: float = 0.5,
     diagnostics: Optional[Dict[str, Any]] = None,
+    with_lift: bool = True,
 ):
     """Run one full generation pass: Prior → Scout → Amplifier → Auditor → Examiner.
 
@@ -208,9 +209,13 @@ def _run_one_pass(
         )
         return batch
 
+    # Measuring lift costs a second (train-fold) generation. Callers that only
+    # want the delivered batch (e.g. evaluate_surrogate, which measures TSTR
+    # separately) pass with_lift=False to skip it — the delivered batch is
+    # unaffected (bit-identical), only summary["lift"] becomes None.
     lift = (
         measure_lift(result, exam_cfg, generate_synth_fn=_gen_from_train)
-        if report.overall_passed else None
+        if (with_lift and report.overall_passed) else None
     )
     return amp_df, report, lift, target_region
 
@@ -840,6 +845,7 @@ def generate(
     accept_contract: bool = False,
     semantics_caller=None,
     semantics_config=None,
+    with_lift: bool = True,
 ) -> Dict[str, Any]:
     """The simple primary path: generate a synthetic *dataset* as a CSV-ready batch.
 
@@ -991,7 +997,7 @@ def generate(
     rare_df_synth, rare_report, lift, target_region = _run_one_pass(
         result, prior_cfg, amp_cfg, aud_cfg, exam_cfg, scout_cfg,
         final_seed, n_rare, result.label_col, rare_def, [],
-        privacy=privacy, delta=delta, diagnostics=gen_diag,
+        privacy=privacy, delta=delta, diagnostics=gen_diag, with_lift=with_lift,
     )
 
     # 3b. Normal part: grounded sampling on the normal covariate support, gated
@@ -1450,6 +1456,7 @@ def evaluate_surrogate(
         train_csv, label_col=label, rare_def=rare_def, n_rows=len(train_real),
         mode=mode, seed=seed, auto=auto, noise_scale=noise_scale,
         privacy=privacy, out_dir=os.path.join(work, "gen"),
+        with_lift=False,   # TSTR is measured separately — skip the redundant lift generation
     )
     surrogate = pd.read_parquet(s["best_batch_path"])
 

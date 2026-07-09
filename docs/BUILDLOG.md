@@ -643,3 +643,22 @@ Ties the whole system into one showcase (and the last non-deferred build item).
 Build order 1–4 (TSTR · proposer · decision-support · clean-room demo) are **[BUILT]**.
 #5 closed-loop repair stays **[DEFERRED]** — build only if the single-shot proposer
 demonstrably underperforms, with anti-Goodhart discipline + human-approved final spec.
+
+---
+
+## Session 2026-07-09 (cont.) — API surface + TSTR optimization
+
+- **Server API** — added FastAPI endpoints for the new capabilities so the server
+  matches the CLI: `POST /api/doctor` (preflight), `POST /api/propose` (draft a
+  ScenarioSpec from a goal, advisory), `POST /api/explore` (tradeoff frontier),
+  `POST /api/tstr` (leakage-free surrogate quality), and `GET
+  /api/campaign/{run_id}/verify` (independently recompute a produced bundle).
+  `tests/test_server.py::TestNewEndpoints` (5) via `TestClient`.
+- **TSTR optimization** — `evaluate_surrogate` → `generate()` was doing a second,
+  redundant train-fold generation for the internal lift it never uses. Added
+  `with_lift: bool = True` to `generate()`/`_run_one_pass` (default preserves
+  behavior); `evaluate_surrogate` now calls `with_lift=False`. **Delivered batch
+  bit-identical** (`40933a2b`); only `summary["lift"]` becomes None when skipped.
+  `evaluate_surrogate` on transactions **~13s → 7.2s** (≈ halved).
+- **Verified:** default `generate` bit-identical + lift intact; `with_lift=False`
+  same batch, no lift; new-endpoint + lift/reproducibility/tstr subsets green.

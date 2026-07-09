@@ -114,6 +114,39 @@ class GenerateRequest(BaseModel):
     accept_contract: bool = False
 
 
+class DoctorRequest(BaseModel):
+    """Preflight: is the dataset in the supported envelope?"""
+    label_col: str = ""
+    rare_def: Optional[RareEventDefModel] = None
+
+
+class ProposeRequest(BaseModel):
+    """Draft a ScenarioSpec from a plain-language goal (advisory, editable)."""
+    goal: str = ""
+    label_col: str = ""
+    rare_def: Optional[RareEventDefModel] = None
+    n_rows: int = 300
+    seed: int = 42
+
+
+class ExploreRequest(BaseModel):
+    """The privacy↔fidelity tradeoff frontier for the human to choose from."""
+    label_col: str = ""
+    rare_def: Optional[RareEventDefModel] = None
+    deltas: list[float] = [0.3, 0.5, 0.8]
+    n_rows: int = 300
+    seed: int = 42
+
+
+class TSTRRequest(BaseModel):
+    """Surrogate quality: how much real performance does a model trained only on
+    the surrogate recover (leakage-free)?"""
+    label_col: str = ""
+    rare_def: Optional[RareEventDefModel] = None
+    privacy: str = "none"
+    seed: int = 42
+
+
 class HealthResponse(BaseModel):
     status: str
     version: str
@@ -305,6 +338,75 @@ async def screen_data(req: ScreenRequest):
     return result.to_dict()
 
 
+def _latest_upload() -> str:
+    uploads = sorted(DATA_DIR.glob("upload_*"), key=lambda p: p.stat().st_mtime, reverse=True)
+    if not uploads:
+        raise HTTPException(status_code=404,
+                            detail="No uploaded dataset found. Upload first via /api/ingest.")
+    return str(uploads[0])
+
+
+@app.post("/api/doctor")
+async def doctor_data(req: DoctorRequest):
+    """Preflight the latest upload against the supported envelope (before generating)."""
+    from regen.api import preflight
+    try:
+        return preflight(_latest_upload(), label_col=req.label_col,
+                         rare_def=_rare_def_from_model(req.rare_def))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Doctor failed: {str(e)}")
+
+
+@app.post("/api/propose")
+async def propose_scenario_endpoint(req: ProposeRequest):
+    """Draft a ScenarioSpec from a plain-language goal (advisory; user reviews/edits)."""
+    from regen.api import draft_scenario
+    try:
+        draft, proposal = draft_scenario(
+            _latest_upload(), label_col=req.label_col,
+            rare_def=_rare_def_from_model(req.rare_def),
+            goal=req.goal, n_rows=req.n_rows, seed=req.seed)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Propose failed: {str(e)}")
+    return {"scenario": draft.to_dict(), "yaml": draft.to_yaml(),
+            "drafted_by": draft.provenance.get("drafted_by"),
+            "model_used": proposal is not None}
+
+
+@app.post("/api/explore")
+async def explore_endpoint(req: ExploreRequest):
+    """The privacy↔fidelity tradeoff frontier — options + recommend-with-override."""
+    from regen.api import explore_options
+    try:
+        return explore_options(_latest_upload(), label_col=req.label_col,
+                               rare_def=_rare_def_from_model(req.rare_def),
+                               deltas=tuple(req.deltas), n_rows=req.n_rows, seed=req.seed)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Explore failed: {str(e)}")
+
+
+@app.post("/api/tstr")
+async def tstr_endpoint(req: TSTRRequest):
+    """Surrogate quality (TSTR): leakage-free train-on-synthetic / test-on-real."""
+    from regen.api import evaluate_surrogate
+    if req.privacy not in ("none", "floored"):
+        raise HTTPException(status_code=400, detail="privacy must be 'none' or 'floored'")
+    try:
+        return evaluate_surrogate(_latest_upload(), label_col=req.label_col,
+                                  rare_def=_rare_def_from_model(req.rare_def),
+                                  privacy=req.privacy, seed=req.seed)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"TSTR failed: {str(e)}")
+
+
 @app.post("/api/campaign")
 async def run_campaign_endpoint(req: CampaignRequest):
     """Run a full multi-pass REGEN amplification campaign."""
@@ -458,6 +560,20 @@ async def download_manifest(run_id: str):
         media_type="application/json",
         headers={"Content-Disposition": f"attachment; filename=regen_manifest_{run_id}.json"},
     )
+
+
+@app.get("/api/campaign/{run_id}/verify")
+async def verify_bundle_endpoint(run_id: str):
+    """Independently recompute a produced batch's reported statistics from its
+    bundle (integrity + values), so a third party can check the certificate."""
+    from regen.audit_bundle import verify_bundle
+    run_dir = CAMPAIGN_DIR / run_id
+    if not (run_dir / "manifest.json").exists():
+        raise HTTPException(status_code=404, detail=f"No audit bundle for {run_id}.")
+    try:
+        return verify_bundle(str(run_dir))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Verify failed: {str(e)}")
 
 
 @app.get("/api/campaign/{run_id}/preview")

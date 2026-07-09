@@ -90,3 +90,47 @@ class TestCampaignEndpointPrivacy:
             "n_rows": 60, "max_passes": 1, "privacy": "bogus",
         })
         assert r.status_code == 400
+
+
+class TestNewEndpoints:
+    def test_doctor(self, client):
+        _upload(client)
+        r = client.post("/api/doctor", json={"label_col": "is_fraud",
+                        "rare_def": {"mode": "label", "label_value": 1}})
+        assert r.status_code == 200, r.text
+        assert "ok_to_generate" in r.json() and "checks" in r.json()
+
+    def test_propose(self, client):
+        _upload(client)
+        r = client.post("/api/propose", json={"label_col": "is_fraud", "goal": "fraud detector",
+                        "rare_def": {"mode": "label", "label_value": 1}, "n_rows": 200})
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["scenario"]["intent"]["label_col"] == "is_fraud"
+        assert "yaml" in body and body["drafted_by"] == "structural"   # offline in tests
+
+    def test_explore(self, client):
+        _upload(client)
+        r = client.post("/api/explore", json={"label_col": "is_fraud",
+                        "rare_def": {"mode": "label", "label_value": 1},
+                        "deltas": [0.5], "n_rows": 150})
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert len(body["options"]) == 2 and "recommended" in body
+
+    def test_verify_a_produced_bundle(self, client):
+        _upload(client)
+        g = client.post("/api/generate", json={"label_col": "is_fraud", "n_rows": 150,
+                        "auto": False, "seed": 1, "privacy": "floored"})
+        assert g.status_code == 200, g.text
+        run_id = g.json()["run_id"]
+        v = client.get(f"/api/campaign/{run_id}/verify")
+        assert v.status_code == 200, v.text
+        assert v.json()["passed"] is True
+
+    def test_tstr(self, client):
+        _upload(client)
+        r = client.post("/api/tstr", json={"label_col": "is_fraud",
+                        "rare_def": {"mode": "label", "label_value": 1}, "privacy": "none"})
+        assert r.status_code == 200, r.text
+        assert "tstr" in r.json() and "recovered_roc_auc_median" in r.json()["tstr"]
