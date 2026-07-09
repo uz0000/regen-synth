@@ -46,6 +46,8 @@ def main():
         _cmd_run(args)
     elif args.command == "generate":
         _cmd_generate(args)
+    elif args.command == "propose":
+        _cmd_propose(args)
     elif args.command == "doctor":
         _cmd_doctor(args)
     elif args.command == "verify":
@@ -163,6 +165,24 @@ def _build_parser() -> argparse.ArgumentParser:
                             "REGEN_SEMANTICS_* env; offline → Sources 1+2 only.")
     gen_p.add_argument("--json", action="store_true", help="Output summary as JSON")
     gen_p.set_defaults(command="generate")
+
+    # ── regen propose ─────────────────────────────────────────────────────────
+    propose_p = sub.add_parser("propose", help="Draft a ScenarioSpec YAML from a plain-language goal")
+    propose_p.add_argument("data", type=str, help="Path to input data (CSV/JSON/Parquet)")
+    propose_p.add_argument("--goal", type=str, default="",
+                           help="Plain-language description of what you want (drives the draft)")
+    propose_p.add_argument("--label", type=str, default="",
+                           help="Label column (auto-detect if omitted)")
+    propose_p.add_argument("--rare-mode", type=str, default="label",
+                           choices=["label", "percentile", "imbalance_ratio"])
+    propose_p.add_argument("--rare-value", type=str, default=None)
+    propose_p.add_argument("--percentile", type=float, default=0.05)
+    propose_p.add_argument("--imbalance-ratio", type=float, default=0.01)
+    propose_p.add_argument("--n-rows", type=int, default=300)
+    propose_p.add_argument("--seed", type=int, default=42)
+    propose_p.add_argument("--out", type=str, default=None,
+                           help="Write the draft ScenarioSpec YAML here (else print to stdout)")
+    propose_p.set_defaults(command="propose")
 
     # ── regen doctor ────────────────────────────────────────────────────────
     doctor_p = sub.add_parser("doctor", help="Preflight a dataset against the supported envelope")
@@ -391,6 +411,35 @@ def _print_summary(result, out_dir: Path):
         df = pd.read_parquet(result.best_batch_path)
         print(f"    {len(df)} rows, {len(df.columns)} columns")
     print("=" * 62)
+
+
+# ── Command: propose ─────────────────────────────────────────────────────────
+
+def _cmd_propose(args):
+    """Draft a ScenarioSpec from a plain-language goal for the user to review/edit."""
+    from regen.api import draft_scenario
+    rare_def = None if (args.rare_mode == "label" and args.rare_value is None) \
+        else _build_rare_def(args)
+    try:
+        draft, proposal = draft_scenario(
+            args.data, label_col=args.label, rare_def=rare_def,
+            goal=args.goal, n_rows=args.n_rows, seed=args.seed,
+        )
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    yaml_text = draft.to_yaml()
+    if args.out:
+        Path(args.out).write_text(yaml_text)
+        print(f"[regen] wrote draft ScenarioSpec → {args.out}", file=sys.stderr)
+    src = "model + structural" if proposal is not None else "structural only (no model configured)"
+    print(f"[regen] drafted from: {src}", file=sys.stderr)
+    print(f"[regen] review/edit, then: regen generate {args.data} --scenario "
+          f"{args.out or '<saved>.yaml'}", file=sys.stderr)
+    if not args.out:
+        print()
+        print(yaml_text)
 
 
 # ── Command: doctor ────────────────────────────────────────────────────────

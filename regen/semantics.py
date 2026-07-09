@@ -183,6 +183,127 @@ def _parse_columns(raw: str) -> List[ColumnSemantics]:
     return out
 
 
+# ── Full-scenario proposal (intent + gates + columns) — §5.2 ──────────────────
+
+_SCENARIO_PROMPT = (
+    "You are configuring a synthetic-data run. Given ONLY this column profile "
+    "(no raw rows) and the user's goal, return JSON with three keys:\n"
+    "  intent: {task (one of ['detector_training','data_sharing','benchmarking',"
+    "'exploration']), label_col (a column name or ''), rare_mode "
+    "(['label','percentile','imbalance_ratio']), rare_value, percentile, tail "
+    "(['lower','upper']), rare_ratio (0-1 or null), focus_features (list of column "
+    "names), mode (['faithful','balanced','boost'])}\n"
+    "  gates: {privacy (['floored','none']), delta (0-2)}\n"
+    "  columns: list of {name, role, dtype, unit, min, max, integer, notes}\n"
+    "Propose only what the profile + goal support; never invent data values. "
+    "Bounds must contain the observed range. Goal + profile:\n"
+)
+
+
+def propose_scenario(
+    ingest,
+    goal: str = "",
+    *,
+    n_rows: int = 300,
+    seed: int = 42,
+    config: Optional[SemanticsConfig] = None,
+    caller: Optional[Callable[[str, Dict[str, Any], SemanticsConfig], str]] = None,
+):
+    """Draft a full ScenarioSpec from a plain-language goal + the schema profile.
+
+    Returns (draft_spec, proposal_or_None). Always yields a **valid, editable**
+    draft: a structural baseline (columns from the data + safe default intent/
+    gates) that a model proposal, when available, refines on top. Offline / no key
+    / model error → the structural baseline alone (never blocks). The draft is a
+    *suggestion for the user to review and edit* — it is not auto-committed and is
+    only vetted against the data when it is later passed to `generate()`.
+    """
+    from contracts.scenario import (
+        ScenarioSpec, ScenarioIntent, ScenarioGates, columns_from_field_dict, TASKS,
+    )
+
+    fd = ingest.field_dict
+    label = ingest.label_col
+    feat_names = [c for c in fd if c != label]
+
+    # Structural baseline (Sources 1 — always valid, always available).
+    draft = ScenarioSpec(
+        columns=columns_from_field_dict(fd, label),
+        intent=ScenarioIntent(label_col=label, n_rows=n_rows, seed=seed),
+        gates=ScenarioGates(),  # privacy="floored", delta=0.5 defaults
+        notes=(f"Goal: {goal}" if goal else ""),
+        provenance={"drafted_by": "structural"},
+    )
+
+    config = config or SemanticsConfig.from_env()
+    if caller is None and not config.enabled():
+        logger.info("Scenario proposer: model unavailable — structural draft only.")
+        return draft, None
+
+    payload = build_model_payload(ingest, config.samples)
+    payload["goal"] = goal
+    key = _schema_hash(payload)
+    prompt = _SCENARIO_PROMPT + json.dumps(payload, default=str)
+    call = caller or _openai_compatible_call
+    try:
+        raw = call(prompt, payload, config)
+        data = json.loads(raw)
+    except Exception as exc:                       # never block
+        logger.warning("Scenario proposal failed (%s) — structural draft only.", exc)
+        return draft, None
+
+    # Apply the model's proposal onto the baseline, VALIDATED (closed vocabularies,
+    # real columns only) — invalid fields fall back silently-to-default but are NOT
+    # obeyed. Columns keep source="model"; the vetting gate re-checks them against
+    # the data when generate() runs.
+    _apply_intent(draft.intent, data.get("intent", {}), fd, label, feat_names, TASKS)
+    _apply_gates(draft.gates, data.get("gates", {}))
+    for c in _parse_columns(raw):
+        if c.name in draft.columns:
+            draft.columns[c.name] = c
+    draft.provenance["drafted_by"] = "model+structural"
+    draft.provenance["model_id"] = config.model or "injected"
+
+    proposal = ModelProposal(
+        columns=list(draft.columns.values()), raw_text=raw, prompt=prompt,
+        model_id=(config.model or "injected"), payload_sent=payload, proposal_id=key,
+    )
+    return draft, proposal
+
+
+def _apply_intent(intent, prop: Dict[str, Any], fd, label, feat_names, TASKS) -> None:
+    """Apply a model's proposed intent, honoring only valid values (closed
+    vocabularies + real column names); anything else is ignored (fallback kept)."""
+    if prop.get("task") in TASKS:
+        intent.task = prop["task"]
+    if prop.get("label_col") in fd:                       # must be a real column
+        intent.label_col = prop["label_col"]
+    if prop.get("rare_mode") in ("label", "percentile", "imbalance_ratio"):
+        intent.rare_mode = prop["rare_mode"]
+    if prop.get("rare_value") is not None:
+        intent.rare_value = prop["rare_value"]
+    if isinstance(prop.get("percentile"), (int, float)) and 0 < prop["percentile"] < 1:
+        intent.percentile = float(prop["percentile"])
+    if prop.get("tail") in ("lower", "upper"):
+        intent.tail = prop["tail"]
+    rr = prop.get("rare_ratio")
+    if isinstance(rr, (int, float)) and 0 < rr < 1:
+        intent.rare_ratio = float(rr)
+    if prop.get("mode") in ("faithful", "balanced", "boost"):
+        intent.mode = prop["mode"]
+    ff = prop.get("focus_features")
+    if isinstance(ff, list):
+        intent.focus_features = [c for c in ff if c in feat_names]   # real columns only
+
+
+def _apply_gates(gates, prop: Dict[str, Any]) -> None:
+    if prop.get("privacy") in ("floored", "none"):
+        gates.privacy = prop["privacy"]
+    d = prop.get("delta")
+    if isinstance(d, (int, float)) and 0 < d <= 2:
+        gates.delta = float(d)
+
+
 def _openai_compatible_call(prompt: str, payload: Dict[str, Any],
                             config: SemanticsConfig) -> str:
     """Default caller: POST to an OpenAI-compatible /chat/completions endpoint via

@@ -1471,6 +1471,36 @@ def evaluate_surrogate(
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# 2d. DRAFT SCENARIO — intent → ScenarioSpec (non-expert entry, §5.2)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def draft_scenario(
+    filepath: str,
+    label_col: str = "",
+    rare_def: Optional[RareEventDef] = None,
+    *,
+    goal: str = "",
+    n_rows: int = 300,
+    seed: int = 42,
+    config=None,
+    caller=None,
+):
+    """Draft a ScenarioSpec from a plain-language goal + the data profile (§5.2).
+
+    Returns (draft_spec, proposal_or_None). Always a **valid, editable** draft: a
+    structural baseline the (optional) advisory model refines. The model *informs*;
+    it never auto-commits — the user reviews/edits the draft, then passes it to
+    `generate(scenario=...)`, where its columns are vetted against the data. Offline
+    → the structural draft alone. `caller` is injectable for testing.
+    """
+    from regen.semantics import propose_scenario
+    rare_def = rare_def or _auto_rare_def()
+    result = ingest(filepath, label_col, rare_def)
+    return propose_scenario(result, goal=goal, n_rows=n_rows, seed=seed,
+                            config=config, caller=caller)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # 3. SCREEN — win-boundary predictor
 # ═══════════════════════════════════════════════════════════════════════════════
 

@@ -568,3 +568,29 @@ we removed elsewhere).
 - **Method note:** worked from the dependency map (blast-radius grep + import sites +
   package `__init__`s) so every reference was caught; the human-readable system map
   (`docs/PRODUCT_SPEC.md`, `docs/COMPONENT_GUIDE.md`) was updated in step.
+
+---
+
+## Session 2026-07-09 (cont.) — §5.2 Intent → ScenarioSpec proposer
+
+Lets a non-expert draft a run from a plain-language goal; the model *informs*,
+the human reviews/edits, the engine still grounds every value.
+
+- **`regen/semantics.py::propose_scenario`** — extends the advisory layer from
+  column-semantics to a **full ScenarioSpec draft** (intent + gates + columns).
+  Always returns a **valid, editable** draft: a structural baseline the model
+  refines. Every model-proposed field is **validated** (closed vocabularies, real
+  column names, in-range numbers); invalid fields are ignored, never obeyed
+  (`_apply_intent`/`_apply_gates`). Offline / no key / error → structural draft
+  alone (never blocks). Metadata only — no value written.
+- **`regen.api.draft_scenario`** (filepath wrapper) + **CLI `regen propose <data>
+  --goal "…" [--out spec.yaml]`** — prints/saves the draft YAML for the user to
+  review/edit, then `regen generate --scenario <saved>`. Not auto-committed.
+- **Observed:** offline `regen propose` → valid structural draft (drafted_by
+  structural). Injected-caller draft applies a valid proposal (task/rare_ratio/
+  mode/gates), **drops** invalid fields (bad task/label/ratio/privacy → defaults,
+  non-existent focus feature dropped), and the draft round-trips through YAML and
+  drives `generate()`. `generate()` bit-identical (`40933a2b`) — new entry point,
+  hot path untouched.
+- **Tests:** `tests/test_scenario_proposal.py` (5, offline). **Spec §5.2
+  [PARTIAL] → [BUILT].**

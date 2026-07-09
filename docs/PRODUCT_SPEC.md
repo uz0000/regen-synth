@@ -104,7 +104,7 @@ Two walls make the model work:
 | **ScenarioSpec** [BUILT] | the whole use case → one typed object | The **spine**: single source of truth for a run; persisted in the manifest so a batch replays bit-for-bit *including its use-case context*, with zero model calls. The unit a user saves/shares/re-runs. |
 | **Structural profiler** [BUILT] | real sample → deterministic column profile | Source 1 of the contract: dtype/cardinality/bounds/roles inferred from data, always available, no model needed. |
 | **Vetting gate** [BUILT] | structural + researcher + (optional) model proposals → vetted ScenarioSpec + verdicts | Lets *context* parameterize the math under fixed rules (authority: researcher > structural > model; a proposal that contradicts the data is dropped + logged). This is how the system extracts situation without ever violating the invariants. |
-| **LLM proposer (`regen/semantics.py`)** [PARTIAL] | profile + plain-language intent → a *draft* ScenarioSpec (metadata only) | Lowers the expertise barrier. One cached call, vetted by the gate, **shown to the user to edit** — never auto-committed. Offline → structural+researcher only. |
+| **LLM proposer (`regen/semantics.py`)** [BUILT] | profile + plain-language goal → a *draft* ScenarioSpec (intent + gates + columns, metadata only) | Lowers the expertise barrier. `propose_scenario` / `regen.api.draft_scenario` / CLI `regen propose`: one cached call, all fields validated (invalid ones ignored, never obeyed), **shown to the user to edit** — never auto-committed. Offline → a valid structural draft. |
 | **Explanation (`explanation.json`)** [BUILT] | report objects → a computed account | Legibility: every gate's statistic + threshold + verdict, per-column provenance/mechanism, feature informativeness — all *computed*, cited to versioned metric IDs, never narrated by a model. |
 | **Audit bundle + `regen verify`** [BUILT] | the run dir → independent recomputation | The moat: a third party who doesn't trust you recomputes every reported statistic from the bundle (integrity-hashed) and it passes or names the discrepancy. Turns claims into checkable facts. |
 | **Preflight (`regen doctor`)** [BUILT] | dataset → envelope verdicts | Refuses out-of-envelope shapes *before* a run (time-series, too-few-rare, all-categorical caveats), so failures are named up front, not discovered after. |
@@ -143,7 +143,7 @@ The ScenarioSpec threads through all of it; the manifest persists it; replay rep
 ## 7. Build order (what to add, in what sequence)
 
 1. **TSTR harness** — the metric everything references. **[BUILT]** (`measure_tstr` + `evaluate_surrogate`; `tests/test_tstr.py`)
-2. **Intent → ScenarioSpec proposer** — extend the advisory layer so a non-expert can draft a run. [PARTIAL]
+2. **Intent → ScenarioSpec proposer** — a non-expert drafts a run from a plain-language goal. **[BUILT]** (`propose_scenario`/`draft_scenario`; CLI `regen propose`; `tests/test_scenario_proposal.py`)
 3. **Decision-support surface** — frontier + diagnosis + recommend-with-override. [PLANNED]
 4. **Certified-surrogate demo** — two-party clean-room (producer emits package; a party who never saw the real data trains + `verify`s). [PLANNED]
 5. **Closed-loop repair** — *only if* step 2's single shot underperforms, and only with uncertainty-aware metrics + human-approved final spec + the boundary intact. The prior "agent runtime" was removed for failing this bar; a new one must clear it. [DEFERRED]
