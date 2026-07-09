@@ -542,3 +542,29 @@ can check. Metric first, as the spec's build order requires.
 - **Tests:** `tests/test_tstr.py` (5: perfect=1.0, noise<0.9, insufficient-guard,
   end-to-end hold-out partition, JSON-serializable). Suite **161 → 167 green**.
 - **Spec status:** PRODUCT_SPEC §5.1 TSTR harness **[PLANNED] → [BUILT]**.
+
+---
+
+## Session 2026-07-09 (cont.) — Vocabulary pass (proprietary identity, honest prior art)
+
+Rename so the codebase reads as its own system, not a paper reimplementation —
+**without** dressing up standard math as invented (that would be the same overclaim
+we removed elsewhere).
+
+- **Code renames** (behavior-neutral): `ResidualModel`/"ResidualGP" → `TailCorrector`
+  (`engine/amplifier/residual_gp.py` → `tail_corrector.py`); `fit_residuals` /
+  `sample_residuals` → `fit_correction` / `sample_correction`; the Scout's "R-EPIG"
+  acronym → "targeting / gain score" (`engine/scout/repig.py` → `targeting.py`).
+  Role-names (Prior/Amplifier/Scout/Auditor/Examiner) already REGEN's own — kept.
+  All references updated across engine/regen/tests/benchmarks (grep-clean).
+- **Docs:** `INVARIANTS.md §2` "Research spine" (three-papers-parentage framing) →
+  **"Methods & prior art"** — names the standard techniques (Gaussian copula, GP+ARD,
+  TVD/Wasserstein, TSTR, k-anonymity…), states the composition + assurance layer as
+  the original part, and keeps the papers as *reference/inspiration only*. Current
+  docs swept for the old symbol names; historical docs (AUDIT/BUILDLOG/RESULTS/
+  SEMANTIC_FIDELITY) left as-is.
+- **Verified:** benchmark scripts still compile; full suite **167 green**; `generate()`
+  **bit-identical** (row-hash `40933a2b`) — pure rename, zero behavior change.
+- **Method note:** worked from the dependency map (blast-radius grep + import sites +
+  package `__init__`s) so every reference was caught; the human-readable system map
+  (`docs/PRODUCT_SPEC.md`, `docs/COMPONENT_GUIDE.md`) was updated in step.

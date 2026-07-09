@@ -675,7 +675,7 @@ def test_gaussian_prior_not_dominated_by_feature_scale():
 def test_amplifier_warns_when_underdetermined(caplog):
     """Few rare rows relative to feature dims → loud warning, not a silent fit."""
     import logging as _logging
-    from engine.amplifier.residual_gp import fit_residuals, AmplifierConfig
+    from engine.amplifier.tail_corrector import fit_correction, AmplifierConfig
     from engine.prior.grounded import fit_prior, PriorConfig
     from engine.ingest.loader import _build_field_dict
     from contracts.types import IngestResult, SchemaGraph
@@ -689,8 +689,8 @@ def test_amplifier_warns_when_underdetermined(caplog):
     ing = IngestResult(normal_df=norm, rare_df=rare, schema_graph=SchemaGraph(),
                        field_dict=_build_field_dict(full, "label"), label_col="label")
     prior = fit_prior(ing, PriorConfig(), np.random.default_rng(0))
-    with caplog.at_level(_logging.WARNING, logger="engine.amplifier.residual_gp"):
-        fit_residuals(ing, prior, AmplifierConfig())
+    with caplog.at_level(_logging.WARNING, logger="engine.amplifier.tail_corrector"):
+        fit_correction(ing, prior, AmplifierConfig())
     assert any("underdetermined" in r.message for r in caplog.records)
 
 

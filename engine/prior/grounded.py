@@ -114,7 +114,7 @@ class GaussianPrior:
 
     A class-conditional diagonal-Gaussian scorer. It captures the average-case
     structure of the normal class well and is intentionally weak in the tail —
-    which is precisely the prior's role. The Amplifier's ResidualGP corrects
+    which is precisely the prior's role. The Amplifier's TailCorrector corrects
     the tail.
     """
 
@@ -286,7 +286,7 @@ def generate_base_batch(
     REGEN amplifies rare events, so base rows are anchored on the rare-event
     covariate support (real rare rows) with Gaussian perturbation scaled to
     the rare support's own spread. This densifies the targeted region; the
-    Amplifier's ResidualGP then refines the tail values. When Scout supplies
+    Amplifier's TailCorrector then refines the tail values. When Scout supplies
     a target_region, generation is focused further within that region.
 
     Anchoring on real rare rows is grounded sampling, not invention — every
@@ -387,7 +387,7 @@ def generate_parametric_batch(
     real row, which was the strongest re-id signal.
 
     Returns a feature-only DataFrame in *encoded* space — the same contract as
-    ``generate_base_batch`` — so the downstream ResidualGP correction,
+    ``generate_base_batch`` — so the downstream TailCorrector tail correction,
     constraint layer, and categorical decode apply unchanged. The privacy
     δ-distance floor (engine.privacy) is enforced by the caller after any GP
     correction, against the full real set.

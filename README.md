@@ -68,14 +68,14 @@ Full results: [`benchmark/RESULTS_BREADTH.md`](benchmark/RESULTS_BREADTH.md)
 ## How It Works
 
 ```
-Scout (R-EPIG) → Prior → Amplifier (ResidualGP) → Auditor → Examiner
+Scout (targeting) → Prior → Amplifier (TailCorrector) → Auditor → Examiner
      ↑                                                     |
      └───────────── lift signal + explored memory ─────────┘
 ```
 
 1. **Scout** picks the most informative tail region (cross-pass memory avoids re-exploration)
 2. **Prior** generates a base batch anchored on real rare rows
-3. **Amplifier** corrects the tail via ResidualGP with ARD kernel
+3. **Amplifier** corrects the tail via TailCorrector with ARD kernel
 4. **Auditor** gates the batch against real data statistics (hard reject on failure)
 5. **Examiner** measures the lift and feeds back to Scout
 

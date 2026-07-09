@@ -127,7 +127,7 @@ def run_regen(
     from engine.ingest.loader import ingest as do_ingest
     from contracts.types import RareEventDef, RareMode
     from engine.prior import PriorConfig, fit_prior, generate_base_batch
-    from engine.amplifier import AmplifierConfig, fit_residuals, sample_residuals
+    from engine.amplifier import AmplifierConfig, fit_correction, sample_correction
     from engine.auditor import AuditorConfig, audit
     from engine.examiner import ExaminerConfig, measure_lift
 
@@ -138,12 +138,12 @@ def run_regen(
 
     prior = fit_prior(result, PriorConfig(), rng)
     amp = AmplifierConfig(max_features=max_features)
-    residual = fit_residuals(result, prior, amp)
+    residual = fit_correction(result, prior, amp)
 
     target = {}
     base = generate_base_batch(prior, n_rows, target, rng)
     rng2 = np.random.default_rng(seed)
-    _, _, X_res = sample_residuals(residual, base.values.astype(np.float64), rng2)
+    _, _, X_res = sample_correction(residual, base.values.astype(np.float64), rng2)
     amp_df = pd.DataFrame(base.values + X_res, columns=base.columns)
 
     # Set label to rare value

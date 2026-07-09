@@ -1,5 +1,5 @@
 """
-ResidualGP — active residual learning (R-Design).
+TailCorrector — active residual learning (R-Design).
 
 Core identity (Gao et al., R-Design):
     τ(x) = τ_o(x) + τ_δ(x)
@@ -51,7 +51,7 @@ class AmplifierConfig:
 # ── Fitted residual model ──────────────────────────────────────────────────────
 
 @dataclass
-class ResidualModel:
+class TailCorrector:
     _gp: GPy.models.GPRegression
     _feature_cols: List[str]
     _X_train: np.ndarray          # rare-event feature points (training set)
@@ -71,11 +71,11 @@ class ResidualModel:
 
 # ── Public API ─────────────────────────────────────────────────────────────────
 
-def fit_residuals(
+def fit_correction(
     ingest: IngestResult,
     prior: PriorModel,
     config: AmplifierConfig,
-) -> ResidualModel:
+) -> TailCorrector:
     """
     Compute residuals on rare events and fit a GP over them.
 
@@ -86,7 +86,7 @@ def fit_residuals(
     The GP uses an ARD (Automatic Relevance Determination) RBF kernel: each
     feature gets its own lengthscale. After fitting, the inverse-lengthscales
     give per-feature relevance — shorter lengthscale = more relevant to
-    rare-event deviation. This is the R-Design ResidualGP approach.
+    rare-event deviation. This is the R-Design TailCorrector approach.
 
     When config.max_features > 0, only the top-K features (by variance in the
     rare data) are used as GP inputs. This speeds the ARD kernel significantly
@@ -99,7 +99,7 @@ def fit_residuals(
         config: AmplifierConfig.
 
     Returns:
-        ResidualModel exposing .posterior(X).
+        TailCorrector exposing .posterior(X).
     """
     rare_df = ingest.rare_df
     feature_cols = prior._feature_cols
@@ -184,11 +184,11 @@ def fit_residuals(
 
     top5 = np.argsort(relevance)[::-1][:5]
     logger.info(
-        "ResidualGP fitted on %d rare rows, %d GP dims; top-5 feature indices: %s",
+        "TailCorrector fitted on %d rare rows, %d GP dims; top-5 feature indices: %s",
         len(X_gp), X_gp.shape[1], top5.tolist(),
     )
 
-    return ResidualModel(
+    return TailCorrector(
         _gp=gp,
         _feature_cols=feature_cols,
         _X_train=X_gp,
@@ -200,8 +200,8 @@ def fit_residuals(
     )
 
 
-def sample_residuals(
-    residual_model: ResidualModel,
+def sample_correction(
+    residual_model: TailCorrector,
     X_base: np.ndarray,
     rng: np.random.Generator,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:

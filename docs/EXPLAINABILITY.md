@@ -41,7 +41,7 @@ Per column: `role`, `source` (who set its semantics — structural / user / mode
 rationale — G-B rule 7).
 
 ### `scout`
-The chosen target region (feature band / percentile) and any scalar R-EPIG
+The chosen target region (feature band / percentile) and any scalar Scout targeting
 metadata the Scout recorded.
 
 ### `utility`

@@ -23,7 +23,7 @@ print(f"Satellite: {len(df)} rows, {int(df['Target'].sum())} anomalies")
 from engine.ingest.loader import ingest as do_ingest
 from contracts.types import RareEventDef, RareMode
 from engine.prior import PriorConfig, fit_prior, generate_base_batch
-from engine.amplifier import AmplifierConfig, fit_residuals, sample_residuals
+from engine.amplifier import AmplifierConfig, fit_correction, sample_correction
 from engine.auditor import AuditorConfig, audit
 from engine.examiner import ExaminerConfig, measure_lift
 from engine.scout import ScoutConfig, select_target
@@ -53,9 +53,9 @@ for seed in SEEDS:
         rng = np.random.default_rng(seed + pn)
         prior = fit_prior(result, prior_cfg, rng)
         base = generate_base_batch(prior, N_ROWS, target_region, rng)
-        residual = fit_residuals(result, prior, amp_cfg)
+        residual = fit_correction(result, prior, amp_cfg)
         rng2 = np.random.default_rng(seed + pn)
-        _, _, X_res = sample_residuals(residual, base.values.astype(np.float64), rng2)
+        _, _, X_res = sample_correction(residual, base.values.astype(np.float64), rng2)
         amp_df = pd.DataFrame(base.values + X_res, columns=base.columns)
         amp_df["Target"] = 1
         report = audit(result, amp_df, aud_cfg)

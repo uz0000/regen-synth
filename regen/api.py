@@ -241,7 +241,7 @@ def _generate_amp_batch(
     rare set after the GP correction. Campaign/screen leave privacy="none".
     """
     from engine.prior import fit_prior, generate_base_batch, generate_parametric_batch
-    from engine.amplifier import fit_residuals, sample_residuals
+    from engine.amplifier import fit_correction, sample_correction
     from engine.scout import select_target
     from engine.privacy import guard_against_duplicates
 
@@ -255,9 +255,9 @@ def _generate_amp_batch(
 
     # Prior + Amplifier are fit on the ingest data (not the generated batch)
     prior = fit_prior(result, prior_cfg, rng)
-    residual = fit_residuals(result, prior, amp_cfg)
+    residual = fit_correction(result, prior, amp_cfg)
 
-    # Scout: R-EPIG target selection. explored_points lets multi-pass runs
+    # Scout: Scout targeting target selection. explored_points lets multi-pass runs
     # down-weight already-mapped anchors so budget goes to new tail structure.
     # (In parametric/privacy mode Scout's fine sub-region targeting is carried by
     # the GP rather than anchor selection — the whole rare class is sampled.)
@@ -289,8 +289,8 @@ def _generate_amp_batch(
         base = generate_base_batch(prior, n_rows, target_region, rng,
                                    noise_scale=prior_cfg.noise_scale)
 
-    # Amplifier: ResidualGP tail correction (independent substream — see above)
-    _, _, X_res = sample_residuals(residual, base.values.astype(np.float64), rng_res)
+    # Amplifier: TailCorrector tail correction (independent substream — see above)
+    _, _, X_res = sample_correction(residual, base.values.astype(np.float64), rng_res)
     amp_df = pd.DataFrame(base.values + X_res, columns=base.columns)
 
     # NOTE: the privacy δ-distance floor is intentionally NOT applied here. The
@@ -538,7 +538,7 @@ def run_campaign(
         raise ValueError(f"delta must be in (0, 2] σ-units, got {delta!r}")
     from engine.ingest.loader import persist_ingest
     from engine.prior import PriorConfig, fit_prior, generate_base_batch
-    from engine.amplifier import AmplifierConfig, fit_residuals, sample_residuals
+    from engine.amplifier import AmplifierConfig, fit_correction, sample_correction
     from engine.auditor import AuditorConfig, audit
     from engine.examiner import ExaminerConfig, measure_lift
     from engine.scout import ScoutConfig, select_target
@@ -1518,7 +1518,7 @@ def screen(
         ScreenResult with recommendation, heterogeneity score, etc.
     """
     from engine.prior import PriorConfig, fit_prior, generate_base_batch
-    from engine.amplifier import AmplifierConfig, fit_residuals, sample_residuals
+    from engine.amplifier import AmplifierConfig, fit_correction, sample_correction
     from engine.auditor import AuditorConfig, audit
     from engine.examiner import ExaminerConfig, measure_lift
     from engine.scout import ScoutConfig, select_target

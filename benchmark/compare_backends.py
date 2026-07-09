@@ -14,7 +14,7 @@ import numpy as np
 from engine.ingest.loader import ingest as do_ingest
 from contracts.types import RareEventDef, RareMode
 from engine.prior import PriorConfig, fit_prior, generate_base_batch
-from engine.amplifier import AmplifierConfig, fit_residuals, sample_residuals
+from engine.amplifier import AmplifierConfig, fit_correction, sample_correction
 from engine.auditor import AuditorConfig, audit
 from engine.examiner import ExaminerConfig, measure_lift
 from engine.scout import ScoutConfig, select_target
@@ -42,10 +42,10 @@ for backend in ["gaussian", "pfn"]:
     print(f"  Prior fit: {time.time()-t0:.1f}s", flush=True)
 
     amp = AmplifierConfig(max_features=6)
-    residual = fit_residuals(result, prior, amp)
+    residual = fit_correction(result, prior, amp)
 
     base = generate_base_batch(prior, 300, {}, rng)
-    _, _, X_res = sample_residuals(residual, base.values.astype(np.float64), rng)
+    _, _, X_res = sample_correction(residual, base.values.astype(np.float64), rng)
     amp_df = pd.DataFrame(base.values + X_res, columns=base.columns)
     amp_df["Class"] = 0
 

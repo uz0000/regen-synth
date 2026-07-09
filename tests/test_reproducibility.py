@@ -5,7 +5,7 @@ Two independent runs with the same BatchManifest (same seed, same config,
 same schema hash) must produce bit-identical output DataFrames.
 
 This test exercises the full deterministic path:
-  seed_rng(manifest) → generate_base_batch → sample_residuals → combine
+  seed_rng(manifest) → generate_base_batch → sample_correction → combine
 
 No LLM or network calls are made.
 """

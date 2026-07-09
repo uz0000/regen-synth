@@ -32,22 +32,29 @@ This is the "fineprint discipline": deterministic core, narration layer on top, 
 
 ---
 
-## 2. Research spine
+## 2. Methods & prior art
 
-Three papers, three roles. The PDFs live in `docs/papers/`. Describe their ideas in your own words
-in code comments; do not paste paper text.
+REGEN **composes standard, well-understood techniques** into a verifiable pipeline.
+The individual math is not novel and is named as such; the original work is the
+composition + the assurance layer (contract, gates, explanation, `regen verify`).
+When you describe a method in code comments, name the standard technique — don't
+imply it was invented here, and don't paste external paper text.
 
-| Component        | Paper                                                        | Role in REGEN |
-|------------------|--------------------------------------------------------------|---------------|
-| Prior            | Empirical grounded sampling + class-conditional Gaussian density scorer (no learned generative model) | Generates the base batch by *grounded sampling* — real anchor rows + Gaussian noise scaled to the observed spread (continuous features only). Also fits a class-conditional Gaussian scorer `P(normal\|x)` that the Amplifier uses to weight residual relevance. Intentionally strong on the bulk, weak on the tail. Single-table; no relational/FK or temporal structure. |
-| Amplifier        | R-Design — active residual learning (R-EPIG, ResidualGP)     | Corrects the *tail*. Models the residual (gap between the prior's tail predictions and truth) because the residual is smoother and far cheaper to learn than regenerating the full distribution. |
-| Stylist (opt.)   | Structured semantic control                                  | Only if generating model-grounded narrated content (personas, attack-step text). Control vectors + drift penalty keep narration on-distribution. **Deferred — see §7.** |
+| Component | Method (standard) | Role in REGEN |
+|-----------|-------------------|---------------|
+| Prior     | empirical **grounded sampling** + a **mixed-data Gaussian copula** + a class-conditional **Gaussian Naive Bayes** density scorer | Generates the base batch grounded in the real marginals + correlations (never copying a real row). Also scores `P(normal\|x)` for the Amplifier. Strong on the bulk, weak on the tail. Single-table; no relational/FK or temporal structure. |
+| Amplifier | **Gaussian-process regression** with an **ARD kernel** (the `TailCorrector`, via GPy) | Corrects the *tail* by modeling the residual (gap between the prior's tail prediction and truth) — smoother and cheaper to learn than regenerating the whole distribution. |
+| Scout     | **active-learning acquisition** (information-gain–style targeting score) | Picks which rare region to synthesize next; scores a candidate pool + biases away from explored regions. (Incremental value unproven — optional, not a headline.) |
+| Auditor   | **TVD**, **Wasserstein-1**, **Pearson correlation**, coverage radius | Fidelity gate on the delivered batch. |
+| Examiner  | **RandomForest** lift (leakage-free) + **TSTR/TRTR** with **ROC-AUC/PR-AUC** | Detection lift (conditional) and surrogate quality (headline). |
+| Privacy   | σ-normalized **nearest-neighbour distance** floor (scipy `cKDTree`) + verbatim/**k-anonymity** guard | Near-copy re-identification floor. **NOT differential privacy.** |
 
-An earlier design proposed wrapping RDB-PFN / TabPFN (a Prior-Fitted Network) for
-relational schemas. That path was **removed** — REGEN is single-table, and grounded
-sampling plus the Amplifier's residual GP cover the need without it. Do not reintroduce
-a relational/PFN prior without a concrete relational requirement; if one appears, wrap
-(`https://github.com/MuLabPKU/RDBPFN`) rather than reimplement.
+Fuller mapping (method ↔ file ↔ why) and how to speak about it:
+`docs/COMPONENT_GUIDE.md`. The PDFs in `docs/papers/` are **reference/inspiration
+only** — REGEN implements standard techniques informed by them, not verbatim
+reimplementations. An earlier attempt wrapped a relational Prior-Fitted Network
+(RDB-PFN / TabPFN); it was **removed** (single-table only) — do not reintroduce a
+relational/PFN prior without a concrete relational requirement.
 
 ---
 
@@ -59,12 +66,12 @@ The system is a deterministic active-learning loop. There is no agent runtime an
 ```
 regen.api  (deterministic orchestration — sequences passes, gates batches, reports lift)
     Orchestrator   run_campaign(): runs the active-learning loop, owns pass sequencing
-    Scout          R-EPIG targeting: which rare region most improves the detector?
+    Scout          targeting: which rare region most improves the detector?
     Examiner       trains/evaluates the downstream detector, measures rare-event lift
 
 Deterministic engine (pure Python — produces all numbers)
     Prior          grounded-sampling base generator + P(normal|x) density scorer
-    Amplifier      ResidualGP correction over Scout's target region
+    Amplifier      TailCorrector — corrects the tail over Scout's target region
     Auditor        fidelity gate (marginal calibration, tail dependence, correlation structure)
 
 Entry points
@@ -119,7 +126,7 @@ Examiner measures detection lift
 
 - **Orchestrator** (`regen.api.run_campaign`) — sequences the loop, gates batches on the Auditor,
   tracks the best lift across passes, owns output. Computes nothing statistical beyond aggregation.
-- **Scout** — runs R-EPIG over a candidate pool, reads the last lift signal and the within-run memory
+- **Scout** — runs Scout targeting over a candidate pool, reads the last lift signal and the within-run memory
   of explored regions, emits a target (covariate region / event type / tail percentile). Picks the
   question; the engine answers it.
 - **Prior** — grounded-sampling generator. Given a Scout target, generates a base batch by drawing
@@ -127,7 +134,7 @@ Examiner measures detection lift
   spread. Also fits a class-conditional Gaussian scorer `P(normal|x)` consumed by the Amplifier. Strong
   on average-case, weak on the tail (that is the Amplifier's job). Single-table; not a learned or
   relational generative model.
-- **Amplifier** — ResidualGP. Corrects and densifies the targeted rare region; does not regenerate
+- **Amplifier** — TailCorrector. Corrects and densifies the targeted rare region; does not regenerate
   the whole distribution.
 - **Auditor** — hard gate (default). Checks the batch against reference statistics and rejects
   failures. A batch that looks plausible but breaks the real correlation structure is worse than no
@@ -136,7 +143,7 @@ Examiner measures detection lift
   precision lift on the tail. That number is Scout's reward signal.
 - **Within-run memory** — each pass records its target anchor; Scout biases the next selection away
   from already-explored regions so budget goes to new tail structure. This lives in the engine
-  (`engine/scout/repig.py`), threaded through the loop's `explored_points` accumulator.
+  (`engine/scout/targeting.py`), threaded through the loop's `explored_points` accumulator.
 
 ---
 
@@ -146,7 +153,7 @@ The loop runs end-to-end with **no model and no agent runtime** today. A model o
 for one of:
 
 - **Reasoning-Scout** — an LLM that *proposes novel rare scenarios* outside the fixed candidate pool,
-  which are then scored by deterministic R-EPIG (it never sets values — §1 still holds).
+  which are then scored by deterministic Scout targeting (it never sets values — §1 still holds).
 - **Stylist / narration** — model-grounded narrated content (personas, attack-step text).
 - **Result narration** — human-language summaries of a campaign.
 
@@ -179,8 +186,8 @@ regen-synth/
     REGEN_DOCUMENTATION.md   # full API + stage reference
   engine/                    # DETERMINISTIC. No LLM, no agent, no network imports.
     prior/                   # grounded-sampling generator + P(normal|x) density scorer
-    amplifier/               # ResidualGP + correction (Rare Event Amplifier)
-    scout/                   # R-EPIG acquisition + explored-region penalty (targeting math only)
+    amplifier/               # TailCorrector + correction (Rare Event Amplifier)
+    scout/                   # Scout targeting acquisition + explored-region penalty (targeting math only)
     auditor/                 # fidelity statistics + accept/reject
     examiner/                # downstream detector train/eval + lift metric
     ingest/                  # load/clean/split normal vs rare + on-disk persistence
@@ -212,9 +219,9 @@ Each milestone delivers standalone value. M0–M4 are complete and green.
 |---|------------------|-------------|--------|
 | M0 | Engine skeleton + boundary test | Grounded-sampling Prior. Generate a reproducible base batch from a fixed schema. `test_boundary.py` passes. | ✅ |
 | M1 | Auditor          | Fidelity stats + gate. It must reject a deliberately corrupted batch and accept a clean one. | ✅ |
-| M2 | Amplifier        | ResidualGP correction on a hardcoded target region. Measurable density increase in the tail with fidelity preserved. | ✅ |
+| M2 | Amplifier        | TailCorrector tail correction on a hardcoded target region. Measurable density increase in the tail with fidelity preserved. | ✅ |
 | M3 | Examiner         | Train a simple detector; report tail recall/precision lift of amplified vs base data. Produces a single lift number. | ✅ |
-| M4 | Scout (thin)     | R-EPIG picks the next target from a candidate pool using the Examiner signal. One full cycle runs automatically. | ✅ |
+| M4 | Scout (thin)     | Scout targeting picks the next target from a candidate pool using the Examiner signal. One full cycle runs automatically. | ✅ |
 | M5 | API + entry points | `regen.api.run_campaign()` unifies the loop; CLI, FastAPI server, and demo wrap it. (The earlier "agent runtime" milestone was removed — the loop is plain Python.) | ✅ |
 | M6 | Structured run-state store | (Deferred) Persist batch lineage / target log / fidelity stats to a queryable store for cross-run observability. | ⏳ |
 | M7 | (optional)       | (Deferred) Reasoning-Scout or Stylist via a plain model call (§4); Neo4j ingestion for analysis. | ⏳ |
@@ -228,9 +235,9 @@ These are intentionally unresolved. Do not pick a default silently — surface t
 - **Stylist in or out.** The semantic-control layer earns a place only if REGEN produces model-grounded
   narrated content (personas, attack-step text). If output is purely tabular/relational, omit it
   entirely. Default assumption until told otherwise: **out**.
-- **Scout: thin vs reasoning.** Thin = a wrapper that only runs R-EPIG over a fixed candidate pool
+- **Scout: thin vs reasoning.** Thin = a wrapper that only runs Scout targeting over a fixed candidate pool
   (fully reproducible, current state). Reasoning = a model that *proposes novel rare scenarios* outside
-  the pool, which are then scored by deterministic R-EPIG. Build **thin** first; promote only after the
+  the pool, which are then scored by deterministic Scout targeting. Build **thin** first; promote only after the
   loop closes. Even the reasoning version feeds deterministic scoring — it never sets values, and it
   would use a plain model call (§4), not an agent runtime.
 - **Auditor: hard gate vs soft penalty.** Default is **hard gate** (reject failing batches). The soft

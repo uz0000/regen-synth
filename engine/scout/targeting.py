@@ -1,5 +1,5 @@
 """
-R-EPIG acquisition function (Gao et al., R-Design).
+Scout targeting acquisition function (Gao et al., R-Design).
 
 Scores candidate covariate regions by their expected information gain about
 the GP's prediction over the rare-event target population.
@@ -21,7 +21,7 @@ from typing import Dict, List, Optional
 
 import numpy as np
 
-from engine.amplifier.residual_gp import ResidualModel
+from engine.amplifier.tail_corrector import TailCorrector
 
 logger = logging.getLogger(__name__)
 
@@ -37,14 +37,14 @@ class ScoutConfig:
 # ── Public API ─────────────────────────────────────────────────────────────────
 
 def score_candidates(
-    residual_model: ResidualModel,
+    residual_model: TailCorrector,
     candidates: np.ndarray,
 ) -> np.ndarray:
     """
-    Score each candidate point by R-EPIG.
+    Score each candidate point by Scout targeting.
 
     Args:
-        residual_model: Fitted ResidualModel from the Amplifier.
+        residual_model: Fitted TailCorrector from the Amplifier.
         candidates:     (C, D) array of candidate covariate points.
 
     Returns:
@@ -57,7 +57,7 @@ def score_candidates(
 
 
 def select_target(
-    residual_model: ResidualModel,
+    residual_model: TailCorrector,
     feature_cols: List[str],
     rng: np.random.Generator,
     config: ScoutConfig,
@@ -71,7 +71,7 @@ def select_target(
         explored_points: Anchor points of regions already explored in prior
             passes (and prior runs, via persistent memory). Candidates near
             these are down-weighted so Scout spends budget on new tail
-            structure rather than re-mapping what it already knows. R-EPIG's
+            structure rather than re-mapping what it already knows. Scout targeting's
             posterior already shrinks near observed data within a single fit;
             this term carries that intent ACROSS runs, where the GP cannot.
 
@@ -99,7 +99,7 @@ def select_target(
     # Target the upper half of the most-relevant feature, not just the extreme
     # top decile. Too narrow a band collapses coverage and the Auditor rejects
     # every targeted batch; this keeps enough of the rare region covered while
-    # still concentrating generation where R-EPIG says the tail is informative.
+    # still concentrating generation where Scout targeting says the tail is informative.
     target_region = {
         "feature_idx":    top_feat,
         "feature_name":   feature_cols[top_feat] if top_feat < len(feature_cols) else "",
@@ -110,7 +110,7 @@ def select_target(
     }
 
     logger.info(
-        "Scout selected target: feature '%s' (idx %d), R-EPIG=%.4f",
+        "Scout selected target: feature '%s' (idx %d), Scout targeting=%.4f",
         target_region["feature_name"], top_feat, scores[best],
     )
     return target_region
@@ -124,7 +124,7 @@ def _apply_explored_penalty(
     config: ScoutConfig,
 ) -> np.ndarray:
     """
-    Multiply each candidate's R-EPIG score by a factor in (0, 1] that shrinks
+    Multiply each candidate's Scout targeting score by a factor in (0, 1] that shrinks
     as the candidate approaches an already-explored anchor.
 
     Distance is measured in standard-deviation units (scale-free). A candidate
@@ -151,11 +151,11 @@ def _apply_explored_penalty(
     return scores * factors
 
 
-# ── R-EPIG core ───────────────────────────────────────────────────────────────
+# ── Scout targeting core ───────────────────────────────────────────────────────────────
 
 def _repig(gp, candidates: np.ndarray, targets: np.ndarray) -> np.ndarray:
     """
-    Compute R-EPIG scores for each candidate against the target population.
+    Compute Scout targeting scores for each candidate against the target population.
 
     For a Gaussian process, the mutual information between a candidate
     observation y_x and the posterior at target x* is:

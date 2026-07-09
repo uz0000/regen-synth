@@ -54,7 +54,7 @@ deterministic, replayable object.
                            │  parameterizes (never edits) │
    ┌───────────────────────┼── ENGINE PLANE (produces every value) ─┼──────────────────────┐
    │                        ▼                                                                │
-   │  Prior (copula) ─► Scout target ─► Amplifier (ResidualGP) ─► constraints ─► δ-floor     │
+   │  Prior (copula) ─► Scout target ─► Amplifier (TailCorrector) ─► constraints ─► δ-floor     │
    │  grounds in real    where to      structure-aware tail       valid         near-copy    │
    │  marginals+corr     densify       correction                 support        protection  │
    │                        │                                                                │
@@ -88,8 +88,8 @@ Two walls make the model work:
 | Component | Consumes → Produces | **Why it exists** |
 |---|---|---|
 | **Prior — grounded + mixed-data Gaussian copula** [BUILT] | ScenarioSpec + real sample → a base batch | Grounds every synthetic value in the real marginals **and** cross-column correlations, so the surrogate can preserve structure (what TSTR needs) without copying a real row. |
-| **Scout — R-EPIG targeting** [BUILT] | prior + explored memory → a target region | Directs where to densify the rare tail. *Rationale caveat: its incremental value is unproven — treat as optional, not a headline.* |
-| **Amplifier — ResidualGP (ARD)** [BUILT] | base batch + target → corrected rare rows | Structure-aware tail correction. Beats SMOTE's linear interpolation on heterogeneous-feature data (stays on-manifold); ties it on simple data. This is the learner that earns its keep. |
+| **Scout — targeting** [BUILT] | prior + explored memory → a target region | Directs where to densify the rare tail. *Rationale caveat: its incremental value is unproven — treat as optional, not a headline.* |
+| **Amplifier — TailCorrector (ARD)** [BUILT] | base batch + target → corrected rare rows | Structure-aware tail correction. Beats SMOTE's linear interpolation on heterogeneous-feature data (stays on-manifold); ties it on simple data. This is the learner that earns its keep. |
 | **Constraint layer** [BUILT] | raw synthetic values → in-support values | Folds impossible outputs back onto reality (no negative amount, no fractional count). Never invents values the data never showed. |
 | **Privacy floor + verbatim guard** [BUILT] | delivered rare rows → floored rows | Pushes every released rare row ≥ δ from every real rare row and blocks verbatim copies → prevents near-copy re-identification. The resulting gap is the *price of privacy*, not a defect. **NOT differential privacy.** |
 | **Auditor — fidelity gate** [BUILT] | delivered batch vs real → pass/fail + stats | Stops a batch whose structure is broken from shipping. Measured on the **delivered** (post-floor) data, so the verdict describes what you actually get. |
@@ -116,7 +116,7 @@ Read top-to-bottom, this is why the output is defensible — each step is
 deterministic and later independently recomputable:
 
 1. **Grounded** — the Prior copula draws it from the real marginals + correlations (not a copy).
-2. **Corrected** — the ResidualGP shapes the rare tail on-manifold.
+2. **Corrected** — the TailCorrector shapes the rare tail on-manifold.
 3. **Constrained** — folded onto valid support.
 4. **Floored** — pushed ≥ δ from every real rare row (privacy), producing the honest gap.
 5. **Gated** — fidelity + conformance checked on the *delivered* data; fails loudly if broken.
