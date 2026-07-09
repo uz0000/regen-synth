@@ -108,7 +108,7 @@ Two walls make the model work:
 | **Explanation (`explanation.json`)** [BUILT] | report objects → a computed account | Legibility: every gate's statistic + threshold + verdict, per-column provenance/mechanism, feature informativeness — all *computed*, cited to versioned metric IDs, never narrated by a model. |
 | **Audit bundle + `regen verify`** [BUILT] | the run dir → independent recomputation | The moat: a third party who doesn't trust you recomputes every reported statistic from the bundle (integrity-hashed) and it passes or names the discrepancy. Turns claims into checkable facts. |
 | **Preflight (`regen doctor`)** [BUILT] | dataset → envelope verdicts | Refuses out-of-envelope shapes *before* a run (time-series, too-few-rare, all-categorical caveats), so failures are named up front, not discovered after. |
-| **Decision-support surface** [PLANNED] | report objects + tradeoff sweep → options for the human | Removes toil and surfaces the honest frontier (e.g. δ vs TSTR vs privacy) + plain-language diagnosis, and **recommends with override**. It informs the decision; it never makes the value-laden choice. |
+| **Decision-support surface** [BUILT] | report objects + tradeoff sweep → options for the human | `explore_options` / CLI `regen explore`: surfaces the privacy↔fidelity frontier + a plain-language diagnosis per option + a **recommend-with-override** default. It informs the decision; it never makes the value-laden choice (deliberately NOT an autonomous optimizer). |
 
 ## 4. The trust chain (how a value becomes a certified surrogate)
 
@@ -144,7 +144,7 @@ The ScenarioSpec threads through all of it; the manifest persists it; replay rep
 
 1. **TSTR harness** — the metric everything references. **[BUILT]** (`measure_tstr` + `evaluate_surrogate`; `tests/test_tstr.py`)
 2. **Intent → ScenarioSpec proposer** — a non-expert drafts a run from a plain-language goal. **[BUILT]** (`propose_scenario`/`draft_scenario`; CLI `regen propose`; `tests/test_scenario_proposal.py`)
-3. **Decision-support surface** — frontier + diagnosis + recommend-with-override. [PLANNED]
+3. **Decision-support surface** — frontier + diagnosis + recommend-with-override. **[BUILT]** (`explore_options`; CLI `regen explore`; `tests/test_explore.py`)
 4. **Certified-surrogate demo** — two-party clean-room (producer emits package; a party who never saw the real data trains + `verify`s). [PLANNED]
 5. **Closed-loop repair** — *only if* step 2's single shot underperforms, and only with uncertainty-aware metrics + human-approved final spec + the boundary intact. The prior "agent runtime" was removed for failing this bar; a new one must clear it. [DEFERRED]
 

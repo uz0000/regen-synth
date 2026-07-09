@@ -1501,6 +1501,111 @@ def draft_scenario(
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# 2e. EXPLORE OPTIONS — decision-support tradeoff frontier (§5.3)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _diagnose(summary: Dict[str, Any]) -> str:
+    """Plain-language account of a run's outcome + what to change. Reads only the
+    already-computed summary — no new statistics."""
+    if summary["passed"]:
+        return "shippable — fidelity, conformance, and privacy all pass"
+    reasons = []
+    fid = summary["fidelity"]
+    pv = summary.get("privacy")
+    floored = bool(pv and pv.get("floor_applied"))
+    if not fid["passed"]:
+        if fid["coverage"] < 0.5:
+            if floored:
+                reasons.append(f"coverage {fid['coverage']} is low (the δ-floor pushed rare "
+                               "rows off their region) — lower delta or use privacy='none'")
+            else:
+                reasons.append(f"coverage {fid['coverage']} is low (the synthetic rare rows "
+                               "don't densify the real rare region — likely a poor fit for "
+                               "amplification here)")
+        c = fid["correlation"]
+        if c["delta"] is not None and not c["passed"]:
+            reasons.append(f"correlation delta {c['delta']} exceeds the gate — lower "
+                           "delta, or this data is a poor fit for the floor")
+        bad_cols = [x["col"] for x in fid["columns"] if not x["passed"]]
+        if bad_cols:
+            reasons.append(f"per-column fidelity failed on {bad_cols[:3]}")
+    if not summary["conformance"]["passed"]:
+        reasons.append("delivered batch violates the vetted contract")
+    if pv and not pv["passed"]:
+        reasons.append(f"privacy failed (min-distance {pv['min_distance']})")
+    return "not shippable: " + "; ".join(reasons) if reasons else "not shippable"
+
+
+def explore_options(
+    filepath: str,
+    label_col: str = "",
+    rare_def: Optional[RareEventDef] = None,
+    *,
+    deltas=(0.3, 0.5, 0.8),
+    include_none: bool = True,
+    n_rows: int = 300,
+    seed: int = 42,
+    mode: str = "balanced",
+    auto: bool = False,
+) -> Dict[str, Any]:
+    """A transparent privacy↔fidelity tradeoff frontier for the human to choose from
+    (§5.3). Runs `generate()` at each privacy setting and reports the measured
+    consequences + a plain-language diagnosis per option — it does NOT pick for you.
+
+    Returns {options: [...], recommended: idx|None, note}. The recommendation is
+    a *labelled default you can override* (the shippable floored option with the
+    most privacy, i.e. the largest delta that still passes; else the non-private
+    option, flagged). This is decision support, not an optimizer: it surfaces the
+    frontier honestly and leaves the value-laden choice to you.
+    """
+    import tempfile
+    options: List[Dict[str, Any]] = []
+
+    def _run(privacy, delta):
+        with tempfile.TemporaryDirectory() as out:
+            s = generate(filepath, label_col=label_col, rare_def=rare_def, n_rows=n_rows,
+                         seed=seed, mode=mode, auto=auto, privacy=privacy, delta=delta,
+                         out_dir=out)
+        pv = s.get("privacy")
+        return {
+            "privacy": privacy, "delta": (delta if privacy == "floored" else None),
+            "fidelity_score": s["fidelity"]["score"],
+            "coverage": s["fidelity"]["coverage"],
+            "corr_delta": s["fidelity"]["correlation"]["delta"],
+            "min_distance": (pv["min_distance"] if pv else None),
+            "floor_applied": (pv["floor_applied"] if pv else None),
+            "shippable": s["passed"],
+            "diagnosis": _diagnose(s),
+        }
+
+    if include_none:
+        options.append(_run("none", 0.5))
+    for d in deltas:
+        options.append(_run("floored", d))
+
+    # Recommend the most-private shippable floored option (largest delta that
+    # passes); fall back to a shippable non-private option; else none — always a
+    # labelled default the user can override, never an auto-commit.
+    floored_ok = [(i, o) for i, o in enumerate(options)
+                  if o["privacy"] == "floored" and o["shippable"]]
+    if floored_ok:
+        rec = max(floored_ok, key=lambda io: io[1]["delta"])[0]
+        note = ("Recommended: the most private (largest δ) option that still ships. "
+                "Override if you value fidelity over privacy headroom.")
+    else:
+        none_ok = [i for i, o in enumerate(options) if o["shippable"]]
+        if none_ok:
+            rec = none_ok[0]
+            note = ("No floored option shipped on this data — recommended the "
+                    "non-private option. Privacy='floored' is degraded here (see "
+                    "docs/CAPABILITY_MATRIX.md).")
+        else:
+            rec = None
+            note = "No option shipped — the data may be out of envelope (run `regen doctor`)."
+    return {"options": options, "recommended": rec, "note": note}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # 3. SCREEN — win-boundary predictor
 # ═══════════════════════════════════════════════════════════════════════════════
 

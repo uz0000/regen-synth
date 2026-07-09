@@ -46,6 +46,8 @@ def main():
         _cmd_run(args)
     elif args.command == "generate":
         _cmd_generate(args)
+    elif args.command == "explore":
+        _cmd_explore(args)
     elif args.command == "propose":
         _cmd_propose(args)
     elif args.command == "doctor":
@@ -165,6 +167,20 @@ def _build_parser() -> argparse.ArgumentParser:
                             "REGEN_SEMANTICS_* env; offline → Sources 1+2 only.")
     gen_p.add_argument("--json", action="store_true", help="Output summary as JSON")
     gen_p.set_defaults(command="generate")
+
+    # ── regen explore ─────────────────────────────────────────────────────────
+    explore_p = sub.add_parser("explore", help="Show the privacy↔fidelity tradeoff frontier (you choose)")
+    explore_p.add_argument("data", type=str, help="Path to input data (CSV/JSON/Parquet)")
+    explore_p.add_argument("--label", type=str, default="")
+    explore_p.add_argument("--rare-mode", type=str, default="label",
+                           choices=["label", "percentile", "imbalance_ratio"])
+    explore_p.add_argument("--rare-value", type=str, default=None)
+    explore_p.add_argument("--percentile", type=float, default=0.05)
+    explore_p.add_argument("--imbalance-ratio", type=float, default=0.01)
+    explore_p.add_argument("--n-rows", type=int, default=300)
+    explore_p.add_argument("--seed", type=int, default=42)
+    explore_p.add_argument("--json", action="store_true")
+    explore_p.set_defaults(command="explore")
 
     # ── regen propose ─────────────────────────────────────────────────────────
     propose_p = sub.add_parser("propose", help="Draft a ScenarioSpec YAML from a plain-language goal")
@@ -411,6 +427,34 @@ def _print_summary(result, out_dir: Path):
         df = pd.read_parquet(result.best_batch_path)
         print(f"    {len(df)} rows, {len(df.columns)} columns")
     print("=" * 62)
+
+
+# ── Command: explore ─────────────────────────────────────────────────────────
+
+def _cmd_explore(args):
+    """Print the privacy↔fidelity tradeoff frontier — the user picks."""
+    from regen.api import explore_options
+    rare_def = None if (args.rare_mode == "label" and args.rare_value is None) \
+        else _build_rare_def(args)
+    rep = explore_options(args.data, label_col=args.label, rare_def=rare_def,
+                          n_rows=args.n_rows, seed=args.seed)
+    if args.json:
+        print(json.dumps(rep, indent=2))
+        return
+    print()
+    print("=" * 74)
+    print(f"  REGEN — OPTIONS  ({args.data})")
+    print("=" * 74)
+    print(f"  {'#':<2} {'privacy':<9} {'δ':<5} {'fid':<5} {'cov':<6} {'ship':<5} diagnosis")
+    for i, o in enumerate(rep["options"]):
+        star = "→" if i == rep["recommended"] else " "
+        d = "-" if o["delta"] is None else f"{o['delta']}"
+        print(f"{star} {i:<2} {o['privacy']:<9} {d:<5} {o['fidelity_score']:<5} "
+              f"{o['coverage']:<6} {'yes' if o['shippable'] else 'NO':<5} {o['diagnosis'][:80]}")
+    print("-" * 74)
+    print(f"  {rep['note']}")
+    print("  (→ = recommended default; you decide. This does not pick for you.)")
+    print("=" * 74)
 
 
 # ── Command: propose ─────────────────────────────────────────────────────────

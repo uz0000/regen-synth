@@ -594,3 +594,28 @@ the human reviews/edits, the engine still grounds every value.
   hot path untouched.
 - **Tests:** `tests/test_scenario_proposal.py` (5, offline). **Spec §5.2
   [PARTIAL] → [BUILT].**
+
+---
+
+## Session 2026-07-09 (cont.) — §5.3 Decision-support surface
+
+The deliberate replacement for the autonomous optimizer we rejected: surface the
+tradeoff, let the human decide.
+
+- **`regen.api.explore_options`** (+ CLI `regen explore`) — runs `generate()` at
+  privacy=none and privacy=floored across a δ sweep, and returns a **frontier**:
+  per option {privacy, δ, fidelity, coverage, corr, min_distance, shippable, and a
+  plain-language **diagnosis**}. It **recommends a labelled default** (the most
+  private floored option that still ships; else the non-private option, flagged;
+  else none → "run doctor") that the user can override. It returns options —
+  it never generates a "final" artifact or picks the value-laden tradeoff.
+- **`_diagnose`** — turns a run's gates into plain language + the fix, and is
+  **privacy-aware**: low coverage under the floor blames the δ-floor ("lower delta
+  / use none"); low coverage without a floor says "poor fit for amplification" —
+  no more mis-attributing a none-mode failure to the floor.
+- **Observed:** `regen explore transactions.csv --label is_fraud` → all options
+  ship, recommends δ=0.8 (most private that ships). Percentile-tail → all options
+  fail with honest per-row diagnoses and "no option shipped — run doctor."
+- **Tests:** `tests/test_explore.py` (6: diagnosis shippable/floored-low-cov/
+  none-low-cov/correlation, frontier surfaces+recommends, returns-options-not-
+  auto-commit). `generate()` bit-identical (`40933a2b`). Spec §5.3 → **[BUILT]**.
