@@ -304,6 +304,89 @@ def _apply_gates(gates, prop: Dict[str, Any]) -> None:
         gates.delta = float(d)
 
 
+# ── Target tie-break (Source 3, advisory) — §5.2 hand-off ─────────────────────
+
+_TIEBREAK_PROMPT = (
+    "You are selecting the rare-event TARGET column for a synthetic-data run. "
+    "Structural scoring already found the `candidates` EQUALLY plausible (a "
+    "statistical tie it refuses to guess through). Break the tie using the user's "
+    "GOAL, the candidate names + their `example_values`, and `other_columns` (the "
+    "rest of the schema — domain context that hints what the dataset is about). Do "
+    "not invent anything, and do not second-guess the statistics. Return JSON "
+    "{\"label_col\": <exactly one of the candidate names>, \"reason\": <one short "
+    "sentence>}. You MUST pick from the candidate list; if nothing clearly favors a "
+    "candidate, return {\"label_col\": \"\"} so a human decides. Goal + context:\n"
+)
+
+
+def resolve_ambiguous_target(
+    candidates,
+    goal: str = "",
+    *,
+    all_columns: Optional[List[str]] = None,
+    candidate_examples: Optional[Dict[str, List[Any]]] = None,
+    config: Optional[SemanticsConfig] = None,
+    caller: Optional[Callable[[str, Dict[str, Any], SemanticsConfig], str]] = None,
+):
+    """Break a structural target tie using the user's goal (advisory Source 3).
+
+    ``candidates`` is the ``TargetDetection`` list from ``AmbiguousTargetError`` — the
+    columns the rule-based scorer found comparable. ``all_columns`` /
+    ``candidate_examples`` are the optional *semantic context* the exception carries
+    (the rest of the schema's names + a few example values per candidate). Returns
+    ``(chosen_label_col, reason)`` where ``chosen`` is GUARANTEED to be one of the
+    candidate names, or ``(None, reason)`` when no model is available / it declines /
+    it returns an invalid name.
+
+    NEVER raises. Offline, no key, a bad key, or malformed output all resolve to
+    ``(None, ...)`` so the caller keeps the honest behavior — surface the tie and let
+    the human choose.
+
+    Egress discipline (same policy as ``build_model_payload``): only NAMES, the tie
+    statistics, and — for the tied candidates only — up to ``config.samples`` example
+    values are sent; when ``config.samples <= 0`` (``REGEN_SEMANTICS_SAMPLES=0``) no
+    example values leave at all. ``other_columns`` sends names only, never values. No
+    raw rows are ever sent. The model changes *which* column is chosen, never a value.
+    """
+    config = config or SemanticsConfig.from_env()
+    names = [c.label_col for c in candidates]
+    if caller is None and not config.enabled():
+        return None, "model unavailable — tie left for the user to resolve"
+
+    examples = candidate_examples or {}
+    n_ex = max(0, config.samples)
+
+    def _cand(c):
+        d = {"name": c.label_col, "rare_value": c.rare_value,
+             "minority_ratio": round(c.minority_ratio, 4), "n_rare": c.n_rare,
+             "cardinality": c.cardinality, "score": round(c.score, 4)}
+        if n_ex and c.label_col in examples:                 # redacted: capped, opt-out honored
+            d["example_values"] = list(examples[c.label_col])[:n_ex]
+        return d
+
+    other_columns = [c for c in (all_columns or []) if c not in names]  # names only, no values
+    payload = {
+        "goal": goal,
+        "candidates": [_cand(c) for c in candidates],
+        "other_columns": other_columns,
+    }
+    prompt = _TIEBREAK_PROMPT + json.dumps(payload, default=str)
+    call = caller or _openai_compatible_call
+    try:
+        raw = call(prompt, payload, config)
+        data = json.loads(raw)
+    except Exception as exc:                       # never block — degrade to human choice
+        logger.warning("Target tie-break failed (%s) — tie left for the user.", exc)
+        return None, f"model error ({exc}) — tie left for the user"
+
+    chosen = data.get("label_col") or ""
+    if chosen not in names:                        # must pick a real candidate (or "")
+        if chosen:
+            logger.info("Tie-break returned non-candidate %r — ignored.", chosen)
+        return None, "model declined — tie left for the user"
+    return chosen, str(data.get("reason", ""))[:200]
+
+
 def _openai_compatible_call(prompt: str, payload: Dict[str, Any],
                             config: SemanticsConfig) -> str:
     """Default caller: POST to an OpenAI-compatible /chat/completions endpoint via

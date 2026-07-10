@@ -374,7 +374,10 @@ async def propose_scenario_endpoint(req: ProposeRequest):
         raise HTTPException(status_code=400, detail=f"Propose failed: {str(e)}")
     return {"scenario": draft.to_dict(), "yaml": draft.to_yaml(),
             "drafted_by": draft.provenance.get("drafted_by"),
-            "model_used": proposal is not None}
+            "model_used": proposal is not None,
+            # surfaced so the UI can show "auto-selected <col> because <reason>" and
+            # offer an override when the LLM broke a target tie (decision-support).
+            "target_tiebreak": draft.provenance.get("target_tiebreak")}
 
 
 @app.post("/api/explore")

@@ -662,3 +662,52 @@ demonstrably underperforms, with anti-Goodhart discipline + human-approved final
   `evaluate_surrogate` on transactions **~13s → 7.2s** (≈ halved).
 - **Verified:** default `generate` bit-identical + lift intact; `with_lift=False`
   same batch, no lift; new-endpoint + lift/reproducibility/tstr subsets green.
+
+## Session 2026-07-09 (cont.) — target tie-break hand-off + media specificity
+
+Motivation (user): the LLM earns its place specifically at *target disambiguation*;
+wire that hand-off, keep it working with no valid API key, and put the actual
+mechanisms (target scoring + the ROC-AUC model panel) into the showcase materials
+with real specificity.
+
+- **Target tie-break hand-off.** Rule-based detection raises `AmbiguousTargetError`
+  when the top-two target scores are within `ambiguity_margin` (0.05). Added
+  `resolve_ambiguous_target()` (`regen/semantics.py`): sends only candidate NAMES +
+  their statistics + the user's goal (no raw rows) to the advisory model, which must
+  return **one of the tied candidates**. Wired into `draft_scenario()`
+  (`regen/api.py`): a tie is handed to the model; the chosen `label_col` is recorded
+  in `provenance.target_tiebreak` (chosen/reason/candidates/resolved_by).
+  - **Offline-safe by construction.** No model / no key / bad key / non-candidate
+    pick → `resolve_ambiguous_target` returns `(None, reason)` and `draft_scenario`
+    **re-raises the same `AmbiguousTargetError`** so a human chooses. Never invents a
+    target, never crashes on a missing key (Invariant 4 + INVARIANTS.md §7 decision-support).
+  - **Transparency surfaced.** `/api/propose` now returns `target_tiebreak`; `regen
+    propose` prints "target tie among [...] → auto-selected 'X' (reason). Override
+    with --label." So the auto-selection is visible and overridable, not silent.
+  - Tests: `tests/test_scenario_proposal.py::TestTargetTieBreak` (3) — honest offline
+    error, model breaks tie from goal (provenance recorded), invalid pick → error.
+    Fake caller branches on the prompt so one injected caller serves both calls.
+- **Media specificity (`showcase/how-it-works.md`, NEW).** The "how exactly?" layer:
+  (1) the full target-scoring formula + weights + the useful-band disqualifiers + the
+  ambiguity refusal + the tie-break LLM and its guardrails/why; (2) the 3-model
+  ROC-AUC/TSTR panel (LogReg/RF/GBDT, target=rare-vs-rest, features=the rest,
+  TSTR/TRTR, recovered=median, refusal + >1.05 flag); (3) other nameable specifics
+  (copula 0.331→0.101, δ-floor mechanics, Auditor's four statistics, bit-repro,
+  `regen verify`). Linked from `showcase/README.md`.
+- **Verified:** full suite green (see run below); offline `draft_scenario` unchanged
+  (structural draft, no calls); tie-break exercised only via injected caller in tests.
+
+- **Tie-break now sees semantic context (redacted).** The name+stats-only payload was
+  thin for opaquely-named targets (`y`, `flag_9`). `AmbiguousTargetError` now carries
+  `all_columns` + `candidate_examples` (built from the df it already has at raise time
+  — engine-side, no LLM). `resolve_ambiguous_target` sends: goal, tied candidates with
+  up to `config.samples` example values each, and `other_columns` (the rest of the
+  schema's **names only**) as domain context. Egress discipline matches
+  `build_model_payload`: example values capped, suppressed when
+  `REGEN_SEMANTICS_SAMPLES=0`, `other_columns` never carries values, no raw rows ever.
+  - Test: `test_semantic_context_sent_to_model` asserts `other_columns == {reading,
+    score}` and candidate `example_values == [0,1]` reach the (captured) payload.
+  - **Verified:** affected surface `tests/test_scenario_proposal.py
+    tests/test_server.py tests/test_api.py` → **67 passed** (174s); full suite reached
+    76% with 159 passed / 0 failed before a machine-load timeout (not a failure — the
+    documented pre-commit-hook load pattern); tie-break class 4/4 in 6.7s.

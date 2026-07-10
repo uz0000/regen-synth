@@ -479,6 +479,10 @@ def _cmd_propose(args):
         print(f"[regen] wrote draft ScenarioSpec → {args.out}", file=sys.stderr)
     src = "model + structural" if proposal is not None else "structural only (no model configured)"
     print(f"[regen] drafted from: {src}", file=sys.stderr)
+    tb = draft.provenance.get("target_tiebreak")
+    if tb:  # the LLM broke a structural target tie — say so, and that it's overridable
+        print(f"[regen] target tie among {tb['candidates']} → auto-selected "
+              f"'{tb['chosen']}' ({tb['reason']}). Override with --label.", file=sys.stderr)
     print(f"[regen] review/edit, then: regen generate {args.data} --scenario "
           f"{args.out or '<saved>.yaml'}", file=sys.stderr)
     if not args.out:

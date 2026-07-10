@@ -1500,11 +1500,34 @@ def draft_scenario(
     `generate(scenario=...)`, where its columns are vetted against the data. Offline
     → the structural draft alone. `caller` is injectable for testing.
     """
-    from regen.semantics import propose_scenario
+    from regen.semantics import propose_scenario, resolve_ambiguous_target
+    from engine.ingest.loader import AmbiguousTargetError
+
     rare_def = rare_def or _auto_rare_def()
-    result = ingest(filepath, label_col, rare_def)
-    return propose_scenario(result, goal=goal, n_rows=n_rows, seed=seed,
-                            config=config, caller=caller)
+    tiebreak = None
+    try:
+        result = ingest(filepath, label_col, rare_def)
+    except AmbiguousTargetError as amb:
+        # Rules tied on the target. Hand the candidates + goal to the advisory model
+        # (if one is configured) to break the tie from intent. Offline / no key / a
+        # declined pick → re-raise the same actionable error so a HUMAN chooses; we
+        # never silently guess a load-bearing target (INVARIANTS.md §7 decision-support).
+        chosen, reason = resolve_ambiguous_target(
+            amb.candidates, goal,
+            all_columns=amb.all_columns, candidate_examples=amb.candidate_examples,
+            config=config, caller=caller)
+        if not chosen:
+            raise
+        result = ingest(filepath, chosen, rare_def)
+        tiebreak = {"chosen": chosen, "reason": reason,
+                    "candidates": [c.label_col for c in amb.candidates],
+                    "resolved_by": "model"}
+
+    draft, proposal = propose_scenario(result, goal=goal, n_rows=n_rows, seed=seed,
+                                       config=config, caller=caller)
+    if tiebreak:
+        draft.provenance["target_tiebreak"] = tiebreak  # auditable: who broke the tie & why
+    return draft, proposal
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

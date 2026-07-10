@@ -53,10 +53,25 @@ class AmbiguousTargetError(ValueError):
 
     Two or more columns score within _AMBIGUITY_MARGIN of each other, so guessing
     would be arbitrary. The caller should pass label_col / rare_def explicitly.
+
+    Carries light *semantic context* for an optional advisory tie-break (the LLM
+    hand-off in regen/semantics.py): the other column names (domain context) and a
+    few example values per tied candidate. This is raw material only — the egress
+    redaction (identifier suppression, sample cap, opt-out) is applied downstream in
+    the semantics layer, never here. Attached lazily and cheaply (≤4 candidates).
     """
 
-    def __init__(self, candidates):
+    def __init__(self, candidates, df=None):
         self.candidates = candidates
+        self.all_columns = list(df.columns) if df is not None \
+            else [c.label_col for c in candidates]
+        self.candidate_examples = {}
+        if df is not None:
+            for c in candidates:
+                if c.label_col in df.columns:
+                    self.candidate_examples[c.label_col] = [
+                        _as_native(v) for v in df[c.label_col].dropna().unique()[:6]
+                    ]
         lines = [
             f"    {c.label_col!r}: rare={c.rare_value!r} "
             f"minority_ratio={c.minority_ratio:.3f} n_rare={c.n_rare} score={c.score:.3f}"
@@ -350,7 +365,7 @@ def _detect_target(df: pd.DataFrame, config: IngestConfig) -> TargetDetection:
         raise ValueError(_no_target_message(df, config))
     best = candidates[0]
     if len(candidates) >= 2 and (best.score - candidates[1].score) < config.ambiguity_margin:
-        raise AmbiguousTargetError(candidates[:4])
+        raise AmbiguousTargetError(candidates[:4], df=df)
     best.alternatives = [c.as_dict() for c in candidates[1:4]]
     return best
 

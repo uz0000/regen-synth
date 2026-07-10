@@ -80,6 +80,89 @@ class TestModelInforms:
         assert draft.provenance["drafted_by"] == "structural"
 
 
+class TestTargetTieBreak:
+    """When rule-based scoring ties on the target (AmbiguousTargetError), the goal is
+    handed to the advisory model to break the tie; offline it stays an honest error."""
+
+    def _ambiguous_csv(self, path):
+        import numpy as np
+        import pandas as pd
+        rng = np.random.RandomState(0)
+        n = 120
+        # Two binary columns with IDENTICAL imbalance (20/120) and no name bonus →
+        # they score equal → AmbiguousTargetError. Continuous features are excluded
+        # (high cardinality), so these two are the only candidates.
+        flag_a = np.array([1] * 20 + [0] * 100)
+        flag_b = np.array([1] * 20 + [0] * 100)
+        rng.shuffle(flag_b)
+        pd.DataFrame({
+            "reading": rng.normal(0, 1, n),
+            "score": rng.normal(5, 2, n),
+            "churned": flag_a,          # not in _LABEL_CANDIDATES
+            "defaulted": flag_b,        # not in _LABEL_CANDIDATES
+        }).to_csv(path, index=False)
+
+    def _tiebreak_caller(self, chosen):
+        def caller(prompt, payload, config):
+            if "selecting the rare-event TARGET" in prompt:      # the tie-break call
+                return json.dumps({"label_col": chosen, "reason": "goal names churn"})
+            return json.dumps({"intent": {}, "gates": {}, "columns": []})  # scenario call
+        return caller
+
+    def test_offline_tie_is_honest_error(self):
+        from regen.api import draft_scenario
+        from engine.ingest.loader import AmbiguousTargetError
+        with tempfile.TemporaryDirectory() as d:
+            csv = str(Path(d) / "amb.csv")
+            self._ambiguous_csv(csv)
+            with pytest.raises(AmbiguousTargetError):             # no model → human chooses
+                draft_scenario(csv, goal="predict churn")
+
+    def test_model_breaks_tie_from_goal(self):
+        from regen.api import draft_scenario
+        with tempfile.TemporaryDirectory() as d:
+            csv = str(Path(d) / "amb.csv")
+            self._ambiguous_csv(csv)
+            draft, _ = draft_scenario(csv, goal="predict churn",
+                                      caller=self._tiebreak_caller("churned"))
+        assert draft.intent.label_col == "churned"
+        tb = draft.provenance["target_tiebreak"]
+        assert tb["chosen"] == "churned" and tb["resolved_by"] == "model"
+        assert set(tb["candidates"]) == {"churned", "defaulted"}
+
+    def test_model_invalid_pick_falls_back_to_error(self):
+        from regen.api import draft_scenario
+        from engine.ingest.loader import AmbiguousTargetError
+        with tempfile.TemporaryDirectory() as d:
+            csv = str(Path(d) / "amb.csv")
+            self._ambiguous_csv(csv)
+            with pytest.raises(AmbiguousTargetError):             # non-candidate → declined
+                draft_scenario(csv, goal="x", caller=self._tiebreak_caller("nonexistent"))
+
+    def test_semantic_context_sent_to_model(self):
+        """The tie-break payload carries the other column names (domain context) and
+        example values for the tied candidates — names+values only, never raw rows."""
+        from regen.api import draft_scenario
+        seen = {}
+
+        def capturing(prompt, payload, config):
+            if "selecting the rare-event TARGET" in prompt:
+                seen["payload"] = payload
+                return json.dumps({"label_col": "churned", "reason": "goal"})
+            return json.dumps({"intent": {}, "gates": {}, "columns": []})
+
+        with tempfile.TemporaryDirectory() as d:
+            csv = str(Path(d) / "amb.csv")
+            self._ambiguous_csv(csv)
+            draft_scenario(csv, goal="predict churn", caller=capturing)
+
+        p = seen["payload"]
+        assert set(p["other_columns"]) == {"reading", "score"}     # non-candidate names as context
+        cand = {c["name"]: c for c in p["candidates"]}
+        assert set(cand) == {"churned", "defaulted"}
+        assert sorted(cand["churned"]["example_values"]) == [0, 1]  # candidate values sent
+
+
 class TestDraftDrivesGeneration:
     def test_draft_round_trips_and_generates(self):
         from regen.api import draft_scenario, generate
