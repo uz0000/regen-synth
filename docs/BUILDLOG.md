@@ -711,3 +711,16 @@ with real specificity.
     tests/test_server.py tests/test_api.py` → **67 passed** (174s); full suite reached
     76% with 159 passed / 0 failed before a machine-load timeout (not a failure — the
     documented pre-commit-hook load pattern); tie-break class 4/4 in 6.7s.
+
+- **README honest-numbers swap.** The README still showed the inflated,
+  leakage-inflated lift table (Satellite +39.1%/3.75×, Hypothyroid +12.6%, etc.) —
+  the exact figures we established evaporate under leakage-free measurement. Replaced
+  the whole "Benchmark" section with "What the numbers actually say": (1) the
+  leakage-free **TSTR recovered-%** table from `RESULTS_TSTR.md` (median of
+  LogReg/RF/GBDT, ROC-AUC + PR-AUC), reading churn honestly as a weak spot (~0.65/0.39)
+  and `creditcard_subset` as an honest refusal (insufficient held-out rare); (2) the
+  **conditional-lift** thesis (amplification helps only when the baseline is weak /
+  rare data scarce; Satellite +39% → ~+4% leakage-free). Also softened the tagline
+  ("improves ML performance" → "for rare-event problems … with a re-checkable
+  certificate") and added the single-table/cross-sectional scope line. Old
+  `RESULTS_BREADTH.md` kept but labelled as pre-leakage-free.

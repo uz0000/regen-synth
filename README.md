@@ -1,10 +1,12 @@
 # REGEN — Rare-Event Generation & Noise amplification
 
-**Statistically grounded synthetic data that improves ML model performance on rare events.**
+**Statistically grounded synthetic data for rare-event problems — every batch ships a certificate a third party can independently re-check.**
 
-REGEN runs a closed-loop active-learning campaign that generates synthetic rare events
-(fraud, intrusions, defects) to improve detection models. Every number comes from a
-deterministic statistical engine — no LLM hallucination, no black box.
+REGEN runs a deterministic active-learning campaign that generates synthetic rare events
+(fraud, intrusions, defects) to help detection models when real rare examples are scarce.
+Every number comes from a deterministic statistical engine — no LLM hallucination, no black
+box. It is single-table, cross-sectional tabular only (not time-series, relational, text, or
+images), and it reports honestly where it helps and where it doesn't.
 
 ## Quick Start
 
@@ -39,31 +41,31 @@ generation + a δ-distance floor + a verbatim guard. This prevents near-copy
 re-identification but is **not differential privacy** — see
 [`docs/PRIVACY.md`](docs/PRIVACY.md).
 
-## Benchmark
+## What the numbers actually say
 
-On 11 datasets across diverse feature types (5 seeds each, 5 passes per seed, matched synthetic row budget between REGEN and SMOTE):
+Two things are measured, **leakage-free** (train/test split before any generation), and reported honestly — including where REGEN doesn't help.
 
-**REGEN wins 9/11 datasets (82%).** Where it wins, the lift is 1.02–3.75× SMOTE:
+### 1. Surrogate quality (TSTR) — the headline
 
-| Dataset | REGEN lift | SMOTE lift | Ratio |
-|---------|-----------|-----------|-------|
-| Satellite | +39.1% | +10.4% | **3.75×** |
-| CreditCard Subset | +42.9% | +31.4% | **1.36×** |
-| Hypothyroid | +12.6% | +6.1% | **2.07×** |
-| Churn | +10.9% | +6.5% | **1.68×** |
-| Credit Card Fraud | +2.2% | +1.8% | **1.23×** |
-| Ozone | +1.0% | +0.3% | **3.09×** |
-| Wilt | +13.4% | +13.2% | **1.02×** |
-| Amazon | +0.1% | +0.0% | **3.50×** |
-| Solar Flare | ~0% | -8.0% | REGEN doesn't hurt |
+Train a detector panel (Logistic Regression / Random Forest / Gradient Boosting) on the **synthetic** data, then grade it on a **held-out real** test set the models never saw. `recovered = (trained on synthetic) / (trained on real)`, reported as the median across the panel — ROC-AUC and PR-AUC. `1.0` = the surrogate stands in fully; a gap below 1.0 is expected, and with a healthy privacy min-distance it's the price of *not* memorizing real records (a perfect 1.0 would be a red flag).
 
-SMOTE edges out REGEN by 0.06% on 2 datasets where both methods produce marginal lift:
-- Bank Marketing: REGEN +1.46% vs SMOTE +1.52%
-- Open Payments: REGEN ~0% vs SMOTE +0.06% (baseline already at 100% recall)
+| Dataset | held-out rare | recovered ROC-AUC | recovered PR-AUC |
+|---|---|---|---|
+| satellite | 23 | 1.02 | 1.01 |
+| creditcard (full) | 148 | 1.03 | 0.98 |
+| wilt | 78 | 1.00 | 0.98 |
+| ozone | 48 | 0.97 | 1.00 |
+| hypothyroid | 45 | 0.99 | 0.90 |
+| churn | 212 | 0.65 | 0.39 |
+| creditcard_subset | 7 | _insufficient_ | _insufficient_ |
 
-A noise-scale tuning (0.25 → 0.10) flipped 3 datasets from SMOTE wins to REGEN wins (Credit Card Fraud, CreditCard Subset, Wilt) — REGEN now wins on PCA-compressed data too.
+Read this honestly: on most sets the synthetic surrogate recovers ~0.97–1.03 of real performance; **churn is a genuine weak spot** (~0.65 ROC / 0.39 PR — the synthetic features don't carry churn's class signal well); and `creditcard_subset` has too few held-out rare rows to estimate, so REGEN **refuses to report a number** rather than fake one. Single-config, indicative — re-run to reproduce. Provenance + full table: [`benchmark/RESULTS_TSTR.md`](benchmark/RESULTS_TSTR.md).
 
-Full results: [`benchmark/RESULTS_BREADTH.md`](benchmark/RESULTS_BREADTH.md)
+### 2. Detection lift is conditional — not a guaranteed win
+
+REGEN's rare-event amplification improves a detector **only when the baseline is genuinely starved of rare examples**. When the baseline detector is already strong, the lift is ≈ 0 — amplification can't add signal that recall already captures. Earlier headline "wins" (e.g. Satellite *+39%*) were inflated by **evaluation leakage**; under leakage-free measurement they shrink to small, real numbers (Satellite → ~+4%). So the honest claim is *"conditional lift where rare data is scarce and the baseline is weak,"* not a blanket improvement. Use `regen screen` to check whether a given dataset is a REGEN-vs-SMOTE win before committing.
+
+_(The older lift/SMOTE sweep in [`benchmark/RESULTS_BREADTH.md`](benchmark/RESULTS_BREADTH.md) predates the leakage-free harness; treat the TSTR table above as the current measure.)_
 
 ## How It Works
 
