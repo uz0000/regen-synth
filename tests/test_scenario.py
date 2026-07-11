@@ -13,7 +13,7 @@ import pandas as pd
 import pytest
 
 from contracts.scenario import (
-    ScenarioSpec, ScenarioIntent, ScenarioGates, ColumnSemantics,
+    ScenarioSpec, ScenarioIntent, ScenarioGates, ColumnSemantics, EstimandSpec,
     columns_from_field_dict,
 )
 from contracts.types import RareEventDef, RareMode
@@ -51,6 +51,49 @@ class TestSerialization:
                                                   percentile=0.05, tail="upper"))
         rd = spec.rare_def()
         assert rd.mode == RareMode.PERCENTILE and rd.percentile == 0.05 and rd.tail == "upper"
+
+
+class TestEstimandSpec:
+    def test_undeclared_by_default(self):
+        # A fresh spec carries an empty estimand → the certificate omits it.
+        spec = ScenarioSpec()
+        assert spec.estimand.declared() is False
+        assert spec.estimand.targets() == []
+
+    def test_declared_and_targets(self):
+        e = EstimandSpec(outcome="y", predictors=["x1", "x2"], family="ols")
+        assert e.declared() is True
+        # No explicit coefficients_of_interest → certify every predictor.
+        assert e.targets() == ["x1", "x2"]
+        e2 = EstimandSpec(outcome="y", predictors=["x1", "x2"],
+                          coefficients_of_interest=["x2"])
+        assert e2.targets() == ["x2"]
+
+    def test_outcome_without_predictors_is_undeclared(self):
+        assert EstimandSpec(outcome="y").declared() is False
+
+    def test_round_trip(self):
+        e = EstimandSpec(outcome="y", predictors=["x1", "x2"], family="logit",
+                         coefficients_of_interest=["x1"], ci_level=0.9,
+                         rule="within_ci")
+        assert EstimandSpec.from_dict(e.to_dict()) == e
+
+    def test_scenario_round_trip_with_estimand(self):
+        spec = ScenarioSpec(
+            intent=ScenarioIntent(label_col="y"),
+            estimand=EstimandSpec(outcome="y", predictors=["a", "b"], family="ols"),
+        )
+        back = ScenarioSpec.from_json(spec.to_json())
+        assert back.to_dict() == spec.to_dict()
+        assert back.estimand.declared() is True
+
+    def test_backward_compat_missing_estimand_key(self):
+        # A spec persisted before estimands existed has no "estimand" key; it must
+        # still load, as an undeclared estimand (never crash on old manifests).
+        legacy = ScenarioSpec(intent=ScenarioIntent(label_col="y")).to_dict()
+        legacy.pop("estimand")
+        spec = ScenarioSpec.from_dict(legacy)
+        assert spec.estimand.declared() is False
 
 
 class TestStructuralFill:

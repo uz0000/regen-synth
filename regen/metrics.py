@@ -48,6 +48,15 @@ METRICS: Dict[str, Dict] = {
         "summary": "amplified_recall - baseline_recall on held-out real rare rows",
         "recomputable_from_aggregates": False,  # needs the full detector protocol
     },
+    "estimand_delta": {
+        "version": 1, "tol": 1e-6,
+        "summary": ("|theta_synth - theta_real| per declared regression coefficient; "
+                    "preserved iff synth and real estimates are indistinguishable "
+                    "beyond combined SE (two-sample Wald at ci_level)"),
+        # theta_synth refits from the delivered rows; theta_real +/- SE is a
+        # disclosed aggregate (a coefficient is an aggregate — no per-row values).
+        "recomputable_from_aggregates": True,
+    },
 }
 
 

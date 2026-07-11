@@ -64,6 +64,66 @@ class TestTamperDetection:
         assert corr["status"] == "checked" and not corr["passed"]
 
 
+def _gen_with_estimand(out, seed=7):
+    """Generate a batch whose ScenarioSpec declares an OLS estimand y ~ x1 + x2."""
+    from contracts.scenario import (ScenarioSpec, ScenarioIntent, ScenarioGates,
+                                     EstimandSpec)
+    from regen.api import generate
+    rng = np.random.default_rng(0)
+    n = 1500
+    x1 = rng.normal(0, 1, n); x2 = rng.normal(0, 1, n)
+    y = 1.5 + 2.0 * x1 - 3.0 * x2 + rng.normal(0, 1.0, n)
+    lab = (0.8 * x1 + rng.normal(0, 1, n) > 1.28).astype(int)
+    df = pd.DataFrame({"x1": x1, "x2": x2, "y": y, "is_rare": lab})
+    with tempfile.TemporaryDirectory() as d:
+        csv = Path(d) / "data.csv"; df.to_csv(csv, index=False)
+        spec = ScenarioSpec(
+            intent=ScenarioIntent(label_col="is_rare", rare_mode="label",
+                                  rare_value=1, n_rows=400, seed=seed),
+            gates=ScenarioGates(privacy="none"),
+            estimand=EstimandSpec(outcome="y", predictors=["x1", "x2"], family="ols"),
+        )
+        return generate(str(csv), scenario=spec, out_dir=out)
+
+
+class TestEstimandVerify:
+    def test_declared_estimand_certifies_and_verifies(self):
+        with tempfile.TemporaryDirectory() as d:
+            s = _gen_with_estimand(d)
+            # Summary + explanation carry the verdict; aggregates carry θ_real ± SE.
+            assert s["estimand"]["declared"] is True
+            assert s["estimand"]["status"] in ("certified", "not_preserved")
+            agg = json.loads((Path(d) / "reference_aggregates.json").read_text())
+            assert "estimand_real" in agg
+            assert {"x1", "x2"} <= set(agg["estimand_real"]["coefficients"])
+            rep = verify_bundle(d)
+        est = [x for x in rep["stats"] if x["metric"] == "estimand_delta"][0]
+        assert est["status"] == "checked" and est["passed"]
+
+    def test_undeclared_estimand_is_uncheckable(self):
+        with tempfile.TemporaryDirectory() as d:
+            _gen("none", d)  # no scenario → no estimand declared
+            rep = verify_bundle(d)
+        est = [x for x in rep["stats"] if x["metric"] == "estimand_delta"][0]
+        assert est["status"] == "uncheckable"
+
+    def test_tampering_breaks_the_recomputed_coefficient(self):
+        # The load-bearing property: the certified verdict is RECOMPUTED from the
+        # delivered rows. Break a predictor's relationship and θ_synth must move —
+        # so estimand_delta fails even though the reported verdict said certified.
+        with tempfile.TemporaryDirectory() as d:
+            _gen_with_estimand(d)
+            path = Path(d) / "pass_1_accepted.parquet"
+            df = pd.read_parquet(path)
+            rng = np.random.default_rng(1)
+            df["x1"] = rng.permutation(df["x1"].to_numpy())  # kills x1↔y association
+            df.to_parquet(path, index=False)
+            rep = verify_bundle(d)
+        assert not rep["passed"]
+        est = [x for x in rep["stats"] if x["metric"] == "estimand_delta"][0]
+        assert est["status"] == "checked" and not est["passed"]
+
+
 class TestManifestAttestation:
     def test_manifest_has_hashes_and_metric_versions(self):
         with tempfile.TemporaryDirectory() as d:
