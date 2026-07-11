@@ -110,3 +110,30 @@ Enforcing the floor on integer-valued continuous columns emits a pandas
 FutureWarning about assigning float values into an int64 column before the
 re-round restores the dtype. Behaviour is correct; the assignment path should be
 made dtype-clean (cast column to float up front) before pandas 3.0.
+
+---
+
+# ESTIMAND PRESERVATION (2026-07-11 G-H build, regression-coefficient v1)
+
+## 4. Estimand certification is not yet power-aware
+**Severity:** Medium (documented scope limit, not a correctness bug).
+The `consistent` rule certifies preservation via a two-sample Wald test using
+θ_real's standard error. When the *real* data is scarce, se_real is large, θ_real's
+CI is wide, and the test becomes lenient — it can "certify" a coefficient the real
+data never pinned down. Today this is **surfaced, not failed**: each target reports
+`real_significant` (does θ_real's CI exclude 0?), so a vacuous "preservation of a
+null effect" is visible in `explanation.json` / `regen verify`. **Planned v2:** a
+readiness floor that refuses (or down-grades to `uncertifiable`) when θ_real itself
+is not credibly estimated — i.e. couple estimand certification to a power/precision
+target on θ_real, the estimand analogue of the rare-count readiness gate. The hard
+floor already holds: if θ_real cannot be *fit at all* (too few rows), certification
+is refused (`status="uncertifiable"`), never faked.
+
+## 5. Estimand v1 supports numeric predictors only
+**Severity:** Low (scope, stated up front).
+`fit_estimand` requires the outcome and predictors to be numeric; a non-numeric
+predictor raises `EstimandError` (caught by `evaluate` → `uncertifiable`, never a
+crash). Categorical/one-hot predictors and interaction terms are a v2 extension.
+The same recompute-and-certify machinery is intended to extend from coefficients
+to an ATE (declared treatment/outcome/adjustment set) without changing the
+certificate's shape.

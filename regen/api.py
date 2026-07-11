@@ -48,6 +48,7 @@ from contracts.scenario import (
     ScenarioSpec,
     ScenarioIntent,
     ScenarioGates,
+    EstimandSpec,
     columns_from_field_dict,
 )
 # Re-exported so `regen.api.preflight` works (G-E). preflight imports ingest from
@@ -1146,6 +1147,9 @@ def generate(
             delta=delta,
             min_tail_lift=(scenario.gates.min_tail_lift if scenario is not None else None),
         ),
+        # The declared estimand rides along in the vetted spec, so it persists in
+        # the manifest and reproduces bit-for-bit (Invariant 7). Undeclared → empty.
+        estimand=(scenario.estimand if scenario is not None else EstimandSpec()),
         notes=(scenario.notes if scenario is not None else ""),
         provenance=(dict(scenario.provenance) if scenario is not None else {}),
         verdicts=verdicts,
@@ -1177,6 +1181,20 @@ def generate(
     except Exception:  # yaml optional; the manifest is the source of truth
         pass
 
+    # Estimand preservation (G-H): does a declared regression coefficient recompute
+    # on the delivered data? Fit θ_real on the real reference + θ_synth on the
+    # DELIVERED batch, then certify. evaluate() never raises — an unfittable spec
+    # becomes a status, and θ_real is disclosed (± SE) so `regen verify` re-certifies
+    # without raw rows. A metric, never a value (Invariant 1); the fit reads the real
+    # data read-only and writes nothing into a synthetic row.
+    from regen.estimand import evaluate as _evaluate_estimand, reference_aggregate
+    real_full_for_estimand = pd.concat([result.normal_df, result.rare_df],
+                                        ignore_index=True)
+    estimand_assessment, estimand_real_fit = _evaluate_estimand(
+        real_full_for_estimand, full_df, vetted_spec.estimand)
+    estimand_real_agg = (reference_aggregate(estimand_real_fit, vetted_spec.estimand)
+                         if estimand_real_fit is not None else None)
+
     # Explainability (G-C): every batch explains itself from computed numbers.
     # Built AFTER the privacy block so its numbers match exactly, and written
     # BEFORE the manifest so the manifest can hash it (G-G).
@@ -1186,7 +1204,7 @@ def generate(
         normal_report=normal_report, conformance=conformance,
         privacy_out=privacy_out, lift=lift, target_region=target_region,
         aud_cfg=aud_cfg, coverage_threshold=coverage_threshold,
-        generation=gen_diag,
+        generation=gen_diag, estimand=estimand_assessment,
     )
     (out_path / "explanation.json").write_text(json.dumps(explanation, indent=2, default=str))
 
@@ -1198,7 +1216,8 @@ def generate(
         build_reference_aggregates, sha256_file, BATCH_NAME, EXPLAIN_NAME, AGG_NAME,
     )
     from regen.metrics import metric_versions
-    agg = build_reference_aggregates(result, n_normal, n_rare)
+    agg = build_reference_aggregates(result, n_normal, n_rare,
+                                     estimand_real=estimand_real_agg)
     (out_path / AGG_NAME).write_text(json.dumps(agg, indent=2, default=str))
     artifact_sha256 = {
         BATCH_NAME: sha256_file(out_path / BATCH_NAME),
@@ -1282,6 +1301,9 @@ def generate(
         "normal_fidelity": normal_fidelity,
         "privacy": privacy_out,
         "lift": lift_out,
+        # Estimand preservation: does a declared regression coefficient recompute
+        # on the delivered data? None-ish when nothing was declared.
+        "estimand": estimand_assessment,
         "config_used": {
             "mode": mode,
             "noise_scale": round(best_noise, 4),

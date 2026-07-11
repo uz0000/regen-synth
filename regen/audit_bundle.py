@@ -58,13 +58,16 @@ def sha256_file(path: str | Path) -> str:
 def build_reference_aggregates(
     result: IngestResult, n_normal: int, n_rare: int,
     min_bucket: int = DEFAULT_MIN_BUCKET,
+    estimand_real: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Aggregate statistics of the REAL reference, under the disclosure policy.
 
     Publishes: class counts, the real-rare correlation matrix over numeric
     feature columns, per-class per-column encoded moments (mean/var/count — enough
     to recompute the Fisher separation), and rare-class deciles per numeric column
-    (only when the rare class has ≥ min_bucket rows). Never any per-row value.
+    (only when the rare class has ≥ min_bucket rows). When an estimand is declared,
+    also the θ_real ± SE coefficient aggregate (from ``estimand.reference_aggregate``)
+    so ``regen verify`` can re-certify without raw rows. Never any per-row value.
     """
     from engine.prior.grounded import _encode_features
 
@@ -126,6 +129,11 @@ def build_reference_aggregates(
         agg["disclosure"]["quantiles_suppressed"] = (
             f"rare class has {n_rare_real} < {min_bucket} rows")
 
+    # Declared-estimand coefficient aggregate (θ_real ± SE) — a disclosable
+    # aggregate, same policy as the correlation matrix above.
+    if estimand_real is not None:
+        agg["estimand_real"] = estimand_real
+
     return agg
 
 
@@ -178,6 +186,7 @@ def verify_bundle(bundle_dir: str | Path) -> Dict[str, Any]:
     _verify_correlation(report, explanation, agg, rare_synth)
     _verify_fisher(report, explanation, agg)
     _verify_class_counts(report, agg, delivered, label_col)
+    _verify_estimand(report, explanation, agg, manifest, delivered)
     _mark_uncheckable(report, explanation)
 
     stats_ok = all(s["passed"] for s in report["stats"] if s["status"] == "checked")
@@ -250,6 +259,62 @@ def _verify_class_counts(report, agg, delivered, label_col):
     ok = (delivered_rare == n_rare)
     _stat(report, "class_counts", "checked", bool(ok),
           reported=n_rare, recomputed=delivered_rare)
+
+
+def _verify_estimand(report, explanation, agg, manifest, delivered):
+    """Recompute θ_synth from the DELIVERED rows and re-run certification.
+
+    θ_real ± SE is disclosed in ``agg['estimand_real']``; the spec comes from the
+    manifest. We refit θ_synth on the delivered batch, re-certify against the
+    disclosed θ_real, and check both (a) each θ_synth matches what was reported
+    (within ``estimand_delta`` tolerance) and (b) the recomputed certified verdict
+    matches the reported one. Undeclared / uncertifiable estimands are honestly
+    marked uncheckable, never faked as a pass.
+    """
+    block = explanation.get("estimand") or {}
+    real = agg.get("estimand_real")
+    if not block.get("declared") or block.get("status") in (None, "not_declared",
+                                                            "uncertifiable") or real is None:
+        _stat(report, "estimand_delta", "uncheckable",
+              note="no declared/certifiable estimand, or θ_real not in aggregates")
+        return
+
+    from contracts.scenario import EstimandSpec
+    from regen.estimand import fit_estimand, certify, EstimandError
+
+    spec_dict = (manifest.get("scenario") or {}).get("estimand") or {}
+    spec = EstimandSpec.from_dict(spec_dict) if spec_dict else EstimandSpec(
+        outcome=real.get("outcome", ""), predictors=real.get("predictors", []),
+        family=real.get("family", "ols"), rule=real.get("rule", "consistent"),
+        ci_level=real.get("ci_level", 0.95),
+    )
+    try:
+        synth_fit = fit_estimand(delivered, spec)
+    except EstimandError as e:
+        _stat(report, "estimand_delta", "uncheckable",
+              note=f"could not refit θ_synth on delivered data: {e}")
+        return
+
+    real_fit = {"coefficients": real.get("coefficients", {}),
+                "n": real.get("n"), "dof": real.get("dof")}
+    recomputed = certify(real_fit, synth_fit, spec)
+
+    tol = max(tolerance("estimand_delta"), 1e-6)
+    reported_targets = {t["coefficient"]: t for t in block.get("targets", [])}
+    worst = 0.0
+    for t in recomputed["targets"]:
+        rep = reported_targets.get(t["coefficient"])
+        if rep is None or rep.get("theta_synth") is None or t.get("theta_synth") is None:
+            continue
+        worst = max(worst, abs(float(rep["theta_synth"]) - float(t["theta_synth"])))
+    coefs_ok = worst <= tol
+    verdict_ok = bool(recomputed["certified"]) == bool(block.get("certified"))
+    _stat(report, "estimand_delta", "checked", bool(coefs_ok and verdict_ok),
+          reported={"certified": block.get("certified")},
+          recomputed={"certified": recomputed["certified"],
+                      "max_theta_synth_diff": f"{worst:.2e}"},
+          note=("θ_synth refit from delivered rows; certified verdict re-derived "
+                "against disclosed θ_real ± SE"))
 
 
 def _mark_uncheckable(report, explanation):

@@ -37,6 +37,7 @@ ROLES = ("feature", "identifier", "timestamp", "target", "free_text")
 DTYPES = ("integer", "float", "categorical", "boolean", "datetime")
 TASKS = ("detector_training", "data_sharing", "benchmarking", "exploration")
 SOURCES = ("user", "structural", "model")
+FAMILIES = ("ols", "logit")  # regression families an estimand may declare
 
 
 # ── Per-column semantics (the L1 contract from SEMANTIC_FIDELITY_PLAN §3) ──────
@@ -179,6 +180,68 @@ class ScenarioGates:
         return cls(**{k: d[k] for k in d if k in cls.__dataclass_fields__})
 
 
+# ── Estimand: the analysis whose ESTIMATE the synthetic data must preserve ─────
+
+@dataclass
+class EstimandSpec:
+    """A declared analysis whose *estimate* the synthetic data must preserve.
+
+    An estimand is the target quantity of an analysis. v1 supports **regression
+    coefficients**: fit ``outcome ~ predictors`` (``family`` = ols | logit) on the
+    real reference to get θ_real ± CI, fit the *same* spec on the delivered
+    synthetic to get θ_synth, and CERTIFY preservation iff every
+    coefficient-of-interest's θ_synth lands within θ_real's confidence interval.
+
+    This is a guarantee distinct from fidelity (marginals/correlations) and TSTR
+    (prediction): a batch can pass both while a coefficient silently shifts (a
+    copula flattens an interaction; tail amplification re-weights the rare
+    stratum). Certification is recomputed by ``regen verify`` from the delivered
+    data + the disclosed θ_real ± CI in ``reference_aggregates.json`` — never from
+    a cached verdict, and never from raw real rows.
+
+    Empty (``outcome == ""``) → no estimand declared; the certificate omits it.
+    Only decisions/metrics are derived from a spec — never a synthetic value
+    (Invariant 4). The spec persists in the manifest, so the estimand and its
+    verdict reproduce bit-for-bit (Invariant 7).
+    """
+    outcome: str = ""                                     # dependent-variable column
+    predictors: List[str] = field(default_factory=list)   # regressor columns
+    family: str = "ols"                                   # one of FAMILIES
+    # Subset of predictors whose recovery is certified; [] → every predictor.
+    coefficients_of_interest: List[str] = field(default_factory=list)
+    ci_level: float = 0.95                                # confidence level for θ_real / the test
+    # Certification rule. "consistent" (default): θ preserved iff θ_real and
+    # θ_synth are indistinguishable beyond their combined standard error — a
+    # two-sample Wald test, |Δ| ≤ z·√(se_real²+se_synth²). "within_ci" (stricter,
+    # ignores synth uncertainty): θ_synth must lie inside θ_real's CI.
+    rule: str = "consistent"
+
+    def declared(self) -> bool:
+        """True once an estimand is actually specified (outcome + ≥1 predictor)."""
+        return bool(self.outcome and self.predictors)
+
+    def targets(self) -> List[str]:
+        """Coefficients to certify: the declared subset, or all predictors."""
+        return list(self.coefficients_of_interest) or list(self.predictors)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "outcome": self.outcome,
+            "predictors": list(self.predictors),
+            "family": self.family,
+            "coefficients_of_interest": list(self.coefficients_of_interest),
+            "ci_level": self.ci_level,
+            "rule": self.rule,
+        }
+
+    @classmethod
+    def from_dict(cls, d: Dict[str, Any]) -> "EstimandSpec":
+        d = dict(d or {})
+        d["predictors"] = list(d.get("predictors") or [])
+        d["coefficients_of_interest"] = list(d.get("coefficients_of_interest") or [])
+        return cls(**{k: d[k] for k in d if k in cls.__dataclass_fields__})
+
+
 # ── The whole use case ────────────────────────────────────────────────────────
 
 @dataclass
@@ -186,6 +249,9 @@ class ScenarioSpec:
     columns: Dict[str, ColumnSemantics] = field(default_factory=dict)
     intent: ScenarioIntent = field(default_factory=ScenarioIntent)
     gates: ScenarioGates = field(default_factory=ScenarioGates)
+    # The analysis whose estimate the synthetic data must preserve (optional;
+    # undeclared → the certificate omits estimand preservation).
+    estimand: EstimandSpec = field(default_factory=EstimandSpec)
     notes: str = ""
     # Provenance for non-column fields, e.g. {"intent.label_col": "user"}.
     # Per-column provenance lives on each ColumnSemantics (source/confidence).
@@ -202,6 +268,7 @@ class ScenarioSpec:
             "notes": self.notes,
             "intent": self.intent.to_dict(),
             "gates": self.gates.to_dict(),
+            "estimand": self.estimand.to_dict(),
             "provenance": dict(self.provenance),
             "verdicts": [v.to_dict() for v in self.verdicts],
             # column order preserved (dict is insertion-ordered)
@@ -215,6 +282,7 @@ class ScenarioSpec:
             columns=cols,
             intent=ScenarioIntent.from_dict(d.get("intent", {})),
             gates=ScenarioGates.from_dict(d.get("gates", {})),
+            estimand=EstimandSpec.from_dict(d.get("estimand", {})),
             notes=d.get("notes", ""),
             provenance=dict(d.get("provenance", {})),
             verdicts=[VettingVerdict.from_dict(v) for v in d.get("verdicts", [])],

@@ -103,6 +103,17 @@ carry the use-case context and the assurances around a batch:
   from computed numbers only (`docs/EXPLAINABILITY.md`).
 - **Auditability** (`regen/audit_bundle.py`, `regen/metrics.py`) — `regen verify`
   recomputes every statistic from a self-contained bundle (`docs/METHODS.md`).
+- **Estimand preservation** (`regen/estimand.py`) — an optional `EstimandSpec` on
+  the ScenarioSpec declares an analysis (`outcome ~ predictors`, family ols|logit)
+  whose *estimate* the synthetic data must preserve. REGEN fits θ_real on the real
+  reference and θ_synth on the delivered batch and certifies each coefficient is
+  recovered (two-sample Wald consistency test at `ci_level`). Distinct from fidelity
+  (marginals/correlations) and TSTR (prediction): a batch can pass both while a
+  coefficient shifts. θ_real ± SE is a disclosed aggregate, so `regen verify` refits
+  θ_synth from the delivered rows and re-certifies (`estimand_delta` metric) — never
+  from a cached verdict. Deterministic, no LLM, no new dependency (numpy + scipy):
+  a coefficient is a metric, never a value (Invariant 1). Undeclared / unfittable →
+  an honest `not_declared` / `uncertifiable` status, never a faked pass.
 - **Preflight** (`regen/preflight.py`) — `regen doctor` checks a dataset against
   the supported envelope before generation (`docs/CAPABILITY_MATRIX.md`).
 
@@ -225,6 +236,7 @@ Each milestone delivers standalone value. M0–M4 are complete and green.
 | M5 | API + entry points | `regen.api.run_campaign()` unifies the loop; CLI, FastAPI server, and demo wrap it. (The earlier "agent runtime" milestone was removed — the loop is plain Python.) | ✅ |
 | M6 | Structured run-state store | (Deferred) Persist batch lineage / target log / fidelity stats to a queryable store for cross-run observability. | ⏳ |
 | M7 | (optional)       | (Deferred) Reasoning-Scout or Stylist via a plain model call (§4); Neo4j ingestion for analysis. | ⏳ |
+| M8 | Estimand preservation | Declare a regression estimand; certify θ_synth recovers θ_real and recompute it in `regen verify`. Regression-coefficient v1 done (`regen/estimand.py`); power-aware certification + categorical predictors + ATE are v2 (`docs/KNOWN_ISSUES.md`). | ✅ |
 
 ---
 

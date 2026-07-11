@@ -724,3 +724,70 @@ with real specificity.
   ("improves ML performance" → "for rare-event problems … with a re-checkable
   certificate") and added the single-table/cross-sectional scope line. Old
   `RESULTS_BREADTH.md` kept but labelled as pre-leakage-free.
+
+---
+
+## Session 2026-07-11 — Estimand preservation (G-H), regression-coefficient v1
+
+New guarantee (not an audit finding): extend the recomputable certificate from
+"correlations recompute" to "**the declared regression coefficient recomputes on
+the delivered data**". A researcher declares an analysis (`EstimandSpec`:
+`outcome ~ predictors`, family ols|logit); REGEN fits θ_real on the real reference
+and θ_synth on the delivered batch and certifies that each coefficient of interest
+is preserved. This is orthogonal to fidelity (marginals/correlations) and TSTR
+(prediction): a batch can pass both while a coefficient silently shifts. Deterministic,
+no LLM, no new dependency; the estimator is closed-form OLS + IRLS logit (numpy +
+scipy only) so `regen verify` recomputes it to a fixed tolerance on any machine.
+
+- **Contract (`contracts/scenario.py`).** Added `EstimandSpec` (outcome, predictors,
+  family, coefficients_of_interest, ci_level, rule) as a first-class field on
+  `ScenarioSpec`, serialized in every `to_dict`/`from_dict`/YAML path. Persists in
+  the manifest → reproduces bit-for-bit (Invariant 7). Old specs with no `estimand`
+  key still load (undeclared). `FAMILIES = ("ols","logit")`.
+- **Estimator (`regen/estimand.py`, NEW).** `fit_estimand` — OLS via normal
+  equations + t-interval; logit via Newton/IRLS + Wald interval from the inverse
+  Fisher information. `certify` compares θ_synth to θ_real. `evaluate` orchestrates
+  (never raises — an unfittable spec becomes a status). `reference_aggregate` emits
+  the disclosed θ_real ± SE block.
+- **Certification rule — design fix found by a test.** The first rule (θ_synth ∈
+  θ_real's CI) *ignored the synthetic sample's own uncertainty* and false-failed on
+  two independent draws from the identical process. Replaced with a **two-sample
+  Wald consistency test**: preserved iff `|θ_real − θ_synth| ≤ z·√(se_real²+se_synth²)`
+  at `ci_level`. Reduces to the CI check as the synthetic set grows (se_synth→0).
+  Default `rule="consistent"`; `within_ci` kept as the stricter option. Per target
+  we also surface `real_significant` (does θ_real's CI exclude 0?) — preserving a
+  null effect is vacuous; surfaced now, power-aware failing is a documented v2.
+- **Generation (`regen/api.py`).** The vetted spec now carries the estimand;
+  `generate()` fits real + delivered, writes the verdict into `explanation.json`
+  (`estimand` block, always present — `not_declared` when absent) and the summary
+  (`estimand` key), and publishes θ_real ± SE into `reference_aggregates.json`.
+- **Verify (`regen/audit_bundle.py` + `regen/metrics.py`).** New metric
+  `estimand_delta` (v1, tol 1e-6, recomputable-from-aggregates). `_verify_estimand`
+  refits θ_synth from the delivered rows, re-certifies against the disclosed θ_real,
+  and checks both each θ_synth (within tolerance) and the certified verdict.
+  Undeclared/uncertifiable → honestly `uncheckable`, never a fake pass.
+- **Readiness coupling (Phase 4, honest floor).** When θ_real (or θ_synth) cannot
+  be fit — too few complete rows, non-binary logit outcome — `evaluate` returns
+  `status="uncertifiable", certified=False` with a reason. The verification gap is
+  never filled with synthetic data.
+
+**Before:** no estimand concept; the certificate covered fidelity/privacy/lift only.
+`grep -n EstimandSpec contracts/scenario.py` → nothing.
+
+**After (repro):**
+- `python -m pytest tests/test_estimand.py tests/test_scenario.py tests/test_audit.py -q`
+  → **34 passed**. Includes the headline properties: a coefficient driven 2.0→0.0
+  fails `certify`; a batch whose delivered predictor is permuted (θ_synth moves)
+  fails `estimand_delta` under `regen verify` even though the reported verdict said
+  certified (the certificate is recomputed from data, not trusted).
+- End-to-end smoke (declared OLS `y ~ x1 + x2`, `privacy="none"`, n_rows=400): summary
+  `estimand.status=certified`; `reference_aggregates.json` carries `estimand_real`
+  (coeffs Intercept/x1/x2); `verify_bundle` → `estimand_delta` **checked & passed**,
+  `max_theta_synth_diff = 0.00e+00`.
+- Regression: `python -m pytest tests/test_api.py tests/test_boundary.py -q` →
+  **66 passed** (boundary invariant holds — estimator is in `regen/`, not `engine/`).
+
+**Deferred (documented in KNOWN_ISSUES):** power-aware certification (scarce real
+data → wide θ_real CI → the consistency test is lenient; today surfaced via
+`real_significant`, not failed); categorical/one-hot predictors (v1 is numeric-only);
+extending the same recompute-and-certify machinery from coefficients to an ATE.

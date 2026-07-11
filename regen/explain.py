@@ -104,6 +104,7 @@ def build_explanation(
     aud_cfg,
     coverage_threshold: float,
     generation: Optional[Dict[str, Any]] = None,
+    estimand: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Assemble the explanation dict for a generate() run (all computed numbers)."""
     generation = generation or {}
@@ -171,6 +172,12 @@ def build_explanation(
             vetted_spec, vetted_spec.gates.privacy, rare_fallback),
         "scout": scout,
         "utility": utility,
+        # Estimand preservation (G-H): does a declared regression coefficient
+        # recompute on the delivered data? Absent/undeclared → a "not_declared"
+        # block, never omitted, so the certificate is explicit about what it covers.
+        "estimand": {**(estimand or {"declared": False, "status": "not_declared",
+                                     "certified": None}),
+                     **_cite("estimand_delta")},
         "privacy": privacy_out,
         # Which base generator actually ran per part — records a
         # parametric→grounded fallback so a mechanism switch is never silent.
