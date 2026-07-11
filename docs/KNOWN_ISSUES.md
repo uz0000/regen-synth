@@ -137,3 +137,22 @@ crash). Categorical/one-hot predictors and interaction terms are a v2 extension.
 The same recompute-and-certify machinery is intended to extend from coefficients
 to an ATE (declared treatment/outcome/adjustment set) without changing the
 certificate's shape.
+
+## 6. REGEN's generator does not preserve estimands on discrete non-linear predictors (V2 TARGET)
+**Severity:** Medium (a real generation-quality gap; the certifier correctly flags it).
+On real UCI credit-default data (`examples/certifier_demo/`), REGEN's synthetic
+passes every fidelity check but shifts the logit coefficient of `pay_delay_1` (a
+discrete ordinal, the strongest predictor) from +0.71 to ~+0.93, consistently
+across all modes/ratios (so it is **not** class-rebalancing). The multi-generator
+demo shows this is **not specific to REGEN**: a plain Gaussian copula (+0.46) and
+SMOTE (+0.61) fail the same coefficient. **Diagnosis (working hypothesis):**
+methods that preserve marginals + linear/rank correlation do not preserve the
+*conditional* structure a regression coefficient depends on — worst for discrete,
+non-linear, high-signal predictors; smooth continuous predictors (`log_limit`,
+`age`) are mostly preserved. Contrast: a bootstrap of the real data certifies (it
+preserves the joint). **v2 investigation:** isolate the mechanism (marginal vs
+conditional; noise-induced regression dilution vs copula linearisation vs
+partial-effect redistribution between correlated predictors) and find a generation
+change that preserves the conditional structure — **within Invariant 1** (no
+coefficient injection; the fix must be better generation, not faked values). Will
+need its own demo. See `docs/BUILDLOG.md` session 2026-07-11 (b).

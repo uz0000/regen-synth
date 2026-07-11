@@ -791,3 +791,45 @@ scipy only) so `regen verify` recomputes it to a fixed tolerance on any machine.
 data → wide θ_real CI → the consistency test is lenient; today surfaced via
 `real_significant`, not failed); categorical/one-hot predictors (v1 is numeric-only);
 extending the same recompute-and-certify machinery from coefficients to an ATE.
+
+---
+
+## Session 2026-07-11 (b) — Generator-agnostic certifier + multi-generator demo
+
+Strategic reframe (user-decided): the **certifier is the product, not the
+generator**. The certificate is generator-agnostic — it certifies whether *any*
+synthetic dataset preserves a declared analysis, whoever produced it. REGEN's
+generator is demoted to a reference implementation + test fixture.
+
+- **`regen/certifier.py` (NEW).** `certify_dataset(real_df, synthetic_df, estimand)`
+  → a portable certificate (verdict, per-coefficient θ_real vs θ_synth, rule/CI,
+  metric version, source label, **θ_real ± SE disclosed** so it re-checks against
+  the synthetic alone). `certify_many(real_df, {name: df}, estimand)` certifies the
+  same estimand across sources (θ_real identical; only θ_synth varies). Thin,
+  generator-agnostic wrapper over `estimand.evaluate` — never raises.
+- **`examples/certifier_demo/` (NEW).** Real UCI credit-default data (30k rows,
+  `prepare_data.py` documents provenance from the UCI .xls; `credit_default.csv`
+  committed, 825K). `run_demo.py` certifies one logit — `default ~ pay_delay_1 +
+  utilization + log_limit + age` — across six producers: bootstrap (positive
+  control), independent-columns (negative control), 0.5σ-noised real, a Gaussian
+  copula, SMOTE (imblearn), and REGEN.
+
+**Observed (repro: `python examples/certifier_demo/run_demo.py`):**
+- bootstrap → **CERTIFIED** (all 4 preserved); independent → refused (all 4 collapse
+  to ~0). The certifier discriminates — not an always-fail.
+- **Every practical method is refused, and every one breaks `pay_delay_1`** (the
+  strongest, discrete, non-linear predictor): copula +0.71→+0.46, SMOTE →+0.61,
+  noised →+0.52, REGEN →+0.93; smooth predictors (`log_limit`, `age`) mostly survive.
+  Fidelity/prediction would flag none of this.
+- 1/6 certified. Same θ_real across all rows — provenance-independent.
+
+**Tests:** `python -m pytest tests/test_certifier.py tests/test_certifier_demo.py -q`
+→ **5 passed** (faithful certifies, distorted refused, unfittable→uncertifiable not
+crash, θ_real identical across sources; demo headline guarded on the committed CSV,
+fast path excludes REGEN/SMOTE).
+
+**Finding → v2 target:** the coefficient hardest to preserve is the discrete,
+high-signal `pay_delay_1`, and **all** marginals-plus-linear-correlation methods
+(Gaussian copula, REGEN, and SMOTE via interpolation) fail it. This sharpens the v2
+generator investigation (KNOWN_ISSUES #6): why do such methods lose the conditional
+structure of discrete non-linear predictors, and what generation change preserves it?
