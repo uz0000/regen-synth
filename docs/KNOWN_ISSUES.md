@@ -137,3 +137,70 @@ crash). Categorical/one-hot predictors and interaction terms are a v2 extension.
 The same recompute-and-certify machinery is intended to extend from coefficients
 to an ATE (declared treatment/outcome/adjustment set) without changing the
 certificate's shape.
+
+## 6. REGEN's generator does not preserve estimands on discrete non-linear predictors (V2 TARGET)
+**Severity:** Medium (a real generation-quality gap; the certifier correctly flags it).
+On real UCI credit-default data (`examples/certifier_demo/`), REGEN's synthetic
+passes every fidelity check but shifts the logit coefficient of `pay_delay_1` (a
+discrete ordinal, the strongest predictor) from +0.71 to ~+0.93, consistently
+across all modes/ratios (so it is **not** class-rebalancing). The multi-generator
+demo shows this is **not specific to REGEN**: a plain Gaussian copula (+0.46) and
+SMOTE (+0.61) fail the same coefficient. **Diagnosis (CONFIRMED by univariate-vs-multivariate diagnostic, 2026-07-11):**
+the marginal distribution of `pay_delay_1` is preserved everywhere (why fidelity
+passes), but the **conditional relationship `P(default | pay_delay)` is distorted**,
+and it is a marginal-level distortion — the univariate and multivariate coefficients
+move *together* per generator (real 0.74/0.71, REGEN 0.97/0.93, copula 0.47/0.46),
+which **rules out partial-effect redistribution** between correlated predictors.
+Two opposite mechanisms, same failure: (a) the **Gaussian copula linearises** a
+threshold dependence — `pay_delay` has a non-linear jump (P(default) 0.70 at pay≥2
+vs lower below), which a single linear rank-correlation cannot represent → it flattens
+it → coefficient collapses (corr 0.325→0.218); (b) **REGEN's amplifier over-represents
+the tail** — densifying the rare/default region (where pay_delay is high) steepens the
+gradient (P(default|pay≥2) 0.696→0.766) → coefficient inflates (corr 0.325→0.417).
+**Key tension:** REGEN's rare-event amplification (its detection-lift value) reshapes
+P(y|x) BY CONSTRUCTION — you cannot maximise amplification and preserve the estimand
+at once. **v2 fix direction:** estimand preservation needs generation from the real
+**conditional** P(y|x), not marginals+dependence — e.g. draw x from the joint, then
+draw y from a flexible calibrated model of the *real* conditional (preserves whatever
+the real conditional is, coefficients included, with NO coefficient injection —
+Invariant 1 holds; values come from a statistical model sampled, not a declared
+number). For REGEN: an explicit "estimand-preserving mode" trading amplification for
+conditional fidelity. Needs its own demo. See `docs/BUILDLOG.md` session 2026-07-11 (b).
+
+**FIX-VALIDATION experiment (2026-07-11) — the fix has TWO requirements, not one.**
+Reconstructing `y` from a flexible real conditional P(y|x) (gradient-boosted, not a
+logit → no form injection) over several x-sources:
+- With **faithful x** (bootstrap of real predictors), `pay_delay_1` recovers almost
+  exactly (+0.711 vs +0.714 real; raw REGEN was +0.93). The primary distortion IS in
+  P(y|x), and conditional resampling fixes it. ✔ mechanism validated.
+- With **copula-x / independent-x**, `utilization` stays wrong and **flips sign**
+  (+0.086 / +0.202 vs −0.369 real) despite a correct P(y|x). A logit coefficient is a
+  *partial* effect depending on **cov(x)**, which those x-sources distort.
+- Even bootstrap-x overshoots `utilization` (−0.481 vs −0.369): a conditional-*model*-
+  fidelity gap (GB's logit projection ≠ real logit). Addressable.
+
+**Refined v2 requirements:** estimand-preserving generation needs BOTH (R1) the
+predictor **joint/dependence** structure right (beyond marginals + linear correlation
+— utilization is sensitive to this) AND (R2) `y` drawn from a well-calibrated real
+**conditional** P(y|x) (pay_delay is sensitive to this). A naive "resample y only" fix
+satisfies R2 alone and would silently ship a sign-flipped utilization — which is why
+this was validated before building. Bootstrap satisfies both (it is real data) → the
+target behaviour. Smooth predictors (`log_limit`, `age`) are insensitive to both.
+
+**GENERALITY confirmed (2026-07-11):** the same R1/R2 structure replicates on a
+different dataset AND estimand family — **OLS `MedHouseVal ~ MedInc + HouseAge +
+AveRooms + Latitude` on California housing** (20,640 rows): bootstrap preserves;
+Gaussian copula distorts (AveRooms −0.14→−0.19); conditional-resample over
+bootstrap-x recovers all four; conditional-resample over copula-x still distorts the
+partial coefficients (MedInc 0.49→0.43, AveRooms 0.14→0.10). Nuance: the distortion
+is **milder** here (no sign flips) because these predictors are smoother/more linear
+than the discrete-threshold `pay_delay_1` — **estimand-loss magnitude scales with how
+non-linear/discrete the predictor↔outcome relationship is.** Mechanism general;
+severity data-dependent. **Also uncovered — a three-way tension:** R1 (preserve the
+predictor joint) collides with **privacy** (keeping x close to real = copying records;
+the verbatim guard forbids it), and with **amplification** (reshapes the tail). No
+generator maximises estimand + privacy + amplification at once (bootstrap wins
+estimand, loses privacy; floored+amplified REGEN wins privacy, loses estimand). The
+certifier's role is to make this surface **measurable** so an operating point is
+chosen deliberately — that reframes v2 from "fix the generator" to "expose and price
+the tradeoff."
