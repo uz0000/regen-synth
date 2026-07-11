@@ -138,7 +138,7 @@ The same recompute-and-certify machinery is intended to extend from coefficients
 to an ATE (declared treatment/outcome/adjustment set) without changing the
 certificate's shape.
 
-## 6. REGEN's generator does not preserve estimands on discrete non-linear predictors (V2 TARGET)
+## 6. REGEN's generator does not preserve estimands on discrete non-linear predictors (v2 fix built — `regen/estimand_preserving.py`)
 **Severity:** Medium (a real generation-quality gap; the certifier correctly flags it).
 On real UCI credit-default data (`examples/certifier_demo/`), REGEN's synthetic
 passes every fidelity check but shifts the logit coefficient of `pay_delay_1` (a
@@ -204,3 +204,22 @@ estimand, loses privacy; floored+amplified REGEN wins privacy, loses estimand). 
 certifier's role is to make this surface **measurable** so an operating point is
 chosen deliberately — that reframes v2 from "fix the generator" to "expose and price
 the tradeoff."
+
+**v2 FIX BUILT (2026-07-11) — `regen/estimand_preserving.py`.** The construction that
+preserves a declared estimand, validated on the credit demo (certifies where copula,
+SMOTE, REGEN, and every perturbation method are refused): **R1** sample predictors from
+a **Gaussian-mixture model of the real joint** (novel rows — *not* perturbed real rows;
+perturbation was falsified — it never certifies at any privacy level, regardless of
+noise shape, incl. covariance-shaped); **R2** draw the outcome from a **calibrated GB
+model of the real conditional P(y|x)** (never the declared coefficient → no injection;
+Invariants 1/4 hold). Two implementation notes that mattered: (a) **standardise
+predictors before the GMM** — a full-covariance GMM on raw columns is dominated by
+large-scale features and models the small-scale joint (hence its partials) poorly;
+standardising took certification from ~3/9 to ~7/8 across seeds; (b) richer mixtures
+preserve better but sit closer to real → **the privacy↔inference tradeoff persists**:
+the generator makes novel rows (no verbatim copies) but at *modest* privacy distance
+(median NN ≈ 0.1–0.16σ, below a strong δ-floor), and perturbing them for more privacy
+re-breaks the coefficients. So the frontier is now **navigable** (certify with novel
+synthetic data — impossible via perturbation) but **not defeated**. Demo row:
+`estimand_preserving (GMM+cond,v2)` in `examples/certifier_demo/` → CERTIFIED. Tests:
+`tests/test_estimand_preserving.py`.

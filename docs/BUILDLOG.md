@@ -833,3 +833,37 @@ high-signal `pay_delay_1`, and **all** marginals-plus-linear-correlation methods
 (Gaussian copula, REGEN, and SMOTE via interpolation) fail it. This sharpens the v2
 generator investigation (KNOWN_ISSUES #6): why do such methods lose the conditional
 structure of discrete non-linear predictors, and what generation change preserves it?
+
+---
+
+## Session 2026-07-11 (c) — v2: estimand-preserving generation (the fix)
+
+Solved the KNOWN_ISSUES #6 gap: synthetic data that a *declared estimand survives*,
+certified on the same real credit data where every marginals-based method is refused.
+
+- **Investigation first (falsified the easy fix).** Perturbing real rows for privacy
+  never certifies at any privacy level — covariance-shaped noise only marginally beats
+  independent noise (worst z 8.5 vs 9.8 at λ=0.5), neither passes. Then a Gaussian
+  mixture of the predictor **joint** + a calibrated conditional certified: GMM k=1
+  (≈copula) fails; k≥5 certifies with novel rows (min NN > 0). Richer k → better
+  fidelity but closer to real (k=40 → med NN 0.078) — the tradeoff persists.
+- **`regen/estimand_preserving.py` (NEW).** `generate_estimand_preserving(real_df,
+  estimand, ...)`: R1 GMM of the real predictor joint (novel rows), R2 outcome from a
+  calibrated GB model of the real conditional P(y|x). Handles logit + OLS. Deterministic;
+  values from statistical models sampled, never the declared coefficient (Invariants 1/4).
+- **Standardisation was the load-bearing fix.** A full-covariance GMM on raw columns is
+  dominated by large-scale features (`log_limit`~11 vs `utilization`~0.3) and models the
+  small-scale joint poorly → borderline, seed-dependent certification (~3/9). Standardising
+  predictors before the GMM → ~7/8 across seeds; k=20 certifies all tested seeds.
+
+**Observed (repro: `python examples/certifier_demo/run_demo.py`):** the demo gains a
+`estimand_preserving (GMM+cond,v2)` row → **CERTIFIED** (pay_delay +0.731 vs real +0.714,
+utilization −0.483 vs −0.369, log_limit −0.330 vs −0.315, age +0.009 vs +0.010). 2/7
+sources certified (bootstrap + v2); all marginals-based methods still refused.
+
+**Honest limit:** certifies with novel rows at *modest* privacy (median NN ≈ 0.1–0.16σ,
+below a strong δ-floor); perturbing for more privacy re-breaks the coefficients. Frontier
+navigable, not defeated.
+
+**Tests:** `python -m pytest tests/test_estimand_preserving.py -q` → **4 passed**
+(certifies where baselines fail on real credit data; OLS path; determinism; guards).
