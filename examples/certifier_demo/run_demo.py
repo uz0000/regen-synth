@@ -86,6 +86,14 @@ def g_regen(real):
         s = generate(str(CSV), scenario=spec, out_dir=d)
         return pd.read_parquet(s["best_batch_path"])[COLS]
 
+def g_estimand_preserving(real):
+    """v2: GMM model of the predictor joint + calibrated real conditional P(y|x).
+    Preserves the declared analysis where the marginals+correlation methods fail."""
+    from regen.estimand_preserving import generate_estimand_preserving
+    return generate_estimand_preserving(
+        real, EstimandSpec(outcome="default", predictors=PREDICTORS, family="logit"),
+        n_rows=N, seed=SEED)
+
 
 def main():
     real = pd.read_csv(CSV)
@@ -100,6 +108,7 @@ def main():
         "gaussian_copula (marginals+corr)":   g_gaussian_copula,
         "SMOTE           (imblearn)":         g_smote,
         "REGEN           (this repo)":        g_regen,
+        "estimand_preserving (GMM+cond,v2)":  g_estimand_preserving,
     }
     synthetics = {name: fn(real) for name, fn in producers.items()}
     certs = certify_many(real, synthetics, spec)

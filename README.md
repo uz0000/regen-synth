@@ -66,11 +66,20 @@ survives, not provenance. Full write-up: [`examples/certifier_demo/README.md`](e
 Preserving inference and protecting privacy pull against each other. Measured on
 the credit data, full certification collapses at ~0.1σ of privacy noise — *before*
 you gain meaningful privacy — because a regression coefficient depends on the
-predictor joint that perturbation distorts. There is often no operating point with
-both full certification and strong privacy; the certifier's value is telling you,
+predictor joint that perturbation distorts. The certifier's value is telling you,
 **per conclusion**, exactly where you are on that frontier instead of shipping data
-everyone falsely believes preserves their analysis. Details and the diagnosed
-mechanism: [`docs/KNOWN_ISSUES.md`](docs/KNOWN_ISSUES.md) (#4–#6).
+everyone falsely believes preserves their analysis.
+
+**Preserving inference — the v2 generator** ([`regen/estimand_preserving.py`](regen/estimand_preserving.py)).
+`generate_estimand_preserving(real_df, estimand)` produces synthetic data a declared
+analysis *survives* — it models the predictor **joint** with a Gaussian mixture (novel
+rows, not perturbed real ones) and draws the outcome from a calibrated model of the
+**real conditional** P(y|x) (never the declared coefficient, so nothing is injected).
+On the demo it **certifies** where the copula, SMOTE, REGEN, and every perturbation
+method are refused — the `estimand_preserving` row above. The honest cost: it stays
+faithful to the real joint, so it trades away privacy *distance* (novel rows, but
+nearer real than a strong δ-floor). The frontier is navigable, not free. Mechanism,
+fix-validation, and generality (OLS + a second dataset): [`docs/KNOWN_ISSUES.md`](docs/KNOWN_ISSUES.md) (#4–#6).
 
 ---
 
