@@ -687,13 +687,13 @@ with real specificity.
   - Tests: `tests/test_scenario_proposal.py::TestTargetTieBreak` (3) — honest offline
     error, model breaks tie from goal (provenance recorded), invalid pick → error.
     Fake caller branches on the prompt so one injected caller serves both calls.
-- **Media specificity (`showcase/how-it-works.md`, NEW).** The "how exactly?" layer:
+- **Mechanism reference (`docs/HOW_IT_WORKS.md`, NEW).** The "how exactly?" layer:
   (1) the full target-scoring formula + weights + the useful-band disqualifiers + the
   ambiguity refusal + the tie-break LLM and its guardrails/why; (2) the 3-model
   ROC-AUC/TSTR panel (LogReg/RF/GBDT, target=rare-vs-rest, features=the rest,
   TSTR/TRTR, recovered=median, refusal + >1.05 flag); (3) other nameable specifics
   (copula 0.331→0.101, δ-floor mechanics, Auditor's four statistics, bit-repro,
-  `regen verify`). Linked from `showcase/README.md`.
+  `regen verify`).
 - **Verified:** full suite green (see run below); offline `draft_scenario` unchanged
   (structural draft, no calls); tie-break exercised only via injected caller in tests.
 

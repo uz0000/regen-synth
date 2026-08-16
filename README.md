@@ -154,13 +154,14 @@ baseline is genuinely starved of rare examples.
 
 ## Documentation
 
-- Known limits, the v2 investigation + frontier: [`docs/KNOWN_ISSUES.md`](docs/KNOWN_ISSUES.md)
-- Build log (every change, before/after observed): [`docs/BUILDLOG.md`](docs/BUILDLOG.md)
+- Known limits + the v2 investigation and its correction: [`docs/KNOWN_ISSUES.md`](docs/KNOWN_ISSUES.md)
+- How each mechanism actually works: [`docs/HOW_IT_WORKS.md`](docs/HOW_IT_WORKS.md)
 - System layout — how the components connect and why: [`docs/PRODUCT_SPEC.md`](docs/PRODUCT_SPEC.md)
 - Method ↔ file ↔ why, plus FAQ: [`docs/COMPONENT_GUIDE.md`](docs/COMPONENT_GUIDE.md)
 - Privacy (what's guaranteed and what isn't): [`docs/PRIVACY.md`](docs/PRIVACY.md)
 - Statistical methods + verification: [`docs/METHODS.md`](docs/METHODS.md)
 - What's supported, degraded, or out of scope: [`docs/CAPABILITY_MATRIX.md`](docs/CAPABILITY_MATRIX.md)
+- Build log (every change, with before/after numbers): [`docs/BUILDLOG.md`](docs/BUILDLOG.md)
 
 ## License
 

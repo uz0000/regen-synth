@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Does your synthetic data preserve the conclusion?</title>
+<style>
+  :root {
+    color-scheme: light;
+    --paper: #DADCDE;
+    --surface: #FFFFFF;
+    --ink: #1C1F23;
+    --muted: #5C6066;
+    --faint: #767A80;
+    --rule: #C6C9CC;
+    --rule-strong: #AEB2B6;
+    --accent: #2C2E31;
+    --accent-soft: #ECEDEE;
+    --pass: #1F7A46;
+    --pass-soft: #D9E7DD;
+    --fail: #B23A25;
+    --fail-soft: #F0DDD6;
+    --shadow: 0 1px 2px rgba(30,35,40,.06), 0 8px 30px rgba(30,35,40,.08);
+
+    /* one typeface throughout — a single clean sans */
+    --f-display: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, "Helvetica Neue", Arial, sans-serif;
+    --f-body: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, "Helvetica Neue", Arial, sans-serif;
+    --f-mono: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, "Helvetica Neue", Arial, sans-serif;
+
+    --measure: 68ch;
+    --wide: 1060px;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--paper); color: var(--ink);
+    font-family: var(--f-body);
+    font-size: 17px; line-height: 1.65;
+    -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
+  }
+  .wrap { width: 100%; max-width: var(--wide); margin: 0 auto; padding: 0 28px; }
+  .col { max-width: var(--measure); }
+
+  h1, h2, h3 { font-family: var(--f-display); font-weight: 700; text-wrap: balance; letter-spacing: -.021em; }
+  p { margin: 0 0 1.1em; }
+  a { color: var(--accent); text-underline-offset: 3px; }
+
+  html { counter-reset: section; }
+  .kicker {
+    font-family: var(--f-mono); font-size: .72rem; letter-spacing: .18em;
+    text-transform: uppercase; color: var(--muted); font-weight: 600;
+    display: inline-flex; align-items: baseline; gap: .75em; margin: 0 0 1.3em;
+  }
+  .kicker::before { content: ""; align-self: center; width: 24px; height: 1px; background: var(--rule-strong); }
+  section .kicker::before {
+    counter-increment: section; content: counter(section, decimal-leading-zero);
+    width: auto; height: auto; background: none; color: var(--ink);
+    font-family: var(--f-mono); font-size: .98rem; font-weight: 700; letter-spacing: 0;
+  }
+
+  .mono { font-family: var(--f-mono); font-variant-numeric: tabular-nums; }
+
+  /* ---- hero ---- */
+  header.hero { border-bottom: 1px solid var(--rule); padding: clamp(72px, 12vh, 132px) 0 clamp(40px, 7vh, 72px); }
+  .hero h1 { font-size: clamp(2.3rem, 5.4vw, 3.9rem); line-height: 1.06; margin: 0 0 .5em; max-width: 20ch; }
+  .hero .lede { font-size: clamp(1.08rem, 1.9vw, 1.28rem); color: var(--muted); max-width: 58ch; line-height: 1.55; }
+  .hero .lede strong { color: var(--ink); font-weight: 600; }
+  .metastrip {
+    display: flex; flex-wrap: wrap; row-gap: 8px; margin-top: 2.4em;
+    font-family: var(--f-mono); font-size: .74rem; letter-spacing: .02em; color: var(--muted);
+  }
+  .metastrip span {
+    padding: 0 16px; border-left: 1px solid var(--rule-strong); white-space: nowrap;
+  }
+  .metastrip span:first-child { padding-left: 0; border-left: 0; }
+  .metastrip b { color: var(--ink); font-weight: 600; }
+
+  section { padding: clamp(48px, 8vh, 88px) 0; border-bottom: 1px solid var(--rule); }
+  section h2 { font-size: clamp(1.55rem, 3.2vw, 2.15rem); line-height: 1.15; margin: 0 0 .6em; max-width: 24ch; }
+  .sub { color: var(--muted); }
+
+  /* ---- three axes ---- */
+  .axes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0; margin-top: 2.4em; border-top: 1px solid var(--rule-strong); }
+  .axis { padding: 22px 26px 8px; border-left: 1px solid var(--rule); }
+  .axis:first-child { border-left: 0; padding-left: 0; }
+  .axis:last-child { padding-right: 0; }
+  .axis .tag { font-family: var(--f-mono); font-size: .66rem; letter-spacing: .14em; text-transform: uppercase; color: var(--faint); }
+  .axis h3 { font-size: 1.18rem; margin: .5em 0 .35em; }
+  .axis p { font-size: .95rem; color: var(--muted); margin: 0; line-height: 1.5; }
+  .axis.live { border-top: 2px solid var(--ink); margin-top: -1px; }
+  .axis.live .tag, .axis.live h3 { color: var(--ink); }
+  .axis .flag { display: inline-block; font-family: var(--f-mono); font-size: .62rem; letter-spacing: .12em; text-transform: uppercase; color: var(--ink); border: 1px solid var(--rule-strong); padding: 1px 7px; margin-bottom: .7em; }
+
+  /* ---- theta callout ---- */
+  .theta { display: flex; flex-wrap: wrap; gap: 0; margin: 2em 0 1em; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
+  .theta .cell {
+    font-family: var(--f-mono); font-variant-numeric: tabular-nums;
+    padding: 14px 22px; min-width: 130px; flex: 1 1 130px; border-left: 1px solid var(--rule);
+  }
+  .theta .cell:first-child { border-left: 0; padding-left: 0; }
+  .theta .k { display: block; font-size: .66rem; letter-spacing: .04em; color: var(--faint); text-transform: none; margin-bottom: 4px; }
+  .theta .v { font-size: 1.2rem; color: var(--ink); font-weight: 600; }
+  .theta .ci { font-size: .72rem; color: var(--muted); margin-left: 6px; }
+
+  /* ---- table ---- */
+  .tablewrap { overflow-x: auto; margin: 1.8em 0 1.2em; border-top: 2px solid var(--ink); }
+  table.gen { border-collapse: collapse; width: 100%; min-width: 720px; font-family: var(--f-mono); font-variant-numeric: tabular-nums; font-size: .84rem; }
+  table.gen thead th { text-align: right; padding: 14px 14px; color: var(--faint); font-weight: 600; font-size: .68rem; letter-spacing: .08em; text-transform: uppercase; border-bottom: 1px solid var(--rule-strong); white-space: nowrap; }
+  table.gen thead th:first-child, table.gen tbody td:first-child { text-align: left; }
+  table.gen tbody td { padding: 12px 14px; text-align: right; border-bottom: 1px solid var(--rule); white-space: nowrap; }
+  table.gen tbody tr:last-child td { border-bottom: 1px solid var(--rule-strong); }
+  table.gen .src { color: var(--ink); }
+  table.gen .note { color: var(--faint); font-size: .72rem; }
+  table.gen tr.win .src { font-weight: 700; }
+  table.gen tr.win td { background: var(--pass-soft); }
+  .chip { display: inline-block; font-size: .66rem; letter-spacing: .1em; text-transform: uppercase; font-weight: 700; }
+  .chip.ok { color: var(--pass); }
+  .chip.no { color: var(--fail); }
+  .coef .ok { color: var(--pass); } .coef .no { color: var(--fail); }
+  .mk { font-size: .8em; }
+
+  .callout { border-left: 2px solid var(--ink); padding: 2px 0 2px 22px; margin: 1.9em 0; color: var(--muted); font-size: 1.05rem; line-height: 1.55; max-width: 64ch; }
+  .callout strong { color: var(--ink); }
+
+  /* ---- mechanism mini stats ---- */
+  .minis { display: grid; grid-template-columns: 1fr 1fr; gap: 0; margin-top: 2.2em; border-top: 1px solid var(--rule-strong); }
+  .mini { padding: 22px 30px 12px; border-left: 1px solid var(--rule); }
+  .mini:first-child { border-left: 0; padding-left: 0; }
+  .mini .q { font-size: .92rem; color: var(--ink); font-weight: 600; margin-bottom: 14px; }
+  .mini .row { display: flex; justify-content: space-between; align-items: baseline; font-family: var(--f-mono); font-variant-numeric: tabular-nums; padding: 8px 0; border-top: 1px solid var(--rule); }
+  .mini .row .lab { color: var(--muted); font-size: .8rem; }
+  .mini .row .num { font-size: 1.05rem; font-weight: 600; }
+  .mini .row.real .num { color: var(--ink); } .mini .row.bad .num { color: var(--fail); }
+
+  /* ---- chart ---- */
+  .chartcard { margin: 1.9em 0 1.2em; border-top: 1px solid var(--rule); padding-top: 16px; }
+  .chart-legend { display: flex; flex-wrap: wrap; gap: 18px; font-family: var(--f-mono); font-size: .74rem; color: var(--muted); padding: 4px 6px 14px; }
+  .chart-legend .li { display: inline-flex; align-items: center; gap: 7px; }
+  .swatch { width: 22px; height: 3px; border-radius: 2px; display: inline-block; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+  figure { margin: 0; }
+  figcaption { font-size: .82rem; color: var(--muted); padding: 6px 6px 2px; line-height: 1.5; }
+  svg { display: block; width: 100%; height: auto; }
+  .ax-label { font-family: var(--f-mono); font-size: 12px; fill: var(--muted); font-weight: 600; }
+  .tick { font-family: var(--f-mono); font-size: 10px; fill: var(--muted); }
+  .pt-label { font-family: var(--f-mono); font-size: 10.5px; font-weight: 600; }
+
+  /* ---- how it works ---- */
+  .how { display: grid; grid-template-columns: 1fr 1fr; gap: 0; margin-top: 2.2em; border-top: 1px solid var(--rule-strong); }
+  .card { padding: 26px 34px 16px; border-left: 1px solid var(--rule); }
+  .card:first-child { border-left: 0; padding-left: 0; }
+  .card .tag { font-family: var(--f-mono); font-size: .66rem; letter-spacing: .12em; text-transform: uppercase; color: var(--faint); }
+  .card h3 { font-size: 1.22rem; margin: .5em 0 .5em; }
+  .card p { font-size: .95rem; color: var(--muted); margin: 0 0 .9em; line-height: 1.55; }
+  .card code { font-family: var(--f-mono); font-size: .82rem; color: var(--ink); font-weight: 600; }
+  .card ul { margin: 0; padding-left: 1.1em; color: var(--muted); font-size: .92rem; }
+  .card li { margin: .4em 0; }
+
+  /* ---- scope ---- */
+  .scope { display: grid; grid-template-columns: 1fr 1fr; gap: 0; margin-top: 2em; border-top: 1px solid var(--rule-strong); }
+  .scope .box { padding: 22px 34px 8px; border-left: 1px solid var(--rule); }
+  .scope .box:first-child { border-left: 0; padding-left: 0; }
+  .scope h3 { font-family: var(--f-mono); font-size: .72rem; letter-spacing: .12em; text-transform: uppercase; margin: 0 0 .9em; }
+  .scope .box.does h3 { color: var(--pass); } .scope .box.not h3 { color: var(--faint); }
+  .scope ul { margin: 0; padding: 0; list-style: none; font-size: .92rem; color: var(--muted); }
+  .scope li { margin: 0; padding: 9px 0 9px 20px; border-top: 1px solid var(--rule); position: relative; }
+  .scope li::before { content: "—"; position: absolute; left: 0; color: var(--faint); }
+  .scope .mono { color: var(--ink); }
+
+  /* ---- properties (divided concepts) ---- */
+  .props { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; margin-top: 2.4em; border-top: 1px solid var(--rule-strong); }
+  .prop { padding: 22px 24px 12px; border-left: 1px solid var(--rule); }
+  .prop:first-child { border-left: 0; padding-left: 0; }
+  .prop:last-child { padding-right: 0; }
+  .prop .n { font-family: var(--f-mono); font-size: .68rem; letter-spacing: .12em; color: var(--accent); }
+  .prop h3 { font-size: 1.05rem; margin: .55em 0 .4em; line-height: 1.2; }
+  .prop p { font-size: .9rem; color: var(--muted); margin: 0; line-height: 1.5; }
+  @media (max-width: 900px) { .props { grid-template-columns: 1fr 1fr; } }
+
+  footer { padding: clamp(44px,7vh,72px) 0 72px; }
+  footer p { color: var(--muted); font-size: .92rem; max-width: 60ch; }
+  footer .sig { font-family: var(--f-mono); font-size: .74rem; color: var(--faint); margin-top: 1.4em; letter-spacing: .02em; }
+
+  @media (max-width: 760px) {
+    .axes, .minis, .how, .scope, .props { grid-template-columns: 1fr; }
+    .axis, .mini, .card, .scope .box, .theta .cell, .prop { border-left: 0; padding-left: 0; padding-right: 0; border-top: 1px solid var(--rule); }
+    .axes .axis:first-child, .minis .mini:first-child, .how .card:first-child, .scope .box:first-child, .theta .cell:first-child, .props .prop:first-child { border-top: 0; }
+    .axis.live { margin-top: 0; }
+    body { font-size: 16px; }
+  }
+</style>
+</head>
+<body>
+<header class="hero">
+  <div class="wrap">
+    <span class="kicker">A blind spot in fake data</span>
+    <h1>Fake data can pass every test and still give you the wrong answer.</h1>
+    <p class="lede">When real data is too sensitive to share, people replace it with <strong>synthetic data</strong> — made-up records meant to stand in for the real ones. The usual checks ask whether it <strong>looks</strong> real and whether a prediction tool still <strong>works</strong> on it. They never ask the thing that matters most: if you analyze the fake data to understand <strong>why</strong> something happens, do you reach the same conclusion the real data would? Often you don't — and nothing warns you. This page is about a tool that catches that, and a way to make fake data that keeps the conclusion intact.</p>
+    <div class="metastrip">
+      <span><b>30,000</b> real credit records</span>
+      <span><b>6</b> ways of making fake data, compared</span>
+      <span><b>216</b> automated tests</span>
+      <span>Every number reproducible</span>
+    </div>
+  </div>
+</header>
+
+<section>
+  <div class="wrap">
+    <span class="kicker">The problem</span>
+    <h2>There are three questions you can ask of fake data. The usual checks only ask two.</h2>
+    <p class="col sub">Before trusting fake data, how do you know it's any good? In practice people check two things — and skip the one that decisions actually rest on. That third question is the dangerous one: the data can look perfect and still lead you to the wrong conclusion, with no warning.</p>
+    <div class="axes">
+      <div class="axis">
+        <span class="tag">Usually checked</span>
+        <h3>Does it look real?</h3>
+        <p>Does the fake data have the same range and mix as the real data — the same spread of ages, balances, and so on?</p>
+      </div>
+      <div class="axis">
+        <span class="tag">Usually checked</span>
+        <h3>Can you predict with it?</h3>
+        <p>If you train a prediction tool on the fake data, does it still make good predictions on real data?</p>
+      </div>
+      <div class="axis live">
+        <span class="flag">the blind spot</span>
+        <span class="tag">Almost never checked</span>
+        <h3>Do your conclusions hold?</h3>
+        <p>If you analyze the fake data to learn how much one thing affects another, do you get the same answer the real data would? This is the one that breaks.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <span class="kicker">The evidence</span>
+    <h2>A real example: what predicts a credit-card default.</h2>
+    <p class="col sub">Here's real data on 30,000 credit-card customers and whether each one missed their next payment. A lender would analyze it to learn what predicts a default — who's risky. On the real data, the strongest warning sign by far is how far behind someone already is on recent payments. Now make fake stand-in versions of this data six different ways, ask each the same question, and see whether they agree with the real answer.</p>
+
+    <div class="theta">
+      <div class="cell"><span class="k">recent late payments</span><span class="v">+0.71</span></div>
+      <div class="cell"><span class="k">how maxed-out the card is</span><span class="v">−0.37</span></div>
+      <div class="cell"><span class="k">credit limit</span><span class="v">−0.31</span></div>
+      <div class="cell"><span class="k">age</span><span class="v">+0.01</span></div>
+    </div>
+    <p class="col sub" style="margin-top:-.4em;font-size:.9rem;">These four numbers are the real answer — how much each factor pushes the risk of default up (+) or down (−), measured on the real 30,000 records. A bigger number means a stronger effect, so recent late payments dominate. A fake version only &ldquo;passes&rdquo; if it reproduces all four. In the table below, ✓ means the fake data got that factor right, ✗ means it came out wrong.</p>
+
+    <div class="tablewrap">
+      <table class="gen">
+        <thead>
+          <tr>
+            <th>How the fake data was made</th><th>Verdict</th>
+            <th>late payments</th><th>card maxed-out</th><th>credit limit</th><th>age</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="win">
+            <td class="src">reshuffled real data <span class="note">should pass</span></td>
+            <td><span class="chip ok">certified</span></td>
+            <td class="coef"><span class="ok">+0.649 <span class="mk">✓</span></span></td>
+            <td class="coef"><span class="ok">−0.395 <span class="mk">✓</span></span></td>
+            <td class="coef"><span class="ok">−0.369 <span class="mk">✓</span></span></td>
+            <td class="coef"><span class="ok">+0.010 <span class="mk">✓</span></span></td>
+          </tr>
+          <tr>
+            <td class="src">columns shuffled apart <span class="note">should fail</span></td>
+            <td><span class="chip no">refused</span></td>
+            <td class="coef"><span class="no">−0.007 <span class="mk">✗</span></span></td>
+            <td class="coef"><span class="no">−0.010 <span class="mk">✗</span></span></td>
+            <td class="coef"><span class="no">−0.010 <span class="mk">✗</span></span></td>
+            <td class="coef"><span class="no">−0.001 <span class="mk">✗</span></span></td>
+          </tr>
+          <tr>
+            <td class="src">real data + random noise <span class="note">a common privacy trick</span></td>
+            <td><span class="chip no">refused</span></td>
+            <td class="coef"><span class="no">+0.521 <span class="mk">✗</span></span></td>
+            <td class="coef"><span class="no">−0.140 <span class="mk">✗</span></span></td>
+            <td class="coef"><span class="ok">−0.294 <span class="mk">✓</span></span></td>
+            <td class="coef"><span class="ok">+0.007 <span class="mk">✓</span></span></td>
+          </tr>
+          <tr>
+            <td class="src">Gaussian copula <span class="note">a standard method</span></td>
+            <td><span class="chip no">refused</span></td>
+            <td class="coef"><span class="no">+0.464 <span class="mk">✗</span></span></td>
+            <td class="coef"><span class="ok">−0.314 <span class="mk">✓</span></span></td>
+            <td class="coef"><span class="no">−0.225 <span class="mk">✗</span></span></td>
+            <td class="coef"><span class="ok">+0.011 <span class="mk">✓</span></span></td>
+          </tr>
+          <tr>
+            <td class="src">SMOTE <span class="note">a popular method</span></td>
+            <td><span class="chip no">refused</span></td>
+            <td class="coef"><span class="no">+0.608 <span class="mk">✗</span></span></td>
+            <td class="coef"><span class="ok">−0.469 <span class="mk">✓</span></span></td>
+            <td class="coef"><span class="ok">−0.353 <span class="mk">✓</span></span></td>
+            <td class="coef"><span class="ok">+0.015 <span class="mk">✓</span></span></td>
+          </tr>
+          <tr>
+            <td class="src">this project's first try <span class="note">copy &amp; adjust</span></td>
+            <td><span class="chip no">refused</span></td>
+            <td class="coef"><span class="no">+0.932 <span class="mk">✗</span></span></td>
+            <td class="coef"><span class="ok">−0.194 <span class="mk">✓</span></span></td>
+            <td class="coef"><span class="ok">−0.339 <span class="mk">✓</span></span></td>
+            <td class="coef"><span class="ok">+0.009 <span class="mk">✓</span></span></td>
+          </tr>
+          <tr class="win">
+            <td class="src">the fix <span class="note">builds from the real patterns</span></td>
+            <td><span class="chip ok">certified</span></td>
+            <td class="coef"><span class="ok">+0.731 <span class="mk">✓</span></span></td>
+            <td class="coef"><span class="ok">−0.483 <span class="mk">✓</span></span></td>
+            <td class="coef"><span class="ok">−0.330 <span class="mk">✓</span></span></td>
+            <td class="coef"><span class="ok">+0.009 <span class="mk">✓</span></span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="callout col">
+      Reshuffling the real records passes, as it should. <strong>But every standard way of making fake data gets the biggest warning sign — recent late payments — wrong.</strong> A lender using any of them would misjudge who's risky, and nothing about how real the data looks would have warned them.
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <span class="kicker">Why it happens</span>
+    <h2>Each column comes out right. The connections between them don't.</h2>
+    <p class="col sub">Here's the trap. The fake data can copy the shape of every column perfectly — the right spread of late payments, the right mix of balances. That's why it looks real. What it gets wrong is how those columns <em>connect</em>. Picture a crowd where you keep exactly the right number of tall people and the right number of heavy people, but you scramble who is who: each list looks perfect, yet &ldquo;taller people tend to be heavier&rdquo; falls apart. That kind of connection is exactly what an analysis leans on — and it's what the fake data quietly breaks. Two ways of measuring the late-payments-to-default link show it: the real strength versus what two fake methods report.</p>
+    <div class="minis">
+      <div class="mini">
+        <div class="q">How closely late payments track default</div>
+        <div class="row real"><span class="lab">real data</span><span class="num">0.33</span></div>
+        <div class="row bad"><span class="lab">one method &mdash; too weak</span><span class="num">0.22</span></div>
+        <div class="row bad"><span class="lab">another &mdash; too strong</span><span class="num">0.42</span></div>
+      </div>
+      <div class="mini">
+        <div class="q">Chance of default once 2+ months behind</div>
+        <div class="row real"><span class="lab">real data</span><span class="num">70%</span></div>
+        <div class="row bad"><span class="lab">one method &mdash; too low</span><span class="num">43%</span></div>
+        <div class="row bad"><span class="lab">another &mdash; too high</span><span class="num">77%</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <span class="kicker">The honest limit — and the fix</span>
+    <h2>Keeping the answer and protecting privacy fight each other.</h2>
+    <p class="col sub">To protect privacy you have to push the fake records away from the real ones. Do that the obvious way — add noise — and you wreck the answer before you've gained any real privacy. Build the fake records from a good model of the real data instead, and you can keep the answer with genuinely new rows — but only up to a point. You can steer this tradeoff; you can't escape it. Every point below is measured on the credit data.</p>
+
+    <div class="chartcard">
+      <div class="chart-legend">
+        <span class="li"><span class="swatch" style="background:var(--ink);height:3px"></span> build from a model (the fix)</span>
+        <span class="li"><span class="swatch" style="background:none;height:0;border-top:2px dashed var(--faint)"></span> add noise (the obvious way)</span>
+        <span class="li"><span class="dot" style="background:var(--pass)"></span> reshuffle real data</span>
+        <span class="li"><span class="swatch" style="background:none;height:0;border-top:2px dashed var(--fail)"></span> pass / fail line</span>
+      </div>
+      <figure>
+        <svg viewBox="0 0 640 380" role="img" aria-label="Scatter plot of privacy distance versus inference distortion. Row-perturbation methods stay far above the certification threshold at every privacy level; the joint-model method dips below the threshold into the certified zone at modest privacy; a bootstrap of the real data sits in the certified zone at zero privacy.">
+          <!-- certified zone -->
+          <rect x="56" y="312.3" width="560" height="43.7" style="fill:var(--pass);opacity:.09"></rect>
+          <!-- gridlines -->
+          <g style="stroke:var(--rule);stroke-width:1">
+            <line x1="56" y1="267.4" x2="616" y2="267.4"></line>
+            <line x1="56" y1="178.9" x2="616" y2="178.9"></line>
+            <line x1="56" y1="90.3" x2="616" y2="90.3"></line>
+          </g>
+          <!-- x and y axes -->
+          <g style="stroke:var(--rule-strong);stroke-width:1.5">
+            <line x1="56" y1="22" x2="56" y2="356"></line>
+            <line x1="56" y1="356" x2="616" y2="356"></line>
+          </g>
+          <!-- y ticks -->
+          <g class="tick" text-anchor="end">
+            <text x="48" y="359">0</text>
+            <text x="48" y="270.4">4</text>
+            <text x="48" y="181.9">8</text>
+            <text x="48" y="93.3">12</text>
+          </g>
+          <!-- threshold -->
+          <line x1="56" y1="312.3" x2="616" y2="312.3" style="stroke:var(--fail);stroke-width:2" stroke-dasharray="6 5"></line>
+          <text class="pt-label" x="612" y="305" text-anchor="end" style="fill:var(--fail)">passes below this line</text>
+
+          <!-- perturbation series -->
+          <polyline points="297.3,243.9 407.3,136.7 465.3,105.1 534.5,61.4" style="fill:none;stroke:var(--faint);stroke-width:2;stroke-dasharray:7 5"></polyline>
+          <g style="fill:var(--faint)">
+            <circle cx="297.3" cy="243.9" r="5"></circle>
+            <circle cx="407.3" cy="136.7" r="5"></circle>
+            <circle cx="465.3" cy="105.1" r="5"></circle>
+            <circle cx="534.5" cy="61.4" r="5"></circle>
+          </g>
+          <text class="pt-label" x="452" y="52" style="fill:var(--faint)">never passes</text>
+
+          <!-- joint-model series -->
+          <polyline points="135.4,344.6 158.7,338.6 218.9,313.0 395,215.4" style="fill:none;stroke:var(--ink);stroke-width:3"></polyline>
+          <g style="fill:var(--ink)">
+            <circle cx="135.4" cy="344.6" r="5.5"></circle>
+            <circle cx="158.7" cy="338.6" r="5.5"></circle>
+            <circle cx="218.9" cy="313.0" r="5.5"></circle>
+            <circle cx="395" cy="215.4" r="5.5"></circle>
+          </g>
+          <text class="pt-label" x="250" y="308" style="fill:var(--ink)">passes here ↓</text>
+
+          <!-- bootstrap point -->
+          <circle cx="56" cy="330.8" r="6" style="fill:var(--pass);stroke:var(--surface);stroke-width:1.5"></circle>
+
+          <!-- axis labels -->
+          <text class="ax-label" x="336" y="378" text-anchor="middle">more privacy  &#8594;  (fake rows farther from real)</text>
+          <text class="ax-label" x="16" y="190" text-anchor="middle" transform="rotate(-90 16 190)">how far off the answer is  (higher = worse)</text>
+        </svg>
+        <figcaption>Both lines climb — more privacy always costs some accuracy. But adding noise never gets below the pass/fail line at any privacy level, while building the fake data from a model of the real data does, at modest privacy. That's the method that keeps the answer with genuinely new rows.</figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <span class="kicker">How it works</span>
+    <h2>Two parts: a check, and a better way to make the data.</h2>
+    <div class="how">
+      <div class="card">
+        <span class="tag">Part one — the check</span>
+        <h3>Did your conclusion survive?</h3>
+        <p>You give it your real data, the fake data, and the question you care about. It runs your analysis on both, compares the answers, and hands back a certificate: did the conclusion hold?</p>
+        <ul>
+          <li>It works on fake data from any source — it checks the answer, not who made it.</li>
+          <li>It tells you exactly which conclusions held and which didn't — not just a single yes or no.</li>
+          <li>Anyone can re-run the check from the fake data and the certificate alone. They never need the real records.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <span class="tag">Part two — the fix</span>
+        <h3>Fake data that keeps the answer</h3>
+        <p>The usual methods copy real records and blur them, which breaks the connections between columns. This does the opposite: it learns the real patterns first, then builds brand-new records from them.</p>
+        <ul>
+          <li>Because it captures how the columns connect — not just each one alone — the conclusion survives.</li>
+          <li>No record is copied from a real person, and no answer is forced in — every value comes from the learned patterns.</li>
+          <li>It's the one method in the table above that passes the check.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <span class="kicker">Why it holds up</span>
+    <h2>Four properties that make the certificate worth trusting.</h2>
+    <div class="props">
+      <div class="prop">
+        <span class="n">A</span>
+        <h3>Works on anyone's data</h3>
+        <p>It checks fake data from any source — a popular tool, a neural network, a vendor's product, or this one. What matters is the answer, not where the data came from.</p>
+      </div>
+      <div class="prop">
+        <span class="n">B</span>
+        <h3>Tells you exactly what survived</h3>
+        <p>Not a blanket pass or fail. It names which conclusions held and which didn't, so you know exactly what the data can be trusted for.</p>
+      </div>
+      <div class="prop">
+        <span class="n">C</span>
+        <h3>Anyone can re-check it</h3>
+        <p>The certificate travels with the data. Someone else can re-run it and get the same verdict — without ever seeing your real records.</p>
+      </div>
+      <div class="prop">
+        <span class="n">D</span>
+        <h3>Same result every time</h3>
+        <p>Run it again, get the same certificate. Every number comes from a fixed calculation — nothing is a one-off guess from an AI.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <span class="kicker">Scope &amp; honesty</span>
+    <h2>What it's good for — and what it isn't.</h2>
+    <div class="scope">
+      <div class="box does">
+        <h3>Good for</h3>
+        <ul>
+          <li>Checking the kind of conclusions you'd draw from a standard analysis</li>
+          <li>Fake data from any source</li>
+          <li>A certificate anyone can re-check</li>
+          <li>Measuring the privacy cost in plain terms, and stating it</li>
+        </ul>
+      </div>
+      <div class="box not">
+        <h3>Not for</h3>
+        <ul>
+          <li>One simple table only — not data over time, linked tables, text, or images</li>
+          <li>You have to say up front which analysis matters — it can't cover ones you didn't name</li>
+          <li>Number columns today; categories come next</li>
+          <li>It isn't a formal mathematical privacy guarantee</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap col">
+    <p><strong>The short version.</strong> Fake data can quietly break the conclusions you'd draw from it. This is a tool that checks whether it did — on fake data from anywhere — and a way to make fake data that keeps them, with the privacy cost measured honestly.</p>
+    <p class="sig">Built on established statistical ideas — the new part is turning &ldquo;did the answer survive?&rdquo; into a certificate you can attach to a dataset and re-check. Every number here is reproducible from the code.</p>
+  </div>
+</footer>
+</body>
+</html>

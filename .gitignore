@@ -30,3 +30,6 @@ benchmark/data/
 *.pdf
 examples/certifier_demo/certificates.json
 
+# Local-only: superseded docs and planning notes, kept off the published tree
+docs/archive/
+docs/SEMANTIC_FIDELITY_PLAN.md
