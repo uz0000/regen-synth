@@ -19,7 +19,12 @@ else
     PYTHON="python3"
 fi
 
-$PYTHON -m pytest tests/ -q --tb=short 2>&1
+# Pin BLAS/OMP threading: multi-threaded BLAS has non-deterministic
+# floating-point summation order, which can flip a borderline test result
+# (seen in the estimand-preserving generator's fit) run to run on the same
+# seed. Single-threaded also avoids CPU thread-thrashing under system load.
+OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+    $PYTHON -m pytest tests/ -q --tb=short 2>&1
 
 if [ $? -eq 0 ]; then
     echo "✅ All tests passed."

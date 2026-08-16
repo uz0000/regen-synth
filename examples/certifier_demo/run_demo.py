@@ -88,7 +88,8 @@ def g_regen(real):
 
 def g_estimand_preserving(real):
     """v2: GMM model of the predictor joint + calibrated real conditional P(y|x).
-    Preserves the declared analysis where the marginals+correlation methods fail."""
+    Certifies on 37% of seeds (this run is one sample, not a guarantee) — see
+    seed_sweep.py and docs/KNOWN_ISSUES.md for the full picture and why."""
     from regen.estimand_preserving import generate_estimand_preserving
     return generate_estimand_preserving(
         real, EstimandSpec(outcome="default", predictors=PREDICTORS, family="logit"),

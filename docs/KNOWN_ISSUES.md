@@ -223,3 +223,50 @@ re-breaks the coefficients. So the frontier is now **navigable** (certify with n
 synthetic data — impossible via perturbation) but **not defeated**. Demo row:
 `estimand_preserving (GMM+cond,v2)` in `examples/certifier_demo/` → CERTIFIED. Tests:
 `tests/test_estimand_preserving.py`.
+
+---
+
+## CORRECTION (2026-08-16): the "~7/8 across seeds" claim above didn't hold at scale
+
+The single-seed demo above genuinely certifies (seed 7, one run). The entry above
+also claimed "~7/8" certification across seeds, from a small (n=8–9) validation
+sample. A larger, deterministic re-run — `python examples/certifier_demo/seed_sweep.py`,
+30 seeds, single-threaded BLAS (`OMP_NUM_THREADS=1` etc. — see below for why that
+matters) — puts the real rate at **11/30 (37%)**, and the shortfall isn't seed noise:
+
+```
+predictor        theta_real   mean bias       std
+pay_delay_1         +0.7141     -0.0133    0.0382
+utilization          -0.3693     +0.1689    0.1018
+log_limit            -0.3145     +0.0587    0.0342
+age                  +0.0100     -0.0010    0.0039
+```
+
+`pay_delay_1` and `age` recover cleanly (bias is small relative to spread —
+ordinary sampling noise). **`utilization` is systematically attenuated toward
+zero by ~46% of its true magnitude, every seed, and `log_limit` by ~19%** — bias
+that dwarfs the run-to-run spread, i.e. a structural distortion, not luck.
+Likely mechanism: `utilization`'s logit coefficient is a *partial* effect that
+depends on being correctly conditioned on its correlation with the other three
+predictors; the GMM in R1 approximates that joint but doesn't reproduce it
+exactly, and the error shows up specifically in the coefficient most sensitive
+to it. More rows do **not** fix this — more data shrinks the standard error,
+which makes the Wald test *stricter*, so it would certify *less* often, not more.
+
+**Also uncovered while re-running this: the single-run result itself is not
+bit-reproducible.** Multi-threaded BLAS (the default) introduces tiny
+floating-point differences in the GMM fit and GBM fit between runs of the
+*same* seed, occasionally enough to flip a borderline coefficient across the
+certification threshold. Pinning `OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
+MKL_NUM_THREADS=1` makes a given seed's result exact and repeatable — without
+it, "seed 7 certifies" is not a claim you can rely on reproducing.
+
+**Net:** v2 is a real improvement over every other generator tested (which
+certify 0–1/4 coefficients on the credit demo) — two of four coefficients
+recover essentially unbiased, which nothing else here achieves — but "it
+certifies" is true for a minority of seeds, not a solved problem. The honest
+claim is "v2 reliably fixes `pay_delay_1`; `utilization`'s partial-correlation
+sensitivity to the GMM's joint-approximation error is open." Tests
+(`tests/test_estimand_preserving.py`) now assert the validated behavior (the
+two unbiased coefficients recover; the sweep floor is met) rather than a
+single seed's pass/fail.

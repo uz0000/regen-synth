@@ -90,15 +90,20 @@ predictor joint that perturbation distorts. The certifier's value is telling you
 everyone falsely believes preserves their analysis.
 
 **Preserving inference — the v2 generator** ([`regen/estimand_preserving.py`](regen/estimand_preserving.py)).
-`generate_estimand_preserving(real_df, estimand)` produces synthetic data a declared
-analysis *survives* — it models the predictor **joint** with a Gaussian mixture (novel
-rows, not perturbed real ones) and draws the outcome from a calibrated model of the
-**real conditional** P(y|x) (never the declared coefficient, so nothing is injected).
-On the demo it **certifies** where the copula, SMOTE, REGEN, and every perturbation
-method are refused — the `estimand_preserving` row above. The honest cost: it stays
-faithful to the real joint, so it trades away privacy *distance* (novel rows, but
-nearer real than a strong δ-floor). The frontier is navigable, not free. Mechanism,
-fix-validation, and generality (OLS + a second dataset): [`docs/KNOWN_ISSUES.md`](docs/KNOWN_ISSUES.md) (#4–#6).
+`generate_estimand_preserving(real_df, estimand)` models the predictor **joint** with a
+Gaussian mixture (novel rows, not perturbed real ones) and draws the outcome from a
+calibrated model of the **real conditional** P(y|x) (never the declared coefficient, so
+nothing is injected). Measured across a 30-seed sweep on the credit demo
+(`python examples/certifier_demo/seed_sweep.py`), two of the four coefficients recover
+essentially unbiased — something no other generator here achieves — and the full
+analysis certifies on **11/30 seeds (37%)**, against 0–1/4 coefficients for every other
+generator tested. The other two coefficients carry a real, systematic bias, not noise
+(`utilization` attenuated ~46%, `log_limit` ~19%) — a partial-correlation-sensitivity
+gap in how the Gaussian mixture approximates the real joint, quantified and explained
+in [`docs/KNOWN_ISSUES.md`](docs/KNOWN_ISSUES.md). It also trades away privacy
+*distance* (novel rows, but nearer real than a strong δ-floor). The frontier is
+navigable, not free, and not fully closed — an honest, partial fix, not a solved
+problem.
 
 ---
 

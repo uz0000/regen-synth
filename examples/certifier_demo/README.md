@@ -39,7 +39,12 @@ REGEN           (this repo)         refused          +0.932 ✗      -0.194 ✓ 
 estimand_preserving (GMM+cond,v2)   CERTIFIED        +0.731 ✓      -0.483 ✓      -0.330 ✓      +0.009 ✓
 ```
 
-(Reproduce: `python examples/certifier_demo/run_demo.py` from the repo root.)
+(Reproduce: `python examples/certifier_demo/run_demo.py` from the repo root. The
+`estimand_preserving` row can differ between runs of the *same* seed — its fit
+involves BLAS-backed operations whose floating-point summation order depends on
+thread count, occasionally enough to flip a borderline coefficient. Pin
+`OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1` for an exactly
+repeatable result.)
 
 ## What it shows
 
@@ -52,11 +57,16 @@ estimand_preserving (GMM+cond,v2)   CERTIFIED        +0.731 ✓      -0.483 ✓ 
    continuous factors (`log_limit`, `age`) mostly survive. An analyst using any of
    these would over- or under-weight the single most important risk driver, and
    **no fidelity or prediction check would flag it.**
-3. **The v2 generator preserves it — and certifies.** `estimand_preserving` models
-   the predictor *joint* (a Gaussian mixture, not marginals+correlation) and draws
-   the outcome from a calibrated model of the *real conditional* P(y|x); it recovers
-   all four coefficients where every marginals-based method failed. That is the
-   "here's what actually works" — the fix, verified by the same certificate.
+3. **The v2 generator is a real, partial fix — not a solved problem.**
+   `estimand_preserving` models the predictor *joint* (a Gaussian mixture, not
+   marginals+correlation) and draws the outcome from a calibrated model of the
+   *real conditional* P(y|x). The run above happens to certify all four; a 30-seed
+   sweep (`python examples/certifier_demo/seed_sweep.py`) tells the more honest
+   story: **37% of seeds fully certify**, `pay_delay_1` and `age` recover
+   essentially unbiased on every seed (nothing else here achieves that), and
+   `utilization`/`log_limit` carry a real, systematic — not random — attenuation
+   from an approximation gap in the joint model. Diagnosed in
+   [`docs/KNOWN_ISSUES.md`](../../docs/KNOWN_ISSUES.md).
 4. **It is generator-agnostic.** θ_real is identical across all rows; only θ_synth
    differs. The certificate is about whether the conclusion survives, not about
    provenance — so it can certify data you did **not** generate.
@@ -79,10 +89,13 @@ and — via interpolation — SMOTE all failing on the discrete, high-signal
 `pay_delay_1`) has a diagnosed cause: they preserve marginals + linear correlation
 but not the **conditional** structure a coefficient depends on.
 
-The `estimand_preserving` row is the fix, built against that diagnosis: model the
+The `estimand_preserving` row is built against that diagnosis: model the
 predictor **joint** with a Gaussian mixture (novel rows, not perturbed real ones)
 and draw the outcome from a calibrated model of the **real conditional** P(y|x) —
-never the declared coefficient, so nothing is injected. It certifies.
+never the declared coefficient, so nothing is injected. It certifies on 37% of
+seeds — a real improvement (every other generator manages 0–1/4 coefficients,
+never a full certification), and the remaining gap has a diagnosed, quantified
+cause rather than an unknown one (see below).
 
 **Honest limit — it is not free.** Preserving inference means staying faithful to
 the real joint, which costs privacy *distance*: the estimand-preserving rows are
