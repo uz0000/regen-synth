@@ -15,18 +15,33 @@ blurring it reads as overclaim.
 
 ## 1. Describe it in one breath / one minute
 
-- **One breath:** "A synthetic-data system that turns a scarce real sample into a
-  usable dataset *and a certificate a third party can independently recompute* —
-  so you can act on the synthetic data defensibly."
-- **One minute:** "Most synthetic-data tools just generate plausible rows. REGEN
-  grounds every value in the real data's statistics with a deterministic engine,
-  then wraps it in an assurance layer: a typed use-case contract, a computed
-  explanation of why the batch passed, a privacy floor, and an audit bundle a
-  skeptic can re-verify. It also measures honestly how well the surrogate stands
-  in for real data (TSTR) and refuses — loudly — when it can't help. The math is
-  standard; the verifiability is the point."
+- **One breath:** "Synthetic data can look completely realistic and still lead you
+  to the wrong conclusion. REGEN checks that specifically — you declare the
+  analysis you actually care about (a regression), and it tells you, coefficient
+  by coefficient, whether the synthetic data agrees with the real thing — for
+  data from *any* generator, not just its own."
+- **One minute:** "The standard way to validate synthetic data is 'does it look
+  real' and 'does a model trained on it predict well.' Both can pass while the
+  number a decision actually depends on — a regression coefficient — silently
+  shifts, and nothing would tell you. REGEN's certifier catches that: declare
+  `outcome ~ predictors`, and it fits that analysis on the real and synthetic
+  data and reports per-coefficient agreement, with a portable certificate a third
+  party can independently recompute. REGEN also ships its own generator — the
+  system the certifier was originally built to check, and which it catches
+  failing on the credit-card demo, exactly as it would anyone else's. A second
+  generator closes part of that gap (37% full certification, up from 0%) and is
+  honest about the part it doesn't: [`docs/KNOWN_ISSUES.md`](KNOWN_ISSUES.md)."
 
 ## 2. Component map — what · method · where · why
+
+### The certifier — checks whether a conclusion survives (the current headline)
+
+| Component | What it does (plain) | Method used (standard name) | Where | Why this method |
+|---|---|---|---|---|
+| **Certifier** | fits your declared analysis on real vs. synthetic data, reports per-coefficient agreement | two-sample Wald test on regression coefficients (OLS/logit, closed-form) | `regen/certifier.py`, `regen/estimand.py` | generator-agnostic (works on anyone's synthetic data); per-coefficient, not one blurred score; portable — recomputable from disclosed θ_real ± SE without the real rows |
+| **v2 generator (estimand-preserving)** | a generator built specifically to pass the certifier | Gaussian-mixture model of the predictor joint + a calibrated model of the real conditional P(y\|x) | `regen/estimand_preserving.py` | closes part of the gap the reference generator (below) can't — 2 of 4 coefficients recover unbiased; the other 2 carry a diagnosed, quantified bias, not a hidden one — see `docs/KNOWN_ISSUES.md` |
+
+### The reference generator — REGEN's own synthetic-data pipeline (what the certifier was built to check)
 
 | Component | What it does (plain) | Method used (standard name) | Where | Why this method |
 |---|---|---|---|---|
@@ -78,22 +93,30 @@ grounded/copula sampling.
 ## 4. How to talk about it — claims to make, and to avoid
 
 **Make these (all true and demonstrable):**
+- "The certifier catches synthetic data that passes every standard fidelity/prediction
+  check while a coefficient you'd act on silently shifts — and it caught this repo's
+  own generator doing exactly that."
+- "It's generator-agnostic and portable: it works on data from any generator, and the
+  certificate is independently recomputable without the real rows (`regen verify`)."
+- "The v2 generator is a real, partial fix, quantified honestly: 37% full
+  certification, two of four coefficients recover unbiased, and the remaining bias
+  has a diagnosed cause, not a hidden one."
 - "It grounds every value in the real data statistically and never copies a real record."
-- "Every batch ships a certificate a third party can independently recompute (`regen verify`)."
-- "It measures honestly whether the synthetic stands in for real (TSTR) and refuses when it can't help."
 - "The math is standard; the original part is the verifiable, contract-driven composition."
 
 **Avoid these (they don't survive scrutiny):**
 - ❌ "I invented [copula / GP / …]." → No; name them as standard.
+- ❌ "The v2 generator certifies the analysis." → It certifies 37% of the time; say the number.
 - ❌ "It improves fraud detection by 39%." → Conditional and was inflated; lead with TSTR + honesty instead.
 - ❌ "It's differential privacy." → It isn't; say what it is (near-copy floor).
 - ❌ "It's a million-dollar product." → Unproven demand; frame as a rigorous capability.
 
 ## 5. FAQ — the questions people actually ask
 
-- **"What is it, in one line?"** A synthetic-data generator that ships a
-  machine-checkable certificate of how well the data stands in and how it's
-  protected.
+- **"What is it, in one line?"** A tool that checks whether a conclusion you'd draw
+  from synthetic data would also be true of the real data — a check nothing else in
+  the space does, run against a generator this repo also ships (and catches failing
+  its own check).
 - **"Did you invent the math?"** No — it composes standard techniques (copulas,
   Gaussian processes, standard classifiers/metrics). What's mine is the
   verification/assurance layer and how it's all composed.

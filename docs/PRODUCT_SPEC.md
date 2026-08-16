@@ -10,12 +10,18 @@ review. Component status is tagged **[BUILT]** (exists + tested), **[PARTIAL]**,
 
 ## 1. What the system is (so the layout has a purpose)
 
-A **scarce-data certified synthetic-surrogate generator**. Given a limited-but-
-sufficient real sample, it produces a synthetic dataset **plus a machine-checkable
-certificate of how much it preserves and how far it falls short**, so a decision
-made on the surrogate is defensible to someone who doesn't trust you. The asset is
-the *verifiable certificate + honest diagnosis* — a **known, bounded gap** — not
-the rows and not a guaranteed accuracy lift.
+Plainly: given a real dataset, this system produces a synthetic stand-in **and a
+report card on exactly how much you can trust it** — which statistics it got
+right, which it didn't, and by how much — rather than just asserting the
+stand-in is good. Nothing here is presented as more trustworthy than it's been
+measured to be.
+
+More precisely: a **scarce-data certified synthetic-surrogate generator**. Given
+a limited-but-sufficient real sample, it produces a synthetic dataset **plus a
+machine-checkable certificate of how much it preserves and how far it falls
+short**, so a decision made on the surrogate is defensible to someone who
+doesn't trust you. The asset is the *verifiable certificate + honest diagnosis*
+— a **known, bounded gap** — not the rows and not a guaranteed accuracy lift.
 
 ## 2. The core mental model: two planes and one spine
 

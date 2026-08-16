@@ -109,15 +109,28 @@ problem.
 
 ## The reference generator (REGEN)
 
-REGEN also *is* a deterministic rare-event synthetic-data generator — the reference
-implementation the certifier was built against, and the source of the finding that
+REGEN also *is* a synthetic-data generator in its own right — the system the
+certifier was originally built to check, and the source of the finding that
 motivated it (**its own output is refused above** — the certifier catches its
-reference generator, exactly as it would anyone else's). It runs an active-learning
-campaign — Scout (targeting) → Prior (grounded sampling) → Amplifier (tail
-correction) → Auditor (fidelity gate) → Examiner (detection lift) — and ships each
-batch with a `ScenarioSpec`, an `explanation.json`, and an audit bundle you can
-re-check with `regen verify`. Privacy is on by default (δ-distance floor + verbatim
-guard; **not** differential privacy — see [`docs/PRIVACY.md`](docs/PRIVACY.md)).
+own reference generator, exactly as it would anyone else's). It works in five
+plain steps, run in a loop that focuses effort on the rare cases:
+
+1. **Scout** picks which rare region of the data most needs more synthetic
+   examples.
+2. **Prior** draws base synthetic rows grounded in the real data's statistics
+   (not copies of real rows).
+3. **Amplifier** densifies and corrects that rare region specifically, since a
+   generic sampler under-represents it.
+4. **Auditor** checks the delivered batch against the real data and rejects it
+   if the structure is broken — a hard gate, not a warning.
+5. **Examiner** measures whether adding the synthetic data actually improves a
+   downstream detection model, honestly (only claims a lift when there is one).
+
+Each batch ships with a `ScenarioSpec` (what was asked for), an
+`explanation.json` (why the batch passed, in computed numbers), and an audit
+bundle you can independently re-check with `regen verify`. Privacy is on by
+default (δ-distance floor + verbatim guard; **not** differential privacy — see
+[`docs/PRIVACY.md`](docs/PRIVACY.md)).
 
 ```bash
 regen generate my_data.csv --label is_fraud     # generate a synthetic dataset
