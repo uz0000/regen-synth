@@ -18,6 +18,25 @@ text, or images).
 
 ---
 
+## Install
+
+```bash
+git clone https://github.com/uz0000/regen-synth.git && cd regen-synth
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+pip install -e .                              # installs `regen`, `contracts`, `engine`, `cli`, `server`
+
+pytest tests/ -q                               # 216 tests
+python examples/certifier_demo/run_demo.py     # reproduces the table below
+```
+
+Requires Python 3.10+. `GPy` (the Amplifier's Gaussian-process backend) can be
+slow to build on some platforms — if `pip install -r requirements.txt` fails there,
+install `numpy pandas scipy scikit-learn pyarrow` on their own to run the certifier
+and CLI without the tail-correction amplifier.
+
+---
+
 ## The certifier (the core)
 
 ```python
@@ -119,9 +138,11 @@ baseline is genuinely starved of rare examples.
 
 - Known limits, the v2 investigation + frontier: [`docs/KNOWN_ISSUES.md`](docs/KNOWN_ISSUES.md)
 - Build log (every change, before/after observed): [`docs/BUILDLOG.md`](docs/BUILDLOG.md)
-- Full system reference: [`docs/REGEN_DOCUMENTATION.md`](docs/REGEN_DOCUMENTATION.md)
+- System layout — how the components connect and why: [`docs/PRODUCT_SPEC.md`](docs/PRODUCT_SPEC.md)
+- Method ↔ file ↔ why, plus FAQ: [`docs/COMPONENT_GUIDE.md`](docs/COMPONENT_GUIDE.md)
 - Privacy (what's guaranteed and what isn't): [`docs/PRIVACY.md`](docs/PRIVACY.md)
 - Statistical methods + verification: [`docs/METHODS.md`](docs/METHODS.md)
+- What's supported, degraded, or out of scope: [`docs/CAPABILITY_MATRIX.md`](docs/CAPABILITY_MATRIX.md)
 
 ## License
 

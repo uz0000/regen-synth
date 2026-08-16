@@ -29,3 +29,4 @@ benchmark/data/
 # Research PDFs (large reference materials, not code)
 *.pdf
 examples/certifier_demo/certificates.json
+

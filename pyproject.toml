@@ -37,8 +37,8 @@ all = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/your-org/regen-synth"
-Documentation = "https://github.com/your-org/regen-synth/docs"
+Homepage = "https://github.com/uz0000/regen-synth"
+Documentation = "https://github.com/uz0000/regen-synth/tree/main/docs"
 
 [project.scripts]
 regen = "cli.main:main"
