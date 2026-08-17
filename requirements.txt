@@ -1,19 +1,34 @@
-# Core engine dependencies (deterministic — no LLM, no external auth)
-# These are always required.
-numpy
-pandas
-scipy
-scikit-learn
-GPy
-matplotlib                 # GPy runtime dependency (plotting module on import)
-pyarrow                    # Parquet I/O
+# Pinned as reproducibility discipline. Identical seeds only guarantee identical
+# output within a fixed dependency set, and this repo asserts numeric thresholds
+# on seeded draws — exactly the assertions that drift with a different numerical
+# backend. These are the versions the test suite is green against.
+#
+# Known incompatibility: pandas 3.x defaults to Arrow-backed string storage,
+# which breaks the engine's numeric coercion of categorical columns. Do not
+# unpin pandas without fixing that first (docs/KNOWN_ISSUES.md, issue 7).
+
+# Core engine — deterministic, no LLM, no external auth. Always required.
+numpy==1.26.4
+pandas==2.1.4
+scipy==1.11.4
+scikit-learn==1.2.2
+GPy==1.13.2
+matplotlib==3.8.0          # GPy imports its plotting module at import time
+pyarrow==14.0.2            # Parquet I/O
+PyYAML==6.0.3              # ScenarioSpec YAML round-trip (contracts/scenario.py)
+
+# HTTP server (server/, tests/test_server.py)
+fastapi==0.128.0
+uvicorn==0.40.0
+python-multipart==0.0.21
+httpx==0.28.1              # FastAPI's TestClient transport
+
+# Dev / test
+pytest==7.4.0
+streamlit==1.33.0          # demo visualization
 
 # Optional: PFN backend for relational data / structural feature interactions
 # Install with: pip install regen-synth[pfn]
 # tabpfn>=2.0,<3.0
 # torch
 # torch-geometric
-
-# Dev / test
-pytest
-streamlit                # Demo visualization

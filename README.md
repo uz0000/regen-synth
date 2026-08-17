@@ -176,6 +176,20 @@ regen verify   regen-output/                    # independently recompute a batc
 regen screen   my_data.csv --label is_fraud     # REGEN vs SMOTE for this dataset
 ```
 
+The certifier has a command-line surface too, and it works on **any** generator's
+output — nothing about it is specific to this repo:
+
+```bash
+regen certify real.csv synthetic.csv \
+      --outcome default --predictors pay_delay_1,utilization,log_limit,age \
+      --family logit
+```
+
+Exit `0` means every declared coefficient survived, `1` means one shifted (the
+per-coefficient table says which), and `2` means the check could not run at all —
+so a pipeline can tell a failed check from a check that never happened. Add
+`--json` for the full certificate.
+
 Honest generation numbers (leakage-free TSTR + conditional lift, including where
 REGEN doesn't help) live in [`benchmark/RESULTS.md`](benchmark/RESULTS.md) and
 [`docs/BUILDLOG.md`](docs/BUILDLOG.md); the amplifier helps only when the

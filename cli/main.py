@@ -52,6 +52,8 @@ def main():
         _cmd_propose(args)
     elif args.command == "doctor":
         _cmd_doctor(args)
+    elif args.command == "certify":
+        _cmd_certify(args)
     elif args.command == "verify":
         _cmd_verify(args)
     elif args.command == "screen":
@@ -214,6 +216,24 @@ def _build_parser() -> argparse.ArgumentParser:
     doctor_p.set_defaults(command="doctor")
 
     # ── regen verify ──────────────────────────────────────────────────────────
+    certify_p = sub.add_parser(
+        "certify",
+        help="Does a synthetic dataset preserve a declared analysis? (any generator)")
+    certify_p.add_argument("real", type=str, help="Path to the real reference data (CSV/Parquet)")
+    certify_p.add_argument("synthetic", type=str,
+                           help="Path to the synthetic data to certify (CSV/Parquet)")
+    certify_p.add_argument("--outcome", type=str, required=True,
+                           help="Outcome (dependent-variable) column")
+    certify_p.add_argument("--predictors", type=str, required=True,
+                           help="Comma-separated predictor columns")
+    certify_p.add_argument("--family", type=str, default="ols", choices=["ols", "logit"],
+                           help="Regression family (default: ols)")
+    certify_p.add_argument("--coefficients", type=str, default="",
+                           help="Comma-separated subset to certify (default: every predictor)")
+    certify_p.add_argument("--json", action="store_true", help="Emit the certificate as JSON")
+    certify_p.set_defaults(command="certify")
+
+    # ── regen verify ────────────────────────────────────────────────────────
     verify_p = sub.add_parser("verify", help="Independently verify an audit bundle (a run dir)")
     verify_p.add_argument("bundle", type=str,
                           help="Path to the run directory (the audit bundle)")
@@ -522,6 +542,80 @@ def _cmd_doctor(args):
 
 
 # ── Command: verify ──────────────────────────────────────────────────────────
+
+def _cmd_certify(args):
+    """Certify whether a synthetic dataset preserves a declared analysis.
+
+    Generator-agnostic: it never asks who produced the synthetic data. Exit 0 if
+    every declared coefficient is preserved, 1 if any shifted, 2 if the analysis
+    could not be run at all (missing file/column, unfittable spec) — so a
+    pipeline can tell "the check failed" from "the check could not run".
+    """
+    import pandas as pd
+    from contracts.scenario import EstimandSpec
+    from regen.certifier import certify_dataset
+
+    def _read(path):
+        p = Path(path)
+        if not p.exists():
+            print(f"[regen] no such file: {path}", file=sys.stderr)
+            sys.exit(2)
+        return pd.read_parquet(p) if p.suffix == ".parquet" else pd.read_csv(p)
+
+    real_df, synth_df = _read(args.real), _read(args.synthetic)
+    predictors = [c.strip() for c in args.predictors.split(",") if c.strip()]
+    coefficients = [c.strip() for c in args.coefficients.split(",") if c.strip()]
+
+    missing = [c for c in [args.outcome, *predictors] if c not in real_df.columns]
+    if missing:
+        print(f"[regen] column(s) not in the real data: {', '.join(missing)}", file=sys.stderr)
+        sys.exit(2)
+
+    spec = EstimandSpec(outcome=args.outcome, predictors=predictors,
+                        family=args.family, coefficients_of_interest=coefficients)
+    cert = certify_dataset(real_df, synth_df, spec, source=str(args.synthetic))
+
+    if args.json:
+        print(json.dumps(cert, indent=2, default=str))
+        sys.exit(0 if cert.get("certified") else 1)
+
+    status = cert.get("status", "")
+    print()
+    print("=" * 62)
+    print("  REGEN — ESTIMAND CERTIFY")
+    print("=" * 62)
+    print(f"  Analysis:  {args.family}  {args.outcome} ~ {' + '.join(predictors)}")
+    print(f"  Real:      {args.real}  (n={cert.get('n_real')})")
+    print(f"  Synthetic: {args.synthetic}  (n={cert.get('n_synth')})")
+
+    if status == "uncertifiable":
+        print("-" * 62)
+        print("  RESULT: UNCERTIFIABLE — the analysis could not be fit.")
+        print("=" * 62)
+        sys.exit(2)
+
+    print()
+    print(f"  {'coefficient':<18}{'θ_real':>11}{'θ_synth':>11}   preserved")
+    for t in cert.get("targets", []):
+        if t.get("preserved") is None:
+            print(f"  {t['coefficient']:<18}{'—':>11}{'—':>11}   ? ({t.get('note','')})")
+            continue
+        mark = "✓" if t["preserved"] else "✗"
+        warn = "" if t.get("real_significant", True) else "   (θ_real not distinguishable from 0)"
+        print(f"  {t['coefficient']:<18}{t['theta_real']:>+11.4f}"
+              f"{t['theta_synth']:>+11.4f}   {mark}{warn}")
+
+    broke = [t["coefficient"] for t in cert.get("targets", []) if t.get("preserved") is False]
+    print("-" * 62)
+    if cert.get("certified"):
+        print("  RESULT: CERTIFIED — every declared coefficient is preserved.")
+    else:
+        print(f"  RESULT: REFUSED — not preserved: {', '.join(broke)}")
+    print("=" * 62)
+    sys.exit(0 if cert.get("certified") else 1)
+
+
+# ── Command: verify ────────────────────────────────────────────────────────
 
 def _cmd_verify(args):
     """Recompute an audit bundle's statistics and report PASS/FAIL — exit

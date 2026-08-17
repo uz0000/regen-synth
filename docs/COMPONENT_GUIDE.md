@@ -15,7 +15,7 @@ survived.
 
 | Component | What it does | Method | Where | Why this method |
 |---|---|---|---|---|
-| **Certifier** | fits your declared analysis on the real and synthetic data, reports per-coefficient agreement | two-sample Wald consistency test on regression coefficients | `regen/certifier.py` | generator-agnostic, per-coefficient rather than one blurred score, and portable — recomputable from the disclosed θ_real ± SE without the real rows |
+| **Certifier** | fits your declared analysis on the real and synthetic data, reports per-coefficient agreement | two-sample Wald consistency test on regression coefficients | `regen/certifier.py`, CLI `regen certify` | generator-agnostic, per-coefficient rather than one blurred score, and portable — recomputable from the disclosed θ_real ± SE without the real rows |
 | **Estimand fits** | the regressions themselves | OLS (closed-form) and logistic regression (IRLS), numpy + scipy | `regen/estimand.py` | no dependency on a stats library whose solver behaviour could drift between versions |
 | **v2 generator** | a generator built specifically to pass the certifier | Gaussian-mixture model of the predictor joint + a calibrated model of the real conditional P(y\|x) | `regen/estimand_preserving.py` | closes part of the gap the reference generator cannot; two of four coefficients recover unbiased and the rest carry a diagnosed, quantified bias — see [`KNOWN_ISSUES.md`](KNOWN_ISSUES.md) |
 
@@ -117,7 +117,8 @@ pre-privacy-floor data instead of what actually shipped.
 
 ## Where to look for proof
 
-- Run it: `regen doctor <data>` → `regen generate <data>` → `regen verify <out>`.
+- Certify any generator's output: `regen certify <real> <synthetic> --outcome <col> --predictors <a,b,c>`.
+- Run the generator: `regen doctor <data>` → `regen generate <data>` → `regen verify <out>`.
 - The change history with before/after numbers: [`BUILDLOG.md`](BUILDLOG.md).
 - Formal metric definitions and thresholds: [`METHODS.md`](METHODS.md).
 - Privacy guarantee and its limits: [`PRIVACY.md`](PRIVACY.md).

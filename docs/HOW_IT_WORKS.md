@@ -72,7 +72,17 @@ preserved**. A coefficient that cannot be fit at all becomes an honest status �
 ### What comes out: the certificate
 
 `certify_dataset(real_df, synthetic_df, estimand)` returns a certificate with
-three properties worth naming (`regen/certifier.py`):
+three properties worth naming (`regen/certifier.py`). The same thing is available
+from the command line, on any generator's output:
+
+```bash
+regen certify real.csv synthetic.csv \
+      --outcome default --predictors pay_delay_1,utilization --family logit
+```
+
+Exit `0` certified, `1` a coefficient shifted, `2` the check could not run —
+distinct codes, because a pipeline needs to tell a failed check from one that
+never happened.
 
 **Generator-agnostic.** It never asks who made the data. It works on output from
 SMOTE, from a GAN, from a commercial tool, from this repo — the comparison is

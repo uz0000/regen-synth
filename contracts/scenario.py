@@ -188,9 +188,15 @@ class EstimandSpec:
 
     An estimand is the target quantity of an analysis. v1 supports **regression
     coefficients**: fit ``outcome ~ predictors`` (``family`` = ols | logit) on the
-    real reference to get θ_real ± CI, fit the *same* spec on the delivered
-    synthetic to get θ_synth, and CERTIFY preservation iff every
-    coefficient-of-interest's θ_synth lands within θ_real's confidence interval.
+    real reference to get θ_real ± SE, fit the *same* spec on the delivered
+    synthetic to get θ_synth ± SE, and CERTIFY preservation iff every
+    coefficient-of-interest passes the ``rule``.
+
+    The default rule is ``consistent``: a two-sample Wald test,
+    ``|θ_real − θ_synth| ≤ z·√(se_real² + se_synth²)``, which accounts for the
+    uncertainty in *both* estimates. The stricter ``within_ci`` rule (θ_synth
+    inside θ_real's CI) is available but is not the default — it treats θ_synth
+    as exact and so false-fails a small synthetic sample.
 
     This is a guarantee distinct from fidelity (marginals/correlations) and TSTR
     (prediction): a batch can pass both while a coefficient silently shifts (a

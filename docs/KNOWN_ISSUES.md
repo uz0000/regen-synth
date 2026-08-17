@@ -15,6 +15,7 @@ would make the work look cleaner than it was.
 | 4 | Estimand certification is not power-aware | scarce real data widens θ_real's interval and makes the test lenient; surfaced as `real_significant` rather than a failure |
 | 5 | Estimand v1 supports numeric predictors only | categorical predictors and ATE are not certifiable yet |
 | 6 | The generator does not preserve estimands on discrete non-linear predictors | partially fixed by the v2 generator, which certifies on 37% of seeds |
+| 7 | pandas 3.x breaks the engine | dependencies are pinned; see below |
 
 **Already fixed** (kept as a record): high-cardinality categorical TVD failures
 and the categorical decode bug (both resolved 2026-06-22), and the "~7/8 across
@@ -287,3 +288,38 @@ sensitivity to the GMM's joint-approximation error is open." Tests
 (`tests/test_estimand_preserving.py`) now assert the validated behavior (the
 two unbiased coefficients recover; the sweep floor is met) rather than a
 single seed's pass/fail.
+
+---
+
+# 7. pandas 3.x breaks the engine, and the dependency set was unpinned
+
+**Status:** open (pandas 3 support); fixed (the unpinned install)
+**Found:** 2026-08-16, by installing the repo from its own instructions into a
+clean virtual environment.
+
+Two problems, one of which hid the other.
+
+**The install did not work.** `requirements.txt` listed its dependencies without
+versions and omitted `PyYAML` entirely, even though `contracts/scenario.py:301`
+imports it for the `ScenarioSpec` YAML round-trip. `fastapi` and `httpx` were
+missing too, so the server tests silently skipped instead of running. A fresh
+`pip install -r requirements.txt` produced a repo that failed 10 tests. The
+suite had only ever been green against one machine's older packages, which is
+precisely the state pinning exists to prevent.
+
+**pandas 3.x is genuinely incompatible.** Unpinned, pip resolves to pandas 3.x,
+which defaults to Arrow-backed string storage. The engine's numeric coercion of
+categorical columns then raises `ValueError: could not convert string to float`
+from inside `pandas/core/arrays/arrow/array.py`. This is a real code
+incompatibility, not a version-pin preference — supporting pandas 3 means
+changing how categorical columns are encoded before coercion.
+
+**Fix applied.** Every dependency is now pinned to the versions the suite is
+green against (216 passed in a clean venv), with `PyYAML`, `fastapi`, `httpx`
+and `python-multipart` added. Pandas 3 support is open work; do not unpin pandas
+without doing it.
+
+**Related:** both this repo and `regen-basic` claim the top-level package names
+`engine`, `contracts` and `cli`. Installing both into one environment makes
+those imports resolve to whichever was installed last, and the `regen` and
+`synth` commands shadow each other. Use a separate virtual environment per repo.
