@@ -1,5 +1,5 @@
 """
-Explainability tests (G-C): explanation.json ships with every batch and its
+Explainability tests: explanation.json ships with every batch and its
 numbers equal the report objects they were computed from (no drift, no narration).
 """
 

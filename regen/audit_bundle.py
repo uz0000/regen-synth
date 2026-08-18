@@ -1,10 +1,10 @@
 """
-Independent auditability (G-G) — the audit bundle + `verify_bundle`.
+Independent auditability — the audit bundle + `verify_bundle`.
 
 Every generation emits a self-contained bundle (the run directory):
   pass_1_accepted.parquet   the delivered data
   manifest.json             seed/config/scenario + SHA-256 of every artifact + metric versions
-  explanation.json          the reported statistics (G-C)
+  explanation.json          the reported statistics
   reference_aggregates.json aggregate stats of the REAL reference every gate was
                             computed against — under a disclosure policy (no per-row
                             values; histogram/quantile buckets only above a minimum count)
@@ -319,7 +319,7 @@ def _verify_estimand(report, explanation, agg, manifest, delivered):
 
 def _mark_uncheckable(report, explanation):
     # These need the raw reference rows / full protocol — honestly out of scope
-    # at aggregate disclosure (G-G point 4).
+    # at aggregate disclosure (docs/METHODS.md, disclosure policy).
     if explanation.get("gates", {}).get("fidelity", {}).get("coverage") is not None:
         _stat(report, "coverage_rate", "uncheckable",
               note="needs raw real rare rows (not disclosed as aggregates)")

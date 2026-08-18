@@ -196,9 +196,9 @@ class BatchManifest:
     delta: float = 0.0
     # The vetted ScenarioSpec (as a dict) this batch was generated under, so the
     # use-case context is reproducible from disk — Invariant 2 extended to the
-    # contract (G-A). None for legacy batches generated before the contract.
+    # contract. None for legacy batches generated before the contract.
     scenario: Optional[Dict[str, Any]] = None
-    # Audit bundle (G-G): a version stamp, the SHA-256 of every artifact in the
+    # Audit bundle: a version stamp, the SHA-256 of every artifact in the
     # bundle (so tampering is detectable), and the version of every metric used
     # (so results are never silently compared across metric-definition changes).
     manifest_schema_version: int = 1
@@ -287,7 +287,7 @@ class PrivacyReport:
                       continuous features, or the label/rare class couldn't be
                       resolved) — the batch still gets parametric sampling + the
                       verbatim guard, but the reader must not assume a δ-shell
-                      was carved. Never silently implied (P2-9: fail loud).
+                      was carved. Never silently implied (fail loud).
         floor_skip_reason: Why the floor was skipped ("no_continuous_features" /
                       "no_label"), or None when it was applied.
     """
@@ -341,7 +341,7 @@ class LiftReport:
     # estimate is degenerate (a handful of test rows → recall snaps between a few
     # discrete values, and a 0.0 is indistinguishable from "no benefit"). status
     # flags that so a bare 0.0 is never reported as if it were a measurement
-    # (P2-7). "ok" | "insufficient_rare_rows".
+    #. "ok" | "insufficient_rare_rows".
     n_test_rare: int = 0
     status: str = "ok"
 

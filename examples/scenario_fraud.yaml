@@ -1,4 +1,4 @@
-# Example ScenarioSpec (G-A) — a fraud-detector-training use case over the
+# Example ScenarioSpec: a fraud-detector-training use case over the
 # bundled examples/transactions.csv. This is the unit a researcher saves and
 # re-runs: it states what is being simulated, the gates it must pass, and the
 # semantics of each column. Drive it with:
@@ -33,7 +33,8 @@ gates:
   # coverage/correlation thresholds omitted → generate() uses its per-mode defaults
 
 # Per-column semantics. role/dtype/unit/bounds are declarations the vetting gate
-# (G-B) will check against the observed data; here they document the use case.
+# The vetting gate will check these against the observed data; here they
+# document the use case.
 columns:
   - {name: amount,        role: feature, dtype: float,   unit: "currency",     min: 0.0, integer: false, source: user, notes: "transaction amount"}
   - {name: n_prior_txns,  role: feature, dtype: integer, unit: "count",        min: 0.0, integer: true,  source: user}

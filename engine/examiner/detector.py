@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 # Minimum held-out real rare rows for a non-degenerate lift estimate. Below this,
 # recall is computed over so few positives that it can only take a few discrete
 # values and a 0.0 is indistinguishable from "no benefit" — so we report a status
-# instead of a bare number (P2-7). Chosen at 10: recall then resolves to steps of
+# instead of a bare number. Chosen at 10: recall then resolves to steps of
 # ≤0.1, enough to distinguish a real lift from noise.
 MIN_TEST_RARE = 10
 
@@ -151,7 +151,7 @@ def measure_lift(
 
     tail_lift = amp_recall - base_recall
 
-    # Degeneracy guard (P2-7): the lift is measured on the held-out rare fold. With
+    # Degeneracy guard: the lift is measured on the held-out rare fold. With
     # too few test-fold rare rows the estimate can only take a few discrete values
     # and a 0.0 is an artifact, not "no benefit". Flag it rather than emit a bare
     # number. The measurement is NOT weakened — the honest leakage-free protocol is

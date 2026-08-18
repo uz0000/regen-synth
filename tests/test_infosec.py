@@ -1,5 +1,5 @@
 """
-Information-protection tests for the system itself (G-F), distinct from the
+Information-protection tests for the system itself, distinct from the
 generated-data privacy layer (test_privacy.py).
 
 Covers two invariants:
@@ -11,7 +11,7 @@ Covers two invariants:
      API-key / access-key patterns. (`.env` is gitignored and is not scanned;
      the engine is model-free and needs no keys.)
 
-Both use synthetic fixtures only (G-F rule 5): no real dataset rows in tests.
+Both use synthetic fixtures only (rule 5): no real dataset rows in tests.
 """
 
 import logging

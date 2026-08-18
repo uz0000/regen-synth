@@ -303,18 +303,18 @@
             <td class="coef"><span class="ok">+0.009 <span class="mk">✓</span></span></td>
           </tr>
           <tr class="win">
-            <td class="src">the fix <span class="note">builds from the real patterns</span></td>
-            <td><span class="chip ok">certified</span></td>
-            <td class="coef"><span class="ok">+0.731 <span class="mk">✓</span></span></td>
-            <td class="coef"><span class="ok">−0.483 <span class="mk">✓</span></span></td>
-            <td class="coef"><span class="ok">−0.330 <span class="mk">✓</span></span></td>
-            <td class="coef"><span class="ok">+0.009 <span class="mk">✓</span></span></td>
+            <td class="src">the partial fix <span class="note">builds from the real patterns; certifies on 37% of seeds</span></td>
+            <td><span class="chip no">refused</span></td>
+            <td class="coef"><span class="ok">+0.691 <span class="mk">✓</span></span></td>
+            <td class="coef"><span class="ok">−0.304 <span class="mk">✓</span></span></td>
+            <td class="coef"><span class="no">−0.230 <span class="mk">✗</span></span></td>
+            <td class="coef"><span class="ok">+0.005 <span class="mk">✓</span></span></td>
           </tr>
         </tbody>
       </table>
     </div>
     <div class="callout col">
-      Reshuffling the real records passes, as it should. <strong>But every standard way of making fake data gets the biggest warning sign — recent late payments — wrong.</strong> A lender using any of them would misjudge who's risky, and nothing about how real the data looks would have warned them.
+      Reshuffling the real records passes, as it should. <strong>But every standard way of making fake data gets the biggest warning sign, recent late payments, wrong.</strong> A lender using any of them would misjudge who's risky.<br><br>How much warning do the usual checks give? Measured, not assumed: the Gaussian copula matches every column almost exactly (largest gap 0.010) and reproduces the correlations (largest shift 0.078), so how real the data looks tells you nothing here. Some of the others are caught, but by margins of hundredths, and only at strict cut-offs the field does not agree on. <a href="../FINDINGS.md">The full measurement is in FINDINGS.md, section 3.</a>
     </div>
   </div>
 </section>

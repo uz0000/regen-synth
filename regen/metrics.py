@@ -1,5 +1,5 @@
 """
-Metrics registry (G-D/G-G) — one place that names every scored quantity, its
+Metrics registry : one place that names every scored quantity, its
 version, and where it is formally defined (docs/METHODS.md).
 
 Benchmarks, the explanation, and the independent verifier all read the same
@@ -16,7 +16,7 @@ from typing import Dict
 
 # id -> {version, per-metric numeric tolerance for cross-machine recomputation,
 #        one-line summary, whether it is recomputable from AGGREGATES alone (vs
-#        needing the raw reference rows — see the disclosure policy in G-G)}.
+#        needing the raw reference rows — see the disclosure policy in docs/METHODS.md)}.
 METRICS: Dict[str, Dict] = {
     "correlation_delta": {
         "version": 1, "tol": 1e-6,

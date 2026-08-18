@@ -38,7 +38,7 @@ from engine.prior.grounded import _encode_features
 logger = logging.getLogger(__name__)
 
 # Below this many held-out real rare rows the TSTR estimate is degenerate — same
-# floor and honesty as the lift metric (P2-7).
+# floor and honesty as the lift metric.
 MIN_REAL_TEST_RARE = 10
 
 PANEL = ("logreg", "random_forest", "gradient_boosting")

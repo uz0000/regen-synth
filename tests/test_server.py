@@ -1,5 +1,5 @@
 """
-Server API tests (P1-4): the FastAPI surface exposes privacy on /api/generate
+Server API tests: the FastAPI surface exposes privacy on /api/generate
 and /api/campaign, validates it, and reports the regime in the response.
 
 Uses the generated examples/transactions.csv fixture (not a real dataset).

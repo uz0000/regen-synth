@@ -21,7 +21,7 @@ recognizably that person.
    **mixed-data Gaussian copula** fit to the class distribution — continuous
    columns via empirical-quantile inverse, categorical/binary via inverse-CDF of
    per-class frequency tables — plus the residual-GP tail correction. No real row
-   is ever the seed of a synthetic row. (This also fixed the P0-2 correlation
+   is ever the seed of a synthetic row. (This also fixed the correlation
    defect: the copula is joint over *all* features, so discrete↔continuous
    correlation is preserved.)
 2. **δ-distance floor (rare part).** Every released **rare** row is pushed to at

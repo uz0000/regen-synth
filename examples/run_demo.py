@@ -122,14 +122,14 @@ def run(data: Path, label_col: str, rare_value, seed: int, passes: int) -> int:
               f"{lift['amplified_recall']:.3f}  ({lift['tail_lift']:+.3f})")
     elif lift and lift.get("status") == "insufficient_rare_rows":
         print(f"      detection lift: n/a (only {lift['n_test_rare']} held-out rare rows)")
-    # Explainability highlights (G-C): the features worth observing, from computed
+    # Explainability highlights: the features worth observing, from computed
     # class-separation — never narrated.
     top = gs["explain"]["feature_informativeness"]["ranked"][:3]
     if top:
         print("      features worth observing (Fisher separation): "
               + ", ".join(f"{f['feature']}={f['fisher_score']:.2f}" for f in top))
     print(f"      full dataset:  {gs['best_batch_path']}")
-    # Independent auditability (G-G): recompute the reported stats from the bundle.
+    # Independent auditability: recompute the reported stats from the bundle.
     with _quiet():
         from regen.audit_bundle import verify_bundle
         vr = verify_bundle(gs["output_dir"])

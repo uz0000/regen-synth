@@ -1,5 +1,5 @@
 """
-The vetting gate (G-B) — deterministic code that merges the three context
+The vetting gate — deterministic code that merges the three context
 sources into ONE vetted ScenarioSpec the engine can trust, under concrete rules.
 
 Sources (authority order, rule 5): researcher declaration > structural inference
@@ -32,7 +32,7 @@ from contracts.types import FieldDict, FieldType, IngestResult
 
 # Below this per-field confidence a proposal falls back to structural (rule 6).
 # Researcher declarations default to confidence 1.0; the knob matters for the
-# model source (G-B Source 3).
+# model source (advisory model proposal).
 CONFIDENCE_FLOOR = 0.5
 
 

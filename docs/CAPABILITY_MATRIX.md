@@ -1,7 +1,7 @@
-# Capability matrix (G-E)
+# Capability matrix
 
 What REGEN supports, degrades on, and does not support — written from observed
-behavior (the degraded rows came out of the P1-6 privacy sweep). `regen doctor
+behavior (the degraded rows came out of the privacy sweep in `benchmark/RESULTS_PRIVACY.md`). `regen doctor
 <data>` / `regen.api.preflight(...)` check a dataset against this envelope
 *before* generation and report actionable verdicts, so the edges fail loudly
 instead of producing a surprising batch.
@@ -14,10 +14,10 @@ instead of producing a surprising batch.
 | Continuous + binary features, ≥ ~14 rare rows | **Supported** | Full fidelity + floored privacy + honest lift. |
 | Categorical features (low/medium cardinality) | **Supported** | Frequency-sampled; verbatim guard + k-anonymity. |
 | High-cardinality categoricals (> 50) | **Degraded** | Top-K TVD path; per-category fidelity is approximate. |
-| All-categorical (no continuous features) | **Degraded** | δ-distance floor **cannot apply** (P2-9); privacy = parametric sampling + verbatim guard + k-anonymity. Floored fidelity can drop on high-card categoricals (P1-6 `open_payments`). Use `privacy="none"` if fidelity matters more. |
-| Low-cardinality **integer/ordinal** "continuous" features | **Degraded** | The δ-floor can collapse coverage (P1-6 `solar_flare`). Use `privacy="none"` or declare them categorical. |
+| All-categorical (no continuous features) | **Degraded** | δ-distance floor **cannot apply**; privacy = parametric sampling + verbatim guard + k-anonymity. Floored fidelity can drop on high-cardinality categoricals (`open_payments`). Use `privacy="none"` if fidelity matters more. |
+| Low-cardinality **integer/ordinal** "continuous" features | **Degraded** | The δ-floor can collapse coverage (`solar_flare`). Use `privacy="none"` or declare them categorical. |
 | Dense / low-dim rare tail + `privacy="floored"` (esp. percentile mode) | **Degraded** | The fidelity gate is measured on the **delivered** (post-floor) data. On a dense rare tail the δ-floor shifts marginals/correlation by up to ~δ, which can exceed the gate — the batch is then reported **not-shippable, loudly** (never a silent pass). Use `privacy="none"`, a smaller `delta`, or accept the loud downgrade. |
-| Very few rare rows (< 14) | **Degraded** | Amplifies, but the held-out lift reports `insufficient_rare_rows` (P2-7). |
+| Very few rare rows (< 14) | **Degraded** | Amplifies, but the held-out lift reports `insufficient_rare_rows`. |
 | Very few rare rows (< 10) | **Unsupported** | Below the amplification minimum; ingest refuses. |
 | High dimensionality vs rare count (D > n_rare) | **Degraded** | Residual GP underdetermined; set `max_features` 6–10. |
 | Time series (temporal order matters) | **Unsupported** | Rows treated as exchangeable; temporal structure is **not** modeled or preserved. A `timestamp`-role column is reserved in the ScenarioSpec but not yet used. |

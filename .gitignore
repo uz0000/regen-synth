@@ -16,7 +16,7 @@ benchmark/regen-output/
 benchmark/creditcard.csv
 
 # Benchmark datasets (downloaded from OpenML by the benchmark runners) — not
-# redistributed in the repo. The provenance record is tracked (see G-F.4).
+# redistributed in the repo. The provenance record is tracked.
 benchmark/data/
 !benchmark/data/PROVENANCE.md
 

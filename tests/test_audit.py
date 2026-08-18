@@ -1,5 +1,5 @@
 """
-Independent auditability tests (G-G): a bundle verifies cleanly, tampering is
+Independent auditability tests: a bundle verifies cleanly, tampering is
 caught (integrity + the affected statistic), the disclosure bucket-floor holds,
 and the manifest carries artifact hashes + metric versions.
 """

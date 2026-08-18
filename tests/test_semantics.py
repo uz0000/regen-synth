@@ -1,5 +1,5 @@
 """
-Source 3 — advisory model proposal (G-B) tests. Fully OFFLINE: a fake caller
+Source 3 — advisory model proposal tests. Fully OFFLINE: a fake caller
 returns a canned proposal; no network. Covers redaction, vetting of a model
 proposal, authority order, one-call cost bound, offline fallback, and zero-call
 replay from the persisted spec.

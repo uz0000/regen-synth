@@ -51,7 +51,7 @@ from contracts.scenario import (
     EstimandSpec,
     columns_from_field_dict,
 )
-# Re-exported so `regen.api.preflight` works (G-E). preflight imports ingest from
+# Re-exported so `regen.api.preflight` works. preflight imports ingest from
 # here lazily inside its function, so there is no import cycle.
 from regen.preflight import preflight  # noqa: E402,F401
 
@@ -427,10 +427,10 @@ def _enforce_rare_floor(
 
     Shared by generate() (full-dataset path) and run_campaign() (rare-only
     diagnostic path) so the floor is enforced identically — one implementation,
-    no drift (P1-5). Mutates and returns ``full_df``.
+    no drift. Mutates and returns ``full_df``.
 
     Returns (full_df, floor_applied, floor_skip_reason). The floor is skipped
-    (and said so, never silently — P2-9) when the data can't support a δ-shell:
+    (and said so, never silently) when the data can't support a δ-shell:
     ``no_label`` / ``no_continuous_features`` / ``no_rare_rows``.
     """
     from engine.privacy import enforce_distance_floor, _continuous_cols
@@ -520,14 +520,14 @@ def run_campaign(
             so it defaults to "none" — but when a persisted pass batch is meant
             for release, pass "floored" and each accepted batch gets the same
             parametric generation + verbatim guard + δ-distance floor that
-            generate() applies (P1-5: same guarantee, one implementation).
+            generate() applies (same guarantee, one implementation).
         delta: δ-distance floor in σ-units (only meaningful when privacy="floored").
 
     Returns:
         CampaignResult with best_lift, pass history, output paths, etc. The
         privacy regime is recorded in campaign_summary.json and the manifest.
     """
-    # A ScenarioSpec is authoritative for the use-case fields (G-A). Loose params
+    # A ScenarioSpec is authoritative for the use-case fields. Loose params
     # remain for direct callers.
     if scenario is not None:
         label_col = scenario.intent.label_col
@@ -626,7 +626,7 @@ def run_campaign(
         # Under privacy="floored", enforce the δ-distance floor on the accepted
         # batch as the final numeric step before persistence — the same helper
         # generate() uses, so a released campaign batch carries the identical
-        # guarantee (P1-5). The batch is rare-only (all rows are the rare class),
+        # guarantee. The batch is rare-only (all rows are the rare class),
         # so the floor applies to the whole frame.
         if privacy == "floored":
             amp_df, fa, fr = _enforce_rare_floor(amp_df, result, delta, seed + pass_num)
@@ -663,7 +663,7 @@ def run_campaign(
     )
 
     # Privacy regime — always visible in the summary so the diagnostic-vs-private
-    # distinction is never ambiguous (P1-5).
+    # distinction is never ambiguous.
     if privacy == "floored":
         privacy_block = {
             "mode": "floored",
@@ -921,7 +921,7 @@ def generate(
     from engine.scout import ScoutConfig
 
     # A ScenarioSpec, when supplied, is the authoritative statement of the use
-    # case (G-A): its intent + gates drive generation, overriding the loose
+    # case: its intent + gates drive generation, overriding the loose
     # convenience params. Loose params remain the no-spec path (which builds a
     # spec below), so there is no API break.
     if scenario is not None:
@@ -989,7 +989,7 @@ def generate(
     final_seed = seed + 9000
 
     # Records which base generator actually ran per part, so a parametric→grounded
-    # fallback is reflected in the explanation's provenance, not just a log (G-C).
+    # fallback is reflected in the explanation's provenance, not just a log.
     gen_diag: Dict[str, Any] = {}
 
     # 3a. Rare part: Prior → Scout → Amplifier, gated against the rare reference.
@@ -1029,7 +1029,7 @@ def generate(
     # Privacy δ-distance floor (rare part), enforced as the final numeric mutation
     # before persistence via the shared helper (also used by run_campaign), so the
     # guarantee holds on the delivered data and there is one floor implementation
-    # (P1-5). floor_applied/reason feed the loud-skip reporting (P2-9).
+    #. floor_applied/reason feed the loud-skip reporting.
     floor_applied = False
     floor_skip_reason: Optional[str] = None
     if privacy == "floored":
@@ -1072,7 +1072,7 @@ def generate(
             rare_delivered, result.rare_df, full_df, real_full,
             result.field_dict, result.label_col, delta,
         )
-        # Record whether the δ-floor was actually enforced (P2-9). When it was
+        # Record whether the δ-floor was actually enforced. When it was
         # skipped, min_distance is inf (no rare-continuous distance to measure)
         # and `passed` reflects only the verbatim guard — which is what protects
         # an all-categorical / no-label batch, and must be stated, not implied.
@@ -1103,7 +1103,7 @@ def generate(
         privacy_out = None
         privacy_report = None
 
-    # Build the *vetted* ScenarioSpec this batch was generated under (G-A/G-B).
+    # Build the *vetted* ScenarioSpec this batch was generated under .
     # The vetting gate merges Source 1 (structural) + Source 2 (researcher
     # declaration in `scenario`) under the 10 rules, dropping any proposal that
     # contradicts the data and logging every decision (rule 7). Intent + gates
@@ -1159,7 +1159,7 @@ def generate(
         vetted_spec.provenance["model_proposal_id"] = semantics_proposal.proposal_id
         vetted_spec.provenance["model_id"] = semantics_proposal.model_id
 
-    # Conformance audit (G-B rule 9): the delivered batch must obey every vetted
+    # Conformance audit (conformance rule 9): the delivered batch must obey every vetted
     # constraint. A conformance failure fails the batch exactly like a fidelity
     # failure (Invariant 3 extended to the contract).
     from engine.auditor import check_conformance
@@ -1181,7 +1181,7 @@ def generate(
     except Exception:  # yaml optional; the manifest is the source of truth
         pass
 
-    # Estimand preservation (G-H): does a declared regression coefficient recompute
+    # Estimand preservation: does a declared regression coefficient recompute
     # on the delivered data? Fit θ_real on the real reference + θ_synth on the
     # DELIVERED batch, then certify. evaluate() never raises — an unfittable spec
     # becomes a status, and θ_real is disclosed (± SE) so `regen verify` re-certifies
@@ -1195,9 +1195,9 @@ def generate(
     estimand_real_agg = (reference_aggregate(estimand_real_fit, vetted_spec.estimand)
                          if estimand_real_fit is not None else None)
 
-    # Explainability (G-C): every batch explains itself from computed numbers.
+    # Explainability: every batch explains itself from computed numbers.
     # Built AFTER the privacy block so its numbers match exactly, and written
-    # BEFORE the manifest so the manifest can hash it (G-G).
+    # BEFORE the manifest so the manifest can hash it.
     from regen.explain import build_explanation
     explanation = build_explanation(
         result=result, vetted_spec=vetted_spec, rare_report=rare_report,
@@ -1208,7 +1208,7 @@ def generate(
     )
     (out_path / "explanation.json").write_text(json.dumps(explanation, indent=2, default=str))
 
-    # Audit bundle (G-G): reference aggregates of the REAL data (disclosure-
+    # Audit bundle: reference aggregates of the REAL data (disclosure-
     # bounded), then the manifest carrying the SHA-256 of every artifact + the
     # metric versions, so a third party can `regen verify` the batch and detect
     # tampering. The manifest is written LAST because it hashes the others.
@@ -1272,7 +1272,7 @@ def generate(
             "baseline_recall": round(lift.baseline_recall, 4),
             "amplified_recall": round(lift.amplified_recall, 4),
             # tail_lift is None (not a bare 0.0) when the held-out rare fold is
-            # too small to trust the estimate (P2-7). The recall numbers are kept
+            # too small to trust the estimate. The recall numbers are kept
             # for context but flagged by status.
             "tail_lift": (round(lift.tail_lift, 4)
                           if lift.status == "ok" else None),
@@ -1387,7 +1387,7 @@ def _write_manifest(
 def _save_generate_summary(summary: Dict[str, Any], out_path: Path) -> None:
     """Persist a campaign-shaped summary so get_results()/load_synthetic() work."""
     _tl = (summary["lift"] or {}).get("tail_lift")
-    _tl = _tl if _tl is not None else 0.0   # None (insufficient rare fold, P2-7) → 0.0 on disk
+    _tl = _tl if _tl is not None else 0.0   # None (insufficient rare fold) → 0.0 on disk
     cr_like = {
         "best_lift": _tl,
         "passes": [{
@@ -1685,7 +1685,7 @@ def screen(
     actually reliable — it measures real lift on the user's data rather
     than predicting from proxy statistics.
 
-    Privacy (P1-5): screen is a **non-private diagnostic** and takes no privacy
+    Privacy: screen is a **non-private diagnostic** and takes no privacy
     parameter by design. It returns a method recommendation, not a dataset — no
     synthetic rows are persisted or handed back — so output re-identification is
     not in play. Its REGEN arm is generated non-privately on purpose, so the
@@ -1710,7 +1710,7 @@ def screen(
     from engine.examiner import ExaminerConfig, measure_lift
     from engine.scout import ScoutConfig, select_target
 
-    # ScenarioSpec supplies the target when given (screen stays non-private, P1-5).
+    # ScenarioSpec supplies the target when given (screen stays non-private).
     if scenario is not None:
         label_col = scenario.intent.label_col
         rare_def = scenario.intent.rare_def()

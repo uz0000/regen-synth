@@ -1,4 +1,4 @@
-# METHODS — statistical methods reference (G-G)
+# Methods: metric definitions and verification tolerances
 
 The document a model-risk auditor reads. It formally defines every metric REGEN
 scores, so a reported number can be **independently recomputed** and checked

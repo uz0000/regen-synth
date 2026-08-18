@@ -109,23 +109,16 @@ synthetic data. That limit is structural, not an implementation gap.
 
 ---
 
-## 2. What the certifier found
+## 2. What it found
 
-One logistic regression on 30,000 rows of real UCI credit-default data, run
-against seven sources of that same analysis
-(`python examples/certifier_demo/run_demo.py`):
+The results are not repeated here, so that they cannot drift from the runs that
+produced them. [`../FINDINGS.md`](../FINDINGS.md) carries the full account: which
+sources fail, which coefficients they break, whether the standard quality checks
+catch it, whether the failure replicates on a second dataset and model family,
+and how far a generator built to preserve coefficients gets.
 
-- A plain **bootstrap resample of the real data certifies**, as it must. If that
-  failed, the certifier would be broken.
-- The **negative control** — the same columns shuffled independently, so every
-  marginal distribution is identical and only the joint structure is destroyed —
-  diverges on everything, which is the failure the design predicts.
-- **Every practical generator refuses**, including this repo's own. All of them
-  break `pay_delay_1`, the strongest predictor, while passing the ordinary
-  fidelity and prediction checks. Nothing in the normal workflow catches it.
-
-The failure is silent, which is the point. The data passes every check while the
-coefficient shifts, attenuates, or flips sign, and an analyst would never know.
+The one-line version is that six of seven sources fail to preserve a declared
+logistic regression, and the only one that passes is a resample of the real data.
 
 ---
 
@@ -135,17 +128,19 @@ REGEN is also a synthetic-data generator — the system the certifier was
 originally built to check, and the source of the finding above. It runs in five
 steps, in a loop that concentrates effort on the rare cases.
 
-| Step | What it does | Where |
+| Stage | What it is, statistically | Where |
 |---|---|---|
-| **Scout** | picks which rare region of the data most needs more examples | `engine/scout/targeting.py` |
-| **Prior** | draws base rows from the real data's statistics — new rows, not copies | `engine/prior/grounded.py` |
-| **Amplifier** | fills in that rare region specifically, since a generic sampler under-produces it | `engine/amplifier/tail_corrector.py` |
-| **Auditor** | checks the finished batch against the real data and rejects it if the structure is broken | `engine/auditor/` |
-| **Examiner** | measures whether the synthetic data actually helped a downstream model | `engine/examiner/` |
+| targeting | selects the region of the feature space that is under-represented relative to the rare class, and directs sampling effort there | `engine/scout/targeting.py` |
+| base sampler | mixed-data Gaussian copula: marginal quantile functions composed with a Gaussian dependence structure, so novel rows are drawn rather than real rows copied | `engine/prior/grounded.py` |
+| tail correction | Gaussian-process model of the rare region, used to densify where a copula under-produces | `engine/amplifier/tail_corrector.py` |
+| rejection gate | scores the batch against the real data on four statistics and discards it if any fails | `engine/auditor/` |
+| utility evaluation | train-on-synthetic, test-on-real performance of a downstream classifier | `engine/examiner/` |
 
 Three of those deserve detail.
 
-**The Prior uses a mixed-data Gaussian copula.** The easy way to build synthetic
+Three of those deserve detail.
+
+**The base sampler is a mixed-data Gaussian copula.** The easy way to build synthetic
 data is column by column: learn what values `age` takes, learn what values
 `income` takes, draw each independently. Every column comes out with a perfect
 distribution and the table is nonsense, because in the real data those columns
@@ -154,12 +149,12 @@ separates the two things being learned — what each column looks like alone, an
 how the columns move together — and reproduces both. Fixing this dropped the
 correlation-structure error from **0.331 to 0.101** on the transactions set.
 
-**The Auditor gate is four named statistics**, not a vibe: coverage radius,
+**The rejection gate is four named statistics**, each with a stated tolerance: coverage radius,
 total variation distance (categorical marginals), Wasserstein-1 (continuous
 marginals), and Pearson correlation delta. A batch that breaks the real
 correlation structure is rejected rather than shipped with a warning.
 
-**The Examiner only claims a gain when there is one.** Amplification helps when
+**Utility evaluation only claims a gain when there is one.** Amplification helps when
 a detector is genuinely starved of rare examples and reports approximately zero
 when the baseline is already strong. This is where the early overclaiming in
 this project was caught: a headline of +39% collapsed to +4.4% once evaluation
@@ -290,15 +285,18 @@ touches a number, and end-to-end recomputable assurance where a stranger can
 re-derive every reported statistic.
 
 The empirical result is the strongest part. Of seven sources put through the
-same analysis, **only the non-synthetic one certified**. The practical
-generators — a Gaussian copula, SMOTE, noised real data, and this repo's own —
-each preserve two or three of the four coefficients, which is not a pass:
-certification requires all four, and every one of them breaks `pay_delay_1`,
-the strongest predictor, while passing every standard fidelity check.
+same analysis, only the non-synthetic one certified. The practical generators, a
+Gaussian copula, SMOTE, noised real data, and this repo's own, each preserve two
+or three of the four coefficients, which is not a pass, since certification
+requires all four. Whether the standard distributional checks also catch these
+failures depends on where their thresholds are set, which is measured in
+[`../FINDINGS.md`](../FINDINGS.md) section 3 rather than assumed.
+
 Alongside it sit cleanly measured re-confirmations of known effects:
 amplification lift is conditional on baseline recall, leakage-free evaluation
 collapses inflated headlines (+39% to +4.4%), and synthetic utility is strongly
-dataset-dependent (TSTR recovery ranging ~1.0 to ~0.65).
+dataset-dependent, with train-on-synthetic recovery ranging from about 1.0 to
+about 0.65.
 
 ---
 

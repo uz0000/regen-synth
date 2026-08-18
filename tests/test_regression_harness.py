@@ -1,5 +1,5 @@
 """
-Regression harness tests (G-D) — fast checks of the comparison logic and the
+Regression harness tests — fast checks of the comparison logic and the
 committed baseline (the full harness run is a minutes-long pre-push step, not a
 unit test).
 """

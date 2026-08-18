@@ -1,8 +1,8 @@
 """
-Vetting gate + conformance audit tests (G-B).
+Vetting gate + conformance audit tests.
 
 Each of the gate's data-facing rules gets a failing-then-passing check, plus the
-G-B done-when demonstration: two different scenario specs over the same dataset
+Conformance demonstration: two different scenario specs over the same dataset
 produce correspondingly different, gate-passing batches.
 """
 
@@ -121,7 +121,7 @@ class TestConformance:
 
 
 class TestTwoScenariosDiffer:
-    """G-B done-when: the same dataset under two different scenario specs produces
+    """The same dataset under two different scenario specs produces
     correspondingly different, gate-passing batches."""
 
     def _hash(self, df):

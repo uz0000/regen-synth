@@ -87,7 +87,7 @@ class TestDistanceFloor:
         pd.testing.assert_frame_equal(a, b)
 
     def test_coincident_rows_at_nonleading_positions_do_not_crash(self):
-        """P1-6 regression: many synthetic rows landing exactly on real rows —
+        """Regression: many synthetic rows landing exactly on real rows —
         common on integer-coded / low-cardinality continuous columns — must not
         produce inf via delta/nd. The coincident-row nudge previously indexed the
         first n_zero rows of the violating subset instead of the actual zero
@@ -228,10 +228,10 @@ class TestGeneratePrivacy:
                      n_rows=50, delta=5.0)
 
 
-# ── P0-2: percentile-mode correlation gate under privacy ──────────────────────
+# ── percentile-mode correlation gate under privacy ──────────────────────
 
 class TestP02PercentileCorrelationUnderPrivacy:
-    """P0-2: percentile (numeric-tail) rare mode + privacy="floored".
+    """Percentile (numeric-tail) rare mode + privacy="floored".
 
     Root cause of the original failure: the parametric generator sampled discrete
     columns independently of the continuous copula, erasing discrete↔continuous
@@ -298,10 +298,10 @@ class TestP02PercentileCorrelationUnderPrivacy:
         assert abs(synth_r) > 0.15                     # not erased to independence
 
 
-# ── P2-8: privacy scope reconciliation (floor / guard / measurement) ──────────
+# ── privacy scope reconciliation (floor / guard / measurement) ──────────
 
 class TestP08Scope:
-    """P2-8: verbatim-attribute detection must (a) be k-anonymity aware for
+    """Verbatim-attribute detection must (a) be k-anonymity aware for
     discrete-only data — reusing a category tuple shared by many real rows is not
     a leak — and (b) treat matching a real *normal* row the same as a real rare
     row (the guard now runs against the full real set in generation)."""
@@ -340,10 +340,10 @@ class TestP08Scope:
         assert _count_duplicates(synth, real_full, fd, "") == 1
 
 
-# ── P2-9: the floor must never skip silently ──────────────────────────────────
+# ── the floor must never skip silently ──────────────────────────────────
 
 class TestP09LoudFloorSkip:
-    """P2-9: when the δ-floor can't apply (no continuous features / no label) the
+    """When the δ-floor can't apply (no continuous features / no label) the
     privacy block must say so — floor_applied=False + a reason — never imply a
     δ-shell was carved while mode still reads 'floored'."""
 
@@ -386,10 +386,10 @@ class TestP09LoudFloorSkip:
         assert s["privacy"]["floor_skip_reason"] is None
 
 
-# ── P1-5: campaign privacy plumbing + visible regime ──────────────────────────
+# ── campaign privacy plumbing + visible regime ──────────────────────────
 
 class TestP15CampaignPrivacy:
-    """P1-5: run_campaign threads privacy end-to-end (same floor helper as
+    """run_campaign threads privacy end-to-end (same floor helper as
     generate) and always records the regime; screen is non-private by design."""
 
     def test_floored_campaign_batches_carry_the_floor(self):

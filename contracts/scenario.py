@@ -1,5 +1,5 @@
 """
-ScenarioSpec — one typed object that carries a whole use case (G-A).
+ScenarioSpec — one typed object that carries a whole use case.
 
 Today a use case is smeared across loose ``generate()`` parameters (label_col,
 rare_def, rare_ratio, mode, privacy, delta, ...) plus implicit structural
@@ -16,7 +16,7 @@ use-case context (Invariant 2 extends to the contract).
 Pure dataclasses. Like ``contracts.types``, this module imports nothing from
 engine/ or regen/ — only its sibling ``contracts.types`` for the rare-event
 enum. The deterministic *filling* of a spec from data (Source 1) and the *vetting*
-of proposals (G-B) live above the contracts boundary; this file is just the shape.
+of proposals live above the contracts boundary; this file is just the shape.
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ from contracts.types import (
     RareMode,
 )
 
-# Closed vocabularies (the vetting gate in G-B enforces membership).
+# Closed vocabularies (the vetting gate enforces membership).
 ROLES = ("feature", "identifier", "timestamp", "target", "free_text")
 DTYPES = ("integer", "float", "categorical", "boolean", "datetime")
 TASKS = ("detector_training", "data_sharing", "benchmarking", "exploration")
@@ -60,7 +60,7 @@ class ColumnSemantics:
     notes: str = ""
     confidence: float = 1.0        # per-column; low → structural fallback (rule 6)
     source: str = "structural"     # who filled it — one of SOURCES (rule 5/7)
-    proposal_id: Optional[str] = None  # raw model proposal id (G-B Source 3)
+    proposal_id: Optional[str] = None  # raw model proposal id (advisory model proposal)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -79,7 +79,7 @@ class ColumnSemantics:
         ) if k in d})
 
 
-# ── Vetting verdict (G-B: nothing silent, rule 7) ─────────────────────────────
+# ── Vetting verdict (nothing silent, rule 7) ─────────────────────────────
 
 @dataclass
 class VettingVerdict:
@@ -87,7 +87,7 @@ class VettingVerdict:
 
     Every accept / reject / override / fallback is logged with the rule that
     decided it and a human rationale, so the contract is explainable (rule 7) and
-    the record can be surfaced in explanation.json (G-C).
+    the record can be surfaced in explanation.json.
     """
     field: str                 # "<column>.<attr>" e.g. "amount.min"
     decision: str              # "accepted" | "rejected" | "fallback" | "unchanged"
@@ -262,7 +262,7 @@ class ScenarioSpec:
     # Provenance for non-column fields, e.g. {"intent.label_col": "user"}.
     # Per-column provenance lives on each ColumnSemantics (source/confidence).
     provenance: Dict[str, str] = field(default_factory=dict)
-    # The vetting gate's record (G-B rule 7: nothing silent). Empty until a spec
+    # The vetting gate's record (rule 7: nothing silent). Empty until a spec
     # has been vetted against data.
     verdicts: List["VettingVerdict"] = field(default_factory=list)
     spec_version: int = 1
@@ -352,7 +352,7 @@ def columns_from_field_dict(field_dict: FieldDict, label_col: str) -> Dict[str, 
     Every value is derived deterministically from observed data, so source=
     "structural" and confidence=1.0. Bounds/categories come straight from the
     profiled FieldMeta. (Researcher declarations and model proposals merge on top
-    of this via the vetting gate in G-B; here we only lay the baseline.)
+    of this via the vetting gate; here we only lay the baseline.)
     """
     cols: Dict[str, ColumnSemantics] = {}
     for name, meta in field_dict.items():

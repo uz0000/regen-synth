@@ -383,7 +383,7 @@ def generate_parametric_batch(
     row. (Drawing the discrete columns independently, as an earlier version did,
     reproduced their marginals but erased that cross-correlation and failed the
     gate whenever a binary/categorical feature was correlated with the continuous
-    ones — the P0-2 defect.) Discrete values are never copied verbatim from a
+    ones — the correlation-gate defect.) Discrete values are never copied verbatim from a
     real row, which was the strongest re-id signal.
 
     Returns a feature-only DataFrame in *encoded* space — the same contract as
@@ -420,7 +420,7 @@ def generate_parametric_batch(
     # each marginal but erased every correlation *between* a discrete feature and
     # the continuous ones. When a binary/categorical feature is correlated with
     # the continuous features in the rare tail (e.g. is_fraud ↔ n_prior_txns), the
-    # Auditor's correlation gate then failed on the whole batch — the P0-2 defect,
+    # Auditor's correlation gate then failed on the whole batch — the correlation-gate defect,
     # which only surfaced once such a feature was gated (in LABEL mode the binary
     # is the label and is excluded from the gate). The joint copula ties every
     # column to a shared latent correlation, so cross-correlation is restored

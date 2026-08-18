@@ -1,5 +1,5 @@
 """
-ScenarioSpec contract tests (G-A): serialization round-trip, structural fill,
+ScenarioSpec contract tests: serialization round-trip, structural fill,
 and — the load-bearing property — a batch is reproducible from its persisted
 spec, bit-for-bit (Invariant 2 extended to the use-case contract).
 """

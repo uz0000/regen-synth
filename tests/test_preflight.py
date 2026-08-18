@@ -1,6 +1,6 @@
 """
-Preflight / capability-envelope tests (G-E). Each envelope rule has a synthetic
-fixture that trips it. All fixtures are generated — no real dataset rows (G-F).
+Preflight / capability-envelope tests. Each envelope rule has a synthetic
+fixture that trips it. All fixtures are generated — no real dataset rows.
 """
 
 import numpy as np

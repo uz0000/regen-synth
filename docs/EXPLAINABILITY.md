@@ -1,4 +1,4 @@
-# Explainability — `explanation.json` (G-C)
+# Explainability: the `explanation.json` field reference
 
 Every `generate()` batch ships an `explanation.json` next to its `manifest.json`
 (and the same object is returned in the summary under `explain`). It answers, for
@@ -22,7 +22,7 @@ Per-gate account — each check with its statistic, threshold, and verdict.
 - `fidelity.columns`: `{n_passed, n_total}` per-column marginal checks.
 - `normal_fidelity`: the same for the synthetic normal half (coverage is n/a there).
 - `conformance`: `{passed, n_checked, violations[]}` — the vetted-contract gate
-  (G-B rule 9). Each violation is `{column, violation, n_rows}` (counts only, no values).
+  (conformance rule 9). Each violation is `{column, violation, n_rows}` (counts only, no values).
 - `privacy`: the privacy block (below), or `null` when `privacy="none"`.
 
 ### `feature_informativeness`
@@ -38,14 +38,14 @@ Per column: `role`, `source` (who set its semantics — structural / user / mode
 `copula-frequency-sampled`, `grounded-sampled`, `identifier-minted`,
 `label-attached`), `constraints_applied` (vetted attributes that took effect), and
 `constraints_rejected` (proposals the vetting gate dropped, with the rule and
-rationale — G-B rule 7).
+rationale, conformance rule 7).
 
 ### `scout`
 The chosen target region (feature band / percentile) and any scalar Scout targeting
 metadata the Scout recorded.
 
 ### `utility`
-Detection lift with honesty markers (P2-7):
+Detection lift with honesty markers:
 `{status, n_test_rare, baseline_recall, amplified_recall, tail_lift, protocol}`.
 `tail_lift` is `null` when `status = insufficient_rare_rows` (the held-out rare
 fold was too small to trust); `status = not_measured` when the batch failed the

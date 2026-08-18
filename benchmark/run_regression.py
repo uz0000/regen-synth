@@ -1,8 +1,8 @@
 """
-Standing regression harness (G-D) — catches quality or speed drift automatically.
+Standing regression harness — catches quality or speed drift automatically.
 
 Runs the canonical datasets × (privacy on/off) at fixed seeds, self-verifies each
-produced bundle with `regen verify` (G-G), and compares every scored quantity
+produced bundle with `regen verify`, and compares every scored quantity
 against committed, provenance-stamped baselines in benchmark/BASELINES/ within
 explicit tolerances. **Exits non-zero on any regression** — a fidelity/coverage
 drop, a correlation increase, a gate flip, a lift drop, a runtime blow-up past

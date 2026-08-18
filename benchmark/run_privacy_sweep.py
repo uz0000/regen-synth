@@ -1,5 +1,5 @@
 """
-Privacy sweep (P1-6): measure what privacy="floored" costs vs "none" across the
+Privacy sweep: measure what privacy="floored" costs vs "none" across the
 benchmark datasets, at a fixed config and seed so the two modes are directly
 comparable. Writes RESULTS_PRIVACY.json + RESULTS_PRIVACY.md with the run date
 and the code version (git hash), per the audit's provenance rule (§6.6).
@@ -36,7 +36,7 @@ DATASETS = [
     ("bank_marketing.csv", "y"),
     ("churn.csv", "Class"),
     ("solar_flare.csv", "Class"),
-    ("open_payments.csv", "Class"),   # all-categorical → floor skipped (P2-9)
+    ("open_payments.csv", "Class"),   # all-categorical → floor skipped
     ("amazon.csv", "ACTION"),         # all-categorical
     ("creditcard.csv", "Class"),      # large (284k) — kept last
 ]
@@ -167,7 +167,7 @@ def _write_md(payload, path):
         "flagging.",
         "- **floor** = whether the δ-distance floor was enforced. `False` on "
         "all-categorical datasets (no continuous features) is expected and "
-        "honest (P2-9); the verbatim guard still applies.",
+        "honest; the verbatim guard still applies.",
         "- **minDist** ≥ delta (0.5) when the floor is applied and passes; `inf` "
         "when no continuous features exist.",
         "- **lift** `—` means the batch failed the gate (no lift measured) or the "

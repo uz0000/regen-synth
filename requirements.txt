@@ -23,6 +23,9 @@ uvicorn==0.40.0
 python-multipart==0.0.21
 httpx==0.28.1              # FastAPI's TestClient transport
 
+# Demos / comparison baselines
+imbalanced-learn==0.12.4   # SMOTE, the comparison baseline in examples/certifier_demo
+
 # Dev / test
 pytest==7.4.0
 streamlit==1.33.0          # demo visualization

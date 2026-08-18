@@ -26,6 +26,7 @@ dependencies = [
 dev = [
     "pytest",
     "pytest-xdist",
+    "imbalanced-learn",   # SMOTE baseline in examples/certifier_demo
 ]
 pfn = [
     "tabpfn>=2.0,<3.0",

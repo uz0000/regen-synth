@@ -1,5 +1,5 @@
 """
-Source 3 — the OPTIONAL advisory model-proposal path (G-B).
+Source 3 — the OPTIONAL advisory model-proposal path.
 
 A single, cached, provider-agnostic model call that reads the *deterministic
 schema profile* (never raw rows) and proposes column meanings/units/bounds/roles.
@@ -8,12 +8,12 @@ deterministic vetting gate as a researcher declaration (`regen/vetting.py`) — 
 proposal that contradicts the data is dropped and logged. So the model can change
 *what context is inferred* but never *how numbers are made*.
 
-Guarantees (the parts of the G-B rules specific to a model source):
+Guarantees (the parts of the conformance rules specific to a model source):
 - **Metadata only, redacted egress.** Only the profile is sent: column names,
   dtypes, cardinalities, observed bounds, and at most `REGEN_SEMANTICS_SAMPLES`
   example values per column — **zero** for identifier-role columns, and none at
   all when `REGEN_SEMANTICS_SAMPLES=0`. Exactly what was sent is persisted so the
-  exposure is auditable (rule: what leaves the machine, G-F.3).
+  exposure is auditable (rule: what leaves the machine).
 - **Advisory by default.** The proposal is applied only when the caller opts in
   (`accept_contract=True`); otherwise it is shown/logged but not applied.
 - **Replayable, zero-call.** The raw proposal (text + prompt + model id + payload

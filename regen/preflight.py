@@ -1,13 +1,13 @@
 """
-Preflight / generality envelope (G-E) — validate a dataset against what REGEN
+Preflight / generality envelope: validate a dataset against what REGEN
 actually supports BEFORE generation, and report actionable verdicts instead of
 producing a surprising or degenerate batch.
 
 `preflight(path, label_col, rare_def)` returns a list of checks, each with a
 level (`ok` / `warn` / `degraded` / `unsupported` / `error`), a message, and a
 recommendation. The levels mirror docs/CAPABILITY_MATRIX.md. Every rule here was
-observed — the degraded cases came out of the P1-6 privacy sweep (all-categorical
-and low-cardinality-integer data), the small-rare cases out of P2-7 / the GP
+observed — the degraded cases came out of the privacy sweep (benchmark/RESULTS_PRIVACY.md) (all-categorical
+and low-cardinality-integer data), the small-rare cases out of the GP
 underdetermination guard.
 
 Pure Python; lives outside engine/. Reuses the deterministic ingest + profile.
@@ -21,7 +21,7 @@ from contracts.types import FieldType, RareEventDef
 
 # Envelope thresholds.
 MIN_RARE_AMPLIFY = 10        # loader hard-minimum for amplification
-MIN_RARE_FOR_LIFT = 14       # ~10 held-out at 30% test split (P2-7 MIN_TEST_RARE)
+MIN_RARE_FOR_LIFT = 14       # ~10 held-out at 30% test split (MIN_TEST_RARE)
 HIGH_CARD = 50               # top-K TVD path above this many categories
 LOW_CARD_INT = 8             # integer feature with fewer distinct values ≈ ordinal
 HIGH_NAN_RATE = 0.30
@@ -80,12 +80,12 @@ def preflight(
     elif n_rare < MIN_RARE_FOR_LIFT:
         checks.append(_v("rare_count", "warn",
                          f"{n_rare} rare rows: amplification runs, but the held-out "
-                         f"lift estimate will report 'insufficient_rare_rows' (P2-7).",
+                         f"lift estimate will report 'insufficient_rare_rows'.",
                          "Interpret lift cautiously; add rare examples for a real estimate."))
     else:
         checks.append(_v("rare_count", "ok", f"{n_rare} rare rows."))
 
-    # 2. All-categorical → δ-floor cannot apply (P2-9); floored fidelity may drop (P1-6).
+    # 2. All-categorical → δ-floor cannot apply; floored fidelity may drop.
     if not continuous:
         checks.append(_v("privacy_floor", "degraded",
                          "No continuous features: the δ-distance floor cannot apply.",
@@ -94,7 +94,7 @@ def preflight(
                          "categoricals may drop (see docs/CAPABILITY_MATRIX.md)."))
 
     # 3. Low-cardinality integer 'continuous' features behave like ordinals; the
-    #    floor can collapse coverage on them (P1-6 solar_flare). Continuous columns
+    #    floor can collapse coverage on them (solar_flare). Continuous columns
     #    carry no cardinality in the field dict, so count distinct values directly.
     import pandas as pd
     _full = pd.concat([result.normal_df, result.rare_df], ignore_index=True)

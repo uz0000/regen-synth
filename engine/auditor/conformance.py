@@ -1,5 +1,5 @@
 """
-Contract conformance check (G-B rule 9) — the Auditor's gate on the *vetted
+Contract conformance check (conformance rule 9) — the Auditor's gate on the *vetted
 ScenarioSpec*.
 
 The fidelity Auditor asks "does the batch look like the real data?"; this asks
@@ -43,7 +43,7 @@ def check_conformance(df: pd.DataFrame, spec: ScenarioSpec,
     """Verify a delivered batch satisfies every vetted column constraint.
 
     Reports the first-order violation per column (count of offending rows), never
-    a row value (G-F: no real/generated values in reports — only counts). Columns
+    a row value (no real or generated values in reports — only counts). Columns
     not present in the batch are skipped. The target/label column is exempt from
     the value-set check (it is set constant to the rare value, by design).
     """

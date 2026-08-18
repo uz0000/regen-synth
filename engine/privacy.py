@@ -86,7 +86,7 @@ def enforce_distance_floor(
                    a δ-shell to exist, and it is where re-identification risk
                    concentrates). Cross-class near-copies against the dense
                    normal bulk are instead handled by parametric sampling + the
-                   verbatim guard (P2-8). Pass whatever reference the guarantee
+                   verbatim guard. Pass whatever reference the guarantee
                    is defined against; this function stays away from every row in
                    whatever it is given.
         field_dict: Ingest field dict — selects continuous columns.
@@ -146,7 +146,7 @@ def enforce_distance_floor(
         # violating subset, so nd stayed 0 and delta/nd produced inf and crashed
         # the next KD-tree query. This surfaced on integer-coded / low-cardinality
         # continuous columns (e.g. solar_flare), where synthetic rows land exactly
-        # on real ones far more often than on smooth continuous data. (P1-6.)
+        # on real ones far more often than on smooth continuous data. (see benchmark/RESULTS_PRIVACY.md).
         zero_rows = np.where(nd.ravel() == 0)[0]
         if zero_rows.size:
             d = diff.shape[1]

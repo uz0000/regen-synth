@@ -34,6 +34,6 @@ Per dataset, `none` (grounded sampling) vs `floored` (parametric + δ-floor + ve
 ## Reading this
 
 - **gate** is the Auditor fidelity verdict (coverage + per-column + correlation). A floored row that flips PASS→FAIL is a privacy cost worth flagging.
-- **floor** = whether the δ-distance floor was enforced. `False` on all-categorical datasets (no continuous features) is expected and honest (P2-9); the verbatim guard still applies.
+- **floor** = whether the δ-distance floor was enforced. `False` on all-categorical datasets (no continuous features) is expected and honest; the verbatim guard still applies.
 - **minDist** ≥ delta (0.5) when the floor is applied and passes; `inf` when no continuous features exist.
 - **lift** `—` means the batch failed the gate (no lift measured) or the held-out rare fold was too small for a lift estimate.

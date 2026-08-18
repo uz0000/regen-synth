@@ -529,10 +529,10 @@ def test_measure_lift_no_synth_means_zero_lift():
     assert rep.status == "ok"          # 60 rare → ~18 held out, enough to measure
 
 
-# ── P2-7: lift degeneracy on tiny rare folds ─────────────────────────────────
+# ── lift degeneracy on tiny rare folds ─────────────────────────────────
 
 def test_lift_flags_insufficient_rare_rows(tmp_path):
-    """P2-7: a held-out rare fold below MIN_TEST_RARE is reported as a status,
+    """A held-out rare fold below MIN_TEST_RARE is reported as a status,
     not a bare 0.0. Synthetic fixture with ~14 rare rows → ~4 held out."""
     import numpy as np
     import pandas as pd
@@ -560,7 +560,7 @@ def test_lift_flags_insufficient_rare_rows(tmp_path):
 
 def test_generate_lift_out_nulls_tail_lift_when_insufficient(tmp_path):
     """The generate() summary reports {status, n_test_rare, tail_lift=None} rather
-    than a misleading 0.0 when the rare fold is too small (P2-7)."""
+    than a misleading 0.0 when the rare fold is too small."""
     import numpy as np
     import pandas as pd
     from regen.api import generate

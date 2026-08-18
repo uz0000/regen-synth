@@ -63,6 +63,17 @@ relational/PFN prior without a concrete relational requirement.
 The system is a deterministic active-learning loop. There is no agent runtime and no separate
 "control plane" process — the loop is a single Python function (`regen.api.run_campaign()`).
 
+The five stage names below are directory names under `engine/` and `regen/`, not concepts.
+Each one is a standard construction:
+
+| Stage | Is |
+|---|---|
+| Scout | active-learning acquisition over candidate rare regions |
+| Prior | mixed-data Gaussian copula over empirically grounded marginals |
+| Amplifier | Gaussian-process regression on the tail residual (ARD kernel) |
+| Auditor | rejection sampling gate on four distributional distances |
+| Examiner | train-on-synthetic, test-on-real evaluation of a downstream classifier |
+
 ```
 regen.api  (deterministic orchestration — sequences passes, gates batches, reports lift)
     Orchestrator   run_campaign(): runs the active-learning loop, owns pass sequencing

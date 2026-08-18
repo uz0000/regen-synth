@@ -1,108 +1,79 @@
-# Does your synthetic data preserve the *conclusion*? — a generator-agnostic demo
+# The certifier demo
 
-Synthetic data is usually judged on two things: does it **look real** (fidelity)
-and does a model **trained on it predict** (TSTR). Neither tells you whether the
-*conclusion you'd draw from an analysis* survives. This demo shows the third axis
-— **estimand preservation** — and that the certifier that measures it works on
-**any** synthetic data, regardless of who produced it.
+Four scripts. Each one answers a question, prints its result, and writes a
+generated table that the prose elsewhere links to instead of restating.
 
-## The setup
+The interpretation of all four lives in [`../../FINDINGS.md`](../../FINDINGS.md).
+This file is about running them and reading the output.
 
-- **Real data:** UCI *Default of Credit Card Clients* — 30,000 accounts, 22.1%
-  default rate (`prepare_data.py` documents provenance).
-- **The analysis a credit analyst would run:** a logistic regression
-  `default ~ pay_delay_1 + utilization + log_limit + age`. They care about the
-  **coefficients** — which factors drive default, and how much.
-- **θ_real (the conclusion to preserve):**
+Run from the repository root, with `OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
+MKL_NUM_THREADS=1` set for bit-identical results.
 
-  | coefficient | θ_real | 95% CI |
-  |---|---|---|
-  | pay_delay_1 | **+0.714** | [+0.685, +0.743] |
-  | utilization | **−0.369** | [−0.449, −0.290] |
-  | log_limit   | **−0.315** | [−0.348, −0.281] |
-  | age         | **+0.010** | [+0.007, +0.013] |
+| Script | Question | Writes |
+|---|---|---|
+| `run_demo.py` | Does a declared regression survive synthetic data? | [`RESULTS.md`](RESULTS.md), `certificates.json` |
+| `fidelity_check.py` | Do the standard quality checks catch what the certifier catches? | [`FIDELITY.md`](FIDELITY.md) |
+| `generality_check.py` | Does the failure replicate on another dataset and model family? | [`GENERALITY.md`](GENERALITY.md) |
+| `seed_sweep.py` | Is the estimand-preserving generator's result a seed accident? | prints a bias and spread table |
 
-## The result — certify the *same* analysis across six producers
+## The data
 
-Each producer makes a synthetic dataset; the certifier fits the analysis on each
-and compares to θ_real (`✓` preserved / `✗` shifted, two-sample Wald test):
+`credit_default.csv` is the UCI *Default of Credit Card Clients* table, 30,000
+accounts with a 22.1% default rate. `prepare_data.py` documents where it came
+from and how the derived columns were built.
+
+`generality_check.py` uses California housing, which sklearn downloads on first
+run.
+
+## The analysis under test
 
 ```
-source                              certified     pay_delay_1   utilization     log_limit           age
--------------------------------------------------------------------------------------------------------
-bootstrap_real  (positive control)  CERTIFIED        +0.649 ✓      -0.395 ✓      -0.369 ✓      +0.010 ✓
-independent_cols(negative control)  refused          -0.007 ✗      -0.010 ✗      -0.010 ✗      -0.001 ✗
-noised_real     (0.5σ anonymise)    refused          +0.521 ✗      -0.140 ✗      -0.294 ✓      +0.007 ✓
-gaussian_copula (marginals+corr)    refused          +0.464 ✗      -0.314 ✓      -0.225 ✗      +0.011 ✓
-SMOTE           (imblearn)          refused          +0.608 ✗      -0.469 ✓      -0.353 ✓      +0.015 ✓
-REGEN           (this repo)         refused          +0.932 ✗      -0.194 ✓      -0.339 ✓      +0.009 ✓
-estimand_preserving (GMM+cond,v2)   CERTIFIED        +0.731 ✓      -0.483 ✓      -0.330 ✓      +0.009 ✓
+logit    default ~ pay_delay_1 + utilization + log_limit + age
 ```
 
-(Reproduce: `python examples/certifier_demo/run_demo.py` from the repo root. The
-`estimand_preserving` row can differ between runs of the *same* seed — its fit
-involves BLAS-backed operations whose floating-point summation order depends on
-thread count, occasionally enough to flip a borderline coefficient. Pin
-`OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1` for an exactly
-repeatable result.)
+This is the estimand. It is declared up front, because a certifier cannot infer
+which relationship you intend to act on, and every source is graded against the
+same real fit.
 
-## What it shows
+## The sources
 
-1. **The certifier discriminates.** A faithful source (bootstrap) certifies; a
-   structure-destroying one (independent columns) fails every coefficient. It is
-   not an always-fail rubber stamp — it passes what should pass.
-2. **Every *marginals-based* method silently breaks the key coefficient.**
-   Noised-real, a proper Gaussian copula, SMOTE, and REGEN **all** distort
-   `pay_delay_1` — the strongest, discrete, non-linear predictor — while smooth
-   continuous factors (`log_limit`, `age`) mostly survive. An analyst using any of
-   these would over- or under-weight the single most important risk driver, and
-   **no fidelity or prediction check would flag it.**
-3. **The v2 generator is a real, partial fix — not a solved problem.**
-   `estimand_preserving` models the predictor *joint* (a Gaussian mixture, not
-   marginals+correlation) and draws the outcome from a calibrated model of the
-   *real conditional* P(y|x). The run above happens to certify all four; a 30-seed
-   sweep (`python examples/certifier_demo/seed_sweep.py`) tells the more honest
-   story: **37% of seeds fully certify**, `pay_delay_1` and `age` recover
-   essentially unbiased on every seed (nothing else here achieves that), and
-   `utilization`/`log_limit` carry a real, systematic — not random — attenuation
-   from an approximation gap in the joint model. Diagnosed in
-   [`docs/KNOWN_ISSUES.md`](../../docs/KNOWN_ISSUES.md).
-4. **It is generator-agnostic.** θ_real is identical across all rows; only θ_synth
-   differs. The certificate is about whether the conclusion survives, not about
-   provenance — so it can certify data you did **not** generate.
+Seven, in a deliberate order.
 
-## Why this is the product
+**Two controls, which exist to show the certifier discriminates.**
+`bootstrap_real` is a resample of the real rows and must certify; if it ever
+fails, the certifier is broken. `independent_cols` shuffles every column
+independently, preserving all marginals and destroying every association, and
+must fail everything.
 
-The certificate is portable and recomputable: it carries θ_real ± SE, so a third
-party can recompute θ_synth from the synthetic data alone and re-check the verdict
-**without the real rows** — the "attach a trust certificate to synthetic data you
-share" model. Prediction and fidelity are crowded, commoditising axes; *certified
-inferential validity* is not, and this shows it working on real data across every
-generator we tried.
+**Five generators.** `noised_real` adds 0.5σ Gaussian noise to real rows, the
+common anonymisation move. `gaussian_copula` reproduces the marginals and a
+single linear rank correlation. `SMOTE` interpolates between nearest neighbours
+in the minority class. `REGEN` is this repository's pipeline. `estimand_preserving`
+is the second generator, built to satisfy the two conditions a coefficient
+depends on.
 
-## From finding to fix (v2)
+## Reading the output
 
-REGEN's own generator is refused here — and that was the point, not an
-embarrassment: the certifier caught its reference generator distorting a
-coefficient, exactly as it would catch anyone else's. The pattern (copula, REGEN,
-and — via interpolation — SMOTE all failing on the discrete, high-signal
-`pay_delay_1`) has a diagnosed cause: they preserve marginals + linear correlation
-but not the **conditional** structure a coefficient depends on.
+`run_demo.py` prints one row per source and one column per coefficient. A check
+mark means the synthetic estimate is statistically consistent with the real one
+under a two-sample Wald test on the difference. A source is certified only when
+every declared coefficient is preserved, so a row can be mostly check marks and
+still be refused. That is the intended behaviour: a conclusion is not partly
+true.
 
-The `estimand_preserving` row is built against that diagnosis: model the
-predictor **joint** with a Gaussian mixture (novel rows, not perturbed real ones)
-and draw the outcome from a calibrated model of the **real conditional** P(y|x) —
-never the declared coefficient, so nothing is injected. It certifies on 37% of
-seeds — a real improvement, since no other generator here reaches a full
-certification on any seed, and it is the only one that fixes `pay_delay_1`.
-The remaining gap has a diagnosed, quantified cause rather than an unknown one
-(see below).
+`fidelity_check.py` prints two verdicts per source, the standard checks and the
+certificate, so the two axes can be compared directly. It also prints how the
+count of silent failures moves as the thresholds move, because it does move, and
+the thresholds are not standardised.
 
-**Honest limit — it is not free.** Preserving inference means staying faithful to
-the real joint, which costs privacy *distance*: the estimand-preserving rows are
-novel (no verbatim copies) but sit nearer the real data than a strong δ-floor would
-allow, and perturbing them for more privacy re-breaks the coefficients. So the
-achievement is a *navigable* frontier — you can now certify with novel synthetic
-data, which perturbation never allowed — not a defeated one. The mechanism,
-fix-validation, generality (OLS + a second dataset), and the measured
-privacy↔inference frontier are in `docs/KNOWN_ISSUES.md` (#6).
+`generality_check.py` includes two rows that differ only in where the predictors
+came from, both using the same model of the real conditional. The gap between
+them isolates the contribution of the predictor joint.
+
+## One thing to expect
+
+The `estimand_preserving` row can differ between runs at the same seed unless
+BLAS threading is pinned. Its fit involves operations whose floating-point
+summation order depends on thread count, which is occasionally enough to flip a
+borderline coefficient. A single run is one draw. `seed_sweep.py` is the honest
+summary, and it reports 11 of 30 seeds.

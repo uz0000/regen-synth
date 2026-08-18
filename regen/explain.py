@@ -1,5 +1,5 @@
 """
-Explainability (G-C) — every batch explains itself, from computed numbers only.
+Explainability — every batch explains itself, from computed numbers only.
 
 Answers, for a researcher: *what did I get, why should I trust it, and what
 should I look at?* Assembled purely from the run's own report objects (fidelity /
@@ -24,7 +24,7 @@ from regen.metrics import METRICS
 
 def _cite(metric_id: str) -> Dict[str, Any]:
     """A metric-registry citation (id + version) so an explanation number is
-    traceable to its formal definition in docs/METHODS.md (G-G)."""
+    traceable to its formal definition in docs/METHODS.md."""
     return {"metric_id": metric_id, "metric_version": METRICS.get(metric_id, {}).get("version")}
 
 
@@ -139,7 +139,7 @@ def build_explanation(
         "privacy": privacy_out,   # already threshold-annotated, or None
     }
 
-    # -- utility with honesty markers (P2-7) ---------------------------------
+    # -- utility with honesty markers ---------------------------------
     if lift is not None:
         utility = {
             "status": lift.status,
@@ -172,7 +172,7 @@ def build_explanation(
             vetted_spec, vetted_spec.gates.privacy, rare_fallback),
         "scout": scout,
         "utility": utility,
-        # Estimand preservation (G-H): does a declared regression coefficient
+        # Estimand preservation: does a declared regression coefficient
         # recompute on the delivered data? Absent/undeclared → a "not_declared"
         # block, never omitted, so the certificate is explicit about what it covers.
         "estimand": {**(estimand or {"declared": False, "status": "not_declared",
