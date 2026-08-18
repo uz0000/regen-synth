@@ -181,9 +181,8 @@ for one of:
 
 If/when any of these is wanted, call a plain hosted model directly (any
 OpenAI-compatible endpoint) from a thin module **outside `engine/`**. Do **not** introduce an agent
-runtime (the agent runtime or otherwise): REGEN previously carried a agent skill layer and removed it — it was a
-no-op wrapper around `regen.api` that added token cost and zero functionality. A single model call per
-decision is all that's required.
+runtime: one was carried early on and removed, because it was a no-op wrapper around `regen.api` that
+added cost and no functionality. A single model call per decision is all that is required.
 
 Rules if a model is added:
 
@@ -191,7 +190,7 @@ Rules if a model is added:
 - Model output is metadata/proposals/narration only — never a synthetic data value (Invariant 4).
 - Every statistical decision that depends on a model proposal must still be reproducible: persist the
   raw proposal text in the manifest so a re-run can replay it deterministically.
-- Token cost is a first-class constraint (this is why the agent runtime was dropped). Default to the cheapest
+- Token cost is a first-class constraint, which is why the runtime was dropped. Default to the cheapest
   model that does the job; cache proposals; never call a model inside a tight loop.
 
 ---
@@ -244,7 +243,7 @@ Each milestone delivers standalone value. M0–M4 are complete and green.
 | M2 | Amplifier        | TailCorrector tail correction on a hardcoded target region. Measurable density increase in the tail with fidelity preserved. | ✅ |
 | M3 | Examiner         | Train a simple detector; report tail recall/precision lift of amplified vs base data. Produces a single lift number. | ✅ |
 | M4 | Scout (thin)     | Scout targeting picks the next target from a candidate pool using the Examiner signal. One full cycle runs automatically. | ✅ |
-| M5 | API + entry points | `regen.api.run_campaign()` unifies the loop; CLI, FastAPI server, and demo wrap it. (The earlier "agent runtime" milestone was removed — the loop is plain Python.) | ✅ |
+| M5 | API + entry points | `regen.api.run_campaign()` unifies the loop; CLI, FastAPI server, and demo wrap it. (An earlier external-runtime milestone was removed; the loop is plain Python.) | ✅ |
 | M6 | Structured run-state store | (Deferred) Persist batch lineage / target log / fidelity stats to a queryable store for cross-run observability. | ⏳ |
 | M7 | (optional)       | (Deferred) Reasoning-Scout or Stylist via a plain model call (§4); Neo4j ingestion for analysis. | ⏳ |
 | M8 | Estimand preservation | Declare a regression estimand; certify θ_synth recovers θ_real and recompute it in `regen verify`. Regression-coefficient v1 done (`regen/estimand.py`); power-aware certification + categorical predictors + ATE are v2 (`docs/KNOWN_ISSUES.md`). | ✅ |

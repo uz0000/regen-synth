@@ -37,11 +37,15 @@ stated analysis is. (`contracts/scenario.py`)
 
 ### Step 2: fit it on the real data
 
-You get the real answer and how uncertain that answer is — a coefficient and its
-standard error, per predictor. This is `θ_real`, the thing to be preserved. The
-fits are OLS (closed-form) and logistic regression (IRLS), written directly
-against numpy and scipy so the check does not depend on a solver whose behaviour
-could drift between library versions. (`regen/estimand.py`)
+You get the real answer and how uncertain that answer is: for each predictor, a
+coefficient and its standard error, which is how much that coefficient would
+wobble if you drew a different sample of the same size. Written `θ_real` below,
+this is the thing that has to be preserved. Two kinds
+of regression are supported: ordinary least squares, for outcomes that are a
+quantity, which has a one-step formula; and logistic regression, for yes-or-no
+outcomes, which has none and is solved by repeated refinement. Both are written
+directly against numpy and scipy, so the check does not depend on a solver whose
+behaviour could drift between library versions. (`regen/estimand.py`)
 
 ### Step 3: fit the same analysis on the synthetic data
 
@@ -85,8 +89,9 @@ distinct codes, because a pipeline needs to tell a failed check from one that
 never happened.
 
 **Generator-agnostic.** It never asks who made the data. It works on output from
-SMOTE, from a GAN, from a commercial tool, from this repo — the comparison is
-identical. That is what makes the finding below apply to the field rather than
+SMOTE, a common method that invents new rare rows by interpolating between
+similar real ones, or from a GAN, a commercial tool, or this repo. The comparison
+is identical. That is what makes the finding below apply to the field rather than
 to one implementation.
 
 **Per-coefficient.** It reports which conclusions survived, not one blended
@@ -138,8 +143,6 @@ steps, in a loop that concentrates effort on the rare cases.
 
 Three of those deserve detail.
 
-Three of those deserve detail.
-
 **The base sampler is a mixed-data Gaussian copula.** The easy way to build synthetic
 data is column by column: learn what values `age` takes, learn what values
 `income` takes, draw each independently. Every column comes out with a perfect
@@ -149,9 +152,10 @@ separates the two things being learned — what each column looks like alone, an
 how the columns move together — and reproduces both. Fixing this dropped the
 correlation-structure error from **0.331 to 0.101** on the transactions set.
 
-**The rejection gate is four named statistics**, each with a stated tolerance: coverage radius,
-total variation distance (categorical marginals), Wasserstein-1 (continuous
-marginals), and Pearson correlation delta. A batch that breaks the real
+**The rejection gate is four named statistics**, each with a stated tolerance: how
+much of the real range the batch reaches, how far the categorical columns are from
+the real ones, how far the numeric columns are, and how much the relationships
+between columns have shifted. A batch that breaks the real
 correlation structure is rejected rather than shipped with a warning.
 
 **Utility evaluation only claims a gain when there is one.** Amplification helps when
@@ -217,8 +221,9 @@ mask, the generation, and every metric are deterministic.
 
 ## 5. How the utility numbers are produced
 
-The headline generator metric is TSTR: how much of real-data performance does a
-model trained on the synthetic set recover? (`measure_tstr`,
+The headline generator measure is called TSTR, for train on synthetic and test on
+real: how much of real-data performance does a model trained on the synthetic set
+recover? (`measure_tstr`,
 `engine/examiner/surrogate.py`)
 
 The task is defined rather than assumed. The label is the rare-vs-rest

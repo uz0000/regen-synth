@@ -36,21 +36,24 @@ cases with too few held-out rare rows now report a refusal instead of a number.
 
 ---
 
-## 2. Estimand-preserving generator: "roughly 7 of 8 seeds" became 11 of 30
+## 2. The second generator: "roughly 7 of 8 runs" became 11 of 30
 
-**Claimed.** The v2 generator was reported as certifying the full declared
-analysis on approximately 7 of 8 seeds.
+**Claimed.** The generator built to preserve coefficients was reported as getting
+the full declared analysis right on roughly 7 of 8 runs.
 
-**What was wrong.** That rate came from a validation sample of 8 to 9 seeds, run
-without pinning BLAS thread count. The sample was too small to estimate a rate,
-and floating-point summation order varied between runs, which is enough to flip a
-borderline coefficient.
+**What was wrong.** That rate came from 8 or 9 runs, which is far too few to
+estimate a rate from. Worse, the runs were not comparable to each other. The
+numerical library underneath adds numbers in a different order depending on how
+many processor threads it uses, and those tiny differences are enough to tip a
+borderline coefficient one way or the other.
 
-**Re-measured.** 30 seeds, single-threaded BLAS, deterministic
-(`python examples/certifier_demo/seed_sweep.py`): **11 of 30, or 37%.**
+**Re-measured.** 30 runs, with that library pinned to a single thread so every
+run is repeatable (`python examples/certifier_demo/seed_sweep.py`): **11 of 30,
+or 37%.**
 
-The shortfall is not seed noise. Mean bias against standard deviation across the
-30 seeds:
+The shortfall is not luck. Below, bias is how far the average run lands from the
+truth and std is how much the runs scatter around it. A miss larger than the
+scatter is a real error rather than noise:
 
 ```
 predictor        theta_real   mean bias       std
@@ -60,14 +63,14 @@ log_limit           -0.3145     +0.0587    0.0342
 age                 +0.0100     -0.0010    0.0039
 ```
 
-`utilization` and `log_limit` carry bias larger than their spread, which is
-systematic distortion from how a Gaussian mixture approximates the real predictor
-joint, not variance.
+`utilization` and `log_limit` miss by more than they scatter, so their error
+repeats on every run in the same direction. It comes from how well the method can
+describe the real arrangement of the predictors, and more runs would not help.
 
 **What changed.** Every statement of the rate became 37%. The generator is now
-described as a partial fix throughout. The residual bias is documented as an open
-issue rather than presented as noise, and thread pinning is stated wherever a
-reproduction instruction appears.
+described as a partial fix throughout. The repeating error is documented as an
+open issue rather than presented as noise, and the thread setting is stated
+wherever a reproduction instruction appears.
 
 ---
 
@@ -84,16 +87,17 @@ what the copula, SMOTE, or additive noise pass on the credit data. The claim was
 plausible and unverified, which given the subject of this project is the specific
 failure mode it exists to argue against.
 
-**Re-measured.** `python examples/certifier_demo/fidelity_check.py` now runs
-Kolmogorov-Smirnov distance, correlation-matrix shift, and train-on-synthetic
-recovery on all seven sources, with results in
+**Re-measured.** `python examples/certifier_demo/fidelity_check.py` now runs all
+three standard checks on all seven sources: the largest gap between any real and
+synthetic column, the largest change in how strongly pairs of columns track each
+other, and how well a model trained on the synthetic data scores on real data, with results in
 [`examples/certifier_demo/FIDELITY.md`](examples/certifier_demo/FIDELITY.md).
 
 At strict thresholds the claim is false: every failing source is caught by at
 least one standard check, so there is no silent failure. The margins are thin
-enough to matter, though. SMOTE fails only on a KS of 0.107 against a 0.10 line
-and REGEN on 0.112. Loosening KS to 0.15 makes both pass every standard check
-while still moving the coefficient.
+enough to matter, though. SMOTE fails only on a largest-column-gap of 0.107
+against a 0.10 line, and REGEN on 0.112. Moving that line to 0.15 makes both pass every
+standard check while still moving the coefficient.
 
 **What changed.** The claim was replaced with the narrower one the evidence
 supports, in [`FINDINGS.md`](FINDINGS.md) section 3: the standard checks do not

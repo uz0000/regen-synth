@@ -13,10 +13,11 @@ Claims that were published and later revised are not issues. Those are in
 | [1](#1-the-distance-floor-degrades-low-cardinality-integer-data) | Distance floor degrades low-cardinality integer data | Medium | coverage collapses, batch rejected |
 | [2](#2-the-distance-floor-costs-fidelity-on-high-cardinality-categorical-data) | Distance floor costs fidelity on high-cardinality categorical data | Medium | fidelity roughly halves |
 | [3](#3-pandas-futurewarning-on-integer-write-back) | pandas `FutureWarning` on integer write-back | Low | cosmetic today, an error in pandas 3.0 |
-| [4](#4-certification-is-not-power-aware) | Certification is not power-aware | Medium | a coefficient the real data never pinned down can pass |
+| [4](#4-the-check-does-not-account-for-how-precise-the-real-estimate-is) | The check does not account for how precise the real estimate is | Medium | a coefficient the real data never pinned down can pass |
 | [5](#5-numeric-predictors-only) | Numeric predictors only | Low | categorical predictors and treatment effects are out of scope |
-| [6](#6-residual-bias-in-the-estimand-preserving-generator) | Residual bias in the estimand-preserving generator | Medium | two of four coefficients carry systematic bias |
+| [6](#6-a-repeating-error-in-the-coefficient-preserving-generator) | A repeating error in the coefficient-preserving generator | Medium | two of four coefficients are wrong the same way every run |
 | [7](#7-pandas-3x-breaks-numeric-coercion) | pandas 3.x breaks numeric coercion | Medium | dependencies are pinned as a result |
+| [8](#8-keeping-coefficients-privacy-and-rare-case-amplification-cannot-all-be-maximised) | Keeping coefficients, privacy, and rare-case amplification cannot all be maximised | Structural | no generator can maximise all three |
 
 ---
 
@@ -57,13 +58,15 @@ Enforcing the floor on integer-valued continuous columns assigns float values
 into an `int64` column before a re-round restores the dtype. pandas warns about
 this and will raise in 3.0. The assignment path should cast to float up front.
 
-## 4. Certification is not power-aware
+## 4. The check does not account for how precise the real estimate is
 
 **Severity:** Medium. A scope limit, not a correctness bug.
 
-Preservation is decided by a two-sample Wald test that uses the real
-coefficient's standard error. When the real data is scarce, that standard error
-is large, the interval is wide, and the test becomes lenient. It can then certify
+Whether a coefficient survived is decided by a standard test that asks if the
+real and synthetic estimates are far enough apart, given how precisely each was
+measured, to count as different answers. When the real data is scarce, its own estimate is
+imprecise, so the range it could plausibly occupy is wide and the test becomes
+easy to pass. It can then certify
 a coefficient the real data never established in the first place, which is
 preservation of a null result rather than preservation of a finding.
 
@@ -88,28 +91,31 @@ treatment effects over a declared adjustment set are not supported. The
 recompute-and-compare machinery is expected to extend to them without changing
 the shape of the certificate.
 
-## 6. Residual bias in the estimand-preserving generator
+## 6. A repeating error in the coefficient-preserving generator
 
 **Severity:** Medium. A real generation-quality gap, correctly flagged by the
 certifier.
 
 `regen/estimand_preserving.py` satisfies both conditions a coefficient depends
-on, and it certifies the full analysis on 11 of 30 seeds. The shortfall is
-systematic rather than random. Across 30 seeds, `utilization` carries a mean bias
-of +0.169 against a spread of 0.102, and `log_limit` +0.059 against 0.034. Bias
-larger than spread is distortion, not noise.
+on, and it gets the full analysis right on 11 of 30 runs. The shortfall is not
+luck. Across 30 runs, `utilization` misses the truth by +0.169 on
+average while scattering only 0.102 around that average, and `log_limit` misses
+by +0.059 while scattering 0.034. When the miss is larger than the scatter, the
+error repeats every run in the same direction rather than averaging away.
 
-The source is the approximation gap in modelling the real predictor joint with a
-Gaussian mixture. Partial coefficients are sensitive to that joint, so an
-approximation that is adequate in aggregate can still misplace the partial
-effects. `pay_delay_1` and `age` recover with bias small relative to spread.
+The cause is how the method describes the arrangement of the real predictor rows,
+using a blend of overlapping clouds. A coefficient measures one factor's effect
+with the others held still, which depends on exactly how the factors overlap, so
+a description that looks right overall can still get that overlap wrong.
 
-Two implementation facts that matter for anyone extending it. Predictors must be
-standardised before fitting the mixture, since a full-covariance mixture on raw
-columns is dominated by large-scale features and models the small-scale structure
-poorly. And richer mixtures preserve coefficients better while sitting closer to
-the real records, which is the tension in issue 8 below rather than a free
-improvement.
+`pay_delay_1` and `age` do not have this problem: they scatter more than they
+miss, which is ordinary noise.
+
+Two implementation facts that matter for anyone extending it. The predictors must be put on a common scale before
+fitting, or columns with large numbers dominate and the ones with small numbers
+are described badly. And a more detailed description keeps the coefficients better
+while sitting closer to the real records, which is the trade in issue 8 rather
+than a free improvement.
 
 ## 7. pandas 3.x breaks numeric coercion
 
@@ -120,20 +126,23 @@ coercion of categorical columns in the engine. `requirements.txt` pins pandas
 below 3.0 for this reason. The coercion path needs fixing before the pin is
 lifted.
 
-## 8. Estimand preservation, privacy, and amplification cannot all be maximised
+## 8. Keeping coefficients, privacy, and rare-case amplification cannot all be maximised
 
 **Severity:** Structural. Not fixable, only measurable.
 
-Preserving a coefficient pushes the synthetic predictor joint toward the real
-one. Privacy pushes it away. Rare-event amplification reshapes the conditional
-distribution of the outcome by construction, which is what preservation forbids.
-Measured on the credit data, full certification collapses at roughly 0.1σ of
-added noise, before that noise buys meaningful privacy.
+Keeping a coefficient right pushes the synthetic rows toward sitting where the
+real rows sit. Privacy pushes them away. Manufacturing extra rare cases changes
+how often the outcome occurs in the region being filled, which is exactly what
+keeping the coefficient forbids.
 
-No generator here escapes this. The bootstrap control preserves the estimand and
-provides no privacy at all. A floored, amplified batch provides privacy and loses
-the estimand. The contribution is making the position measurable per coefficient
-so an operating point is chosen deliberately. See
+Measured on the credit data, the coefficients stop surviving once about 0.1
+standard deviations of noise is added, which is before that noise buys any
+meaningful privacy.
+
+No generator here escapes this. The control that resamples real rows keeps the
+coefficients and provides no privacy at all, because it is the real rows. A batch generated with the distance floor on and rare cases
+amplified provides privacy and loses the coefficients. The contribution is making the position measurable for each
+coefficient, so the trade is chosen deliberately rather than assumed. See
 [`../FINDINGS.md`](../FINDINGS.md) section 7.
 
 ---

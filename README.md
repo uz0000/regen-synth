@@ -72,9 +72,10 @@ Three properties make the certificate useful:
   can recompute theta_synth from the synthetic table alone and re-check the
   verdict without ever seeing the real rows.
 
-The estimand has to be declared. No generator can infer which relationship in a
-table you intend to act on, and certifying everything is not a well-posed
-request.
+The analysis has to be declared up front. No generator can guess which
+relationship in a table you plan to act on, and "check everything" is not a
+question anyone can answer, since a table supports an unlimited number of
+analyses.
 
 There is a command-line equivalent that works on any generator's output:
 
@@ -93,14 +94,17 @@ failed check from a check that never happened.
 REGEN is also a synthetic data generator. It exists in this repository as the
 system the certifier was built to check, and the certifier refuses its output.
 
-It draws rare-event-weighted samples in a loop. A rejection gate scores each
-batch against the real data on coverage, total variation distance for discrete
-marginals, first-order Wasserstein distance for continuous marginals, and
-correlation-matrix shift, and discards batches that fail rather than shipping
-them with a warning. Base rows come from a mixed-data Gaussian copula, which
-separates each column's marginal from the dependence structure so both can be
-reproduced. A Gaussian-process tail correction densifies the rare region, which a
-generic sampler under-produces.
+It generates rows in a loop, concentrating effort on the rare cases a general
+sampler under-produces. Each batch is scored against the real data on four
+things: how much of the real range it reaches, how far off the categorical
+columns are, how far off the numeric columns are, and how much the relationships
+between columns have shifted. A batch that fails is thrown away rather than
+shipped with a warning attached.
+
+Base rows come from a Gaussian copula, which learns each column's own
+distribution and the pattern of how columns move together as two separate things,
+then reproduces both. A separate step models the sparse tail of the data and
+fills it in, since that is where a general sampler is weakest.
 
 Generation quality is reported in [`benchmark/RESULTS.md`](benchmark/RESULTS.md),
 including the datasets where amplification does not help.
@@ -114,11 +118,12 @@ more than any other method here achieves and less than a solution.
 
 - Single-table cross-sectional tabular data. Not time series, relational, text,
   or images.
-- Certification covers numeric predictors under OLS and logistic families. A
-  declared estimand is required. Categorical predictors, interaction terms, and
+- Checking covers numeric predictors, for straight-line regression and for
+  yes-or-no outcomes. A declared analysis is required. Categorical predictors, interaction terms, and
   average treatment effects are not supported yet.
-- Deterministic and recomputable throughout. No language model sits in the value
-  or verification path.
+- The same inputs always give the same outputs, and every reported number can be
+  recomputed from the saved artifacts. No language model produces or checks any
+  value.
 - The privacy floor is a distance constraint plus a verbatim guard. It is not
   differential privacy. See [`docs/PRIVACY.md`](docs/PRIVACY.md).
 - Certification requires the real data, so it addresses sharing rather than

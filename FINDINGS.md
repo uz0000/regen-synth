@@ -1,13 +1,18 @@
-# Synthetic data can match every distribution you check and still move the coefficient you act on
+# Synthetic data can pass every check you run and still change the number you act on
 
-Synthetic data is normally judged on two things: whether the marginal and joint
-distributions match the real data, and whether a model trained on it predicts
-well on real data. Both are reasonable. Neither is a statement about the quantity
-most tabular data is actually used to produce, which is a regression coefficient
-someone reads as an effect size and acts on.
+Synthetic data is invented records that stand in for real ones when the real ones
+cannot be shared. It is normally judged two ways. Does it look right, meaning
+each column has roughly the right mix of values and the columns move together the
+way they should? And can you train a working model on it?
 
-Those are different properties, and this repository measures the gap between
-them.
+Both are reasonable. Neither asks the question most tables are actually used to
+answer, which is what happens when someone runs a regression on the data and acts
+on the result.
+
+The number they act on is a coefficient. It says how much the outcome moves when
+one factor changes and everything else stays put. A lender uses it to decide
+which warning signs matter and how much. That number can move while every check
+above still passes, and this repository measures how far apart the two can get.
 
 Every number below is produced by a script named beside it. Nothing here is
 hand-copied.
@@ -23,14 +28,21 @@ Real data: the UCI *Default of Credit Card Clients* table, 30,000 accounts, a
 logit    default ~ pay_delay_1 + utilization + log_limit + age
 ```
 
-The estimand is the coefficient vector. `pay_delay_1`, how far behind an account
-already is, is by far the strongest predictor at +0.714.
+The four coefficients are what has to survive. `pay_delay_1`, how many periods
+behind the account already is, is by far the strongest warning sign at +0.714.
 
-Seven sources of the same table are compared: a bootstrap resample of the real
-data as a positive control, independently shuffled columns as a negative
-control, and five synthetic generators. Each is fit with the identical
-specification, and each coefficient is compared to the real one with a
-two-sample Wald test on the difference.
+Seven versions of this table are compared. Two are controls, included to show the
+check itself works. The first is a plain resample of the real rows, which must
+come back matching, and if it ever fails the check is broken rather than the
+data. The second shuffles each column on its own, which leaves every column
+looking untouched while destroying how they line up, and must fail.
+
+The other five are real synthetic-data methods.
+
+Each version gets the identical regression, and each coefficient is compared with
+the real one using a standard test that asks whether the two estimates are far
+enough apart, given how precisely each was measured, to count as different
+answers rather than the same answer measured twice.
 
 ## 2. What happens
 
@@ -41,8 +53,9 @@ Full per-coefficient table: [`examples/certifier_demo/RESULTS.md`](examples/cert
 (`python examples/certifier_demo/run_demo.py`).
 
 The pattern is specific rather than general. Smooth, roughly linear predictors
-(`log_limit`, `age`) survive almost everywhere. `pay_delay_1`, a discrete ordinal
-with a threshold effect, breaks under every method built from marginals:
+(`log_limit`, `age`) survive almost everywhere. `pay_delay_1` takes a small number of
+whole-number steps and its effect arrives as a jump rather than a gradual climb,
+and it breaks under every method that builds a table one column at a time:
 
 | source | `pay_delay_1` |
 |---|---|
@@ -61,22 +74,36 @@ in the model, and the sign of the error depends on which tool they picked.
 This is the claim the repository previously asserted without measuring, so it is
 now measured: [`examples/certifier_demo/FIDELITY.md`](examples/certifier_demo/FIDELITY.md)
 (`python examples/certifier_demo/fidelity_check.py`). Three conventional checks
-run on the same seven sources: maximum per-predictor Kolmogorov-Smirnov distance,
-maximum shift in the Pearson correlation matrix, and train-on-synthetic
-test-on-real ROC-AUC ratio.
+run on the same seven sources.
+
+**Does each column look right?** The largest gap between the real and synthetic
+version of any single column, measured as the widest vertical distance between
+their two cumulative curves. Zero means identical, one means no overlap. Written
+KS below, after the two statisticians it is named for.
+
+**Do the columns move together correctly?** The largest change in how strongly
+any pair of columns tracks each other. Written as a change in correlation, and
+zero means the relationships are unchanged.
+
+**Can you still model on it?** Train a classifier on the synthetic table, score it
+on real data held back for the purpose, and divide by the score of the same
+classifier trained on real data. One means the synthetic table is a full stand-in
+for training. This is usually called TSTR, for train on synthetic, test on real.
 
 **The honest answer is that it depends on where the thresholds sit, and the
 field does not standardise them.**
 
-At strict cut-offs (KS ≤ 0.10, |Δρ| ≤ 0.10, TSTR ≥ 0.95) every failing source is
+At strict cut-offs (column gap 0.10, correlation shift 0.10, model score 0.95) every failing source is
 caught by at least one check, so there is no silent failure. But two of them are
 caught by margins of nothing: SMOTE fails on a KS of 0.107 and REGEN on 0.112.
 Loosen KS to 0.15, which is well inside the range in ordinary use, and both pass
 every standard check while still moving the coefficient. Loosen further and the
-Gaussian copula joins them, despite a near-perfect KS of 0.010 and a correlation
-shift of 0.078 that passes the strict threshold outright.
+Gaussian copula joins them. A copula is a way of building a table that gets each
+column's own distribution exactly right and then imposes a single number for how
+strongly the columns move together. It has a near-perfect column gap of 0.010 and
+a correlation shift of 0.078, which passes the strict threshold outright.
 
-| KS ≤ | \|Δρ\| ≤ | TSTR ≥ | sources that pass everything and still fail |
+| column gap at most | correlation shift at most | model score at least | sources that pass everything and still fail |
 |---|---|---|---|
 | 0.10 | 0.10 | 0.95 | none |
 | 0.15 | 0.10 | 0.95 | SMOTE, REGEN |
@@ -90,25 +117,44 @@ size moved by 30%. Sometimes the two coincide. Nothing makes them coincide.
 
 ## 4. Why it happens
 
-A regression coefficient is a partial effect. Recovering it requires two distinct
-things from the data, and generators tend to get one without the other.
+A coefficient answers a narrow question: if this one factor changes and
+everything else stays put, how much does the outcome move? Getting that number
+back out of synthetic data takes two separate things, and the methods here get
+one without the other.
 
-**R1, the predictor joint.** A coefficient on `utilization` is its effect holding
-the other predictors fixed, so it depends on the covariance structure among
-predictors, not just on each predictor's own distribution. A Gaussian copula
-reproduces every marginal exactly and imposes a single linear rank correlation.
-Where the real dependence is a threshold rather than a monotone trend, that
-linear summary cannot represent it and the coefficient flattens.
+**The predictors have to relate to each other the way they really do.** Holding
+everything else fixed only means something if the generator knows what "everything
+else" was doing. In the real table, accounts using more of their
+limit also tend to be further behind on payments, at a correlation of +0.387, so
+the two carry overlapping information and splitting the credit between them
+depends on how much they overlap. A Gaussian copula, as above, gets each column
+separately right and then ties the columns together with a single number. That
+works when the relationship is a steady
+trend. Being behind on payments is not a steady trend. Measured on the real
+table, the share of accounts that default runs 0.128 for those not behind, 0.339
+one period behind, and 0.691 two periods behind. It climbs and then jumps. A
+single number describing how two columns move together cannot express a jump, so
+the copula renders it as a gentle slope: its correlation with the outcome drops
+from +0.325 to +0.218, and the coefficient flattens from +0.714 to +0.464.
 
-**R2, the conditional distribution.** The coefficient is a property of
-P(y | x). A method can leave the predictor joint intact and still distort the
-outcome given the predictors. Oversampling a rare region does exactly this: it
-raises the local default rate where `pay_delay_1` is high, which steepens the
-gradient and inflates the coefficient. This is why REGEN overshoots to +0.932
-while the copula undershoots to +0.464. Opposite mechanisms, the same failed
-estimand.
+**The outcome has to depend on the predictors the way it really does.** A
+generator can place the rows correctly and still get the default rate wrong at
+each spot. REGEN does this. It deliberately manufactures extra rare
+cases, and rare cases sit where accounts are furthest behind, so that region
+fills with defaults at a higher rate than reality. Its correlation with the
+outcome rises from +0.325 to +0.417 and the jump gets bigger than the real one,
+so the coefficient overshoots from +0.714 to +0.932.
 
-The two requirements are separable, and section 5 separates them.
+Those are opposite errors from opposite causes, and the certifier catches both,
+because it never asks how the data was made. Only whether the answer came back
+the same.
+
+Every claim in this section is measured rather than reasoned:
+[`examples/certifier_demo/MECHANISM.md`](examples/certifier_demo/MECHANISM.md)
+(`python examples/certifier_demo/mechanism_check.py`) states each one, measures
+it, and reports whether it holds.
+
+Section 5 pulls the two apart and shows each one failing on its own.
 
 ## 5. Does it generalise beyond one table and one model family?
 
@@ -116,23 +162,26 @@ Yes. [`examples/certifier_demo/GENERALITY.md`](examples/certifier_demo/GENERALIT
 (`python examples/certifier_demo/generality_check.py`) re-runs the comparison as
 ordinary least squares on California housing, 20,536 block groups,
 `MedHouseVal ~ MedInc + HouseAge + AveRooms + Latitude`. Different dataset,
-different estimand family, continuous outcome.
+different model family, and an outcome that is a
+quantity rather than a yes or no.
 
 The controls behave (bootstrap certifies, shuffled columns fail everything) and
 the Gaussian copula distorts `AveRooms` from −0.140 to −0.172.
 
-The useful part is the last two rows, which isolate R1 from R2. Both draw the
-outcome from the same gradient-boosted model of the real conditional. They differ
-only in where the predictors came from:
+The useful part is the last two rows, which separate the two requirements. Both
+get the outcome right by construction: each one learns the real relationship
+between the predictors and the outcome, and uses it. The only difference is where
+the predictor rows came from.
 
-| predictor source | conditional model | certified | `MedInc` | `AveRooms` |
+| predictors taken from | outcome rule | certified | `MedInc` | `AveRooms` |
 |---|---|---|---|---|
-| real (resampled) | real P(y\|x) | **yes** | +0.490 | −0.140 |
-| Gaussian copula | real P(y\|x) | no | +0.445 | −0.092 |
+| the real rows | learned from real | **yes** | +0.490 | −0.140 |
+| a Gaussian copula | learned from real | no | +0.445 | −0.092 |
 
-Real coefficients are +0.489 and −0.140. Getting the conditional right is not
-enough on its own: with the same correct conditional and a copula predictor
-joint, `AveRooms` loses a third of its magnitude. Both requirements bind.
+The real coefficients are +0.489 and −0.140. Both rows use the correct outcome
+rule, so the second row fails for one reason only: its predictor rows sit wrong
+relative to each other. That alone costs `AveRooms` a third of its size. Getting
+the outcome right does not rescue you from getting the predictors wrong.
 
 The distortion is milder here than on the credit data, with no sign flips. That
 fits the mechanism: these predictors are smoother and closer to linear, and the
@@ -144,11 +193,13 @@ is. The mechanism is general, the severity is dataset-dependent.
 Partly, and the honest number is smaller than the one this project first
 published.
 
-`regen/estimand_preserving.py` builds synthetic data to satisfy both
-requirements: predictors are drawn from a Gaussian mixture fit to the real
-predictor joint, producing novel rows rather than perturbed real ones, and the
-outcome is drawn from a calibrated model of the real conditional. It never reads
-the declared coefficient, so nothing is injected into the quantity being graded.
+A second generator, `regen/estimand_preserving.py`, sets out to satisfy both
+conditions from section 4 at once. For the first, it learns the shape of the real predictor rows as a
+blend of several overlapping clouds, then draws new rows from that shape. The
+rows are new, not real rows with noise added. For the second, it learns how the
+real outcome depends on where a row sits, and uses that to decide each new row's
+outcome. It never looks at the coefficient it is being graded on, so the answer
+is not planted in the data.
 
 Across 30 seeds (`python examples/certifier_demo/seed_sweep.py`):
 
@@ -160,12 +211,21 @@ log_limit           -0.3145     +0.0587    0.0342
 age                 +0.0100     -0.0010    0.0039
 ```
 
-**11 of 30 seeds certify the full analysis (37%).** No other generator here
-certifies on any seed. `pay_delay_1` and `age` recover with bias small relative
-to spread, and fixing `pay_delay_1` is something no other method manages.
-`utilization` and `log_limit` carry bias several times their standard deviation,
-which makes them systematic distortion rather than seed noise, traceable to how
-well a Gaussian mixture approximates the real predictor joint.
+**11 of 30 runs certify the full analysis (37%).** Each run starts the random
+number generator from a different point, so the spread across runs shows how much
+of any single result is luck. No other generator here certifies on even one run.
+
+Read the table by comparing its two right-hand columns. Bias is how far the
+average run lands from the truth. Std is how much the runs scatter around that
+average. When the scatter is bigger than the miss, the miss is luck and more runs
+would wash it out. When the miss is bigger than the scatter, it is a real error
+that repeats every time in the same direction.
+
+`pay_delay_1` and `age` are the first case, and recovering `pay_delay_1` is
+something no other method here manages. `utilization` and `log_limit` are the
+second: they miss by more than they scatter, on every run. That is a genuine
+limit on how well a blend of overlapping clouds can describe the real arrangement
+of the predictors, not noise that would average away.
 
 This is a partial fix. It is reported as one.
 
@@ -179,17 +239,19 @@ need the synthetic data for that answer. The limit is structural.
 
 Underneath that sits a three-way tension that no generator here escapes:
 
-- Preserving the estimand pushes the predictor joint toward the real one.
-- Privacy pushes it away, since a distribution close enough to reproduce partial
-  effects is close to the records themselves.
-- Rare-event amplification reshapes P(y | x) by construction, which is exactly
-  what R2 forbids.
+- Keeping the coefficient right pushes the synthetic rows toward sitting exactly
+  where the real ones sit.
+- Privacy pushes them away, because rows arranged closely enough to reproduce a
+  partial effect are close to the records themselves.
+- Manufacturing extra rare cases changes how often the outcome occurs in the
+  region it fills, which is the second condition being broken on purpose.
 
 Measured on the credit data, full certification collapses at roughly 0.1σ of
 added privacy noise, before the noise buys meaningful privacy. The bootstrap
-control wins on estimand and has no privacy at all. The v2 generator produces
-novel rows but sits at modest distance from the real ones, and perturbing them
-further to gain privacy re-breaks the coefficients.
+control keeps the coefficients and offers no privacy at all, since it is the real
+rows. The second generator makes genuinely new rows, but they sit close to the
+real ones, and pushing them further away for privacy breaks the coefficients
+again.
 
 The contribution is not resolving that tension. It is making the position on it
 measurable per coefficient, so an operating point is chosen deliberately instead
@@ -205,8 +267,8 @@ of assumed.
   interaction terms, and average treatment effects are not certifiable yet.
 - Single-table cross-sectional data only. Not time series, relational, text, or
   images.
-- The residual bias in the v2 generator on `utilization` and `log_limit` is
-  diagnosed but not closed.
+- The repeating error in the second generator on `utilization` and `log_limit`
+  is diagnosed but not fixed.
 - The threshold sensitivity in section 3 is measured on one dataset. How often
   distributional checks and estimand failures diverge in general is an open
   empirical question, and this repo shows only that they can.
