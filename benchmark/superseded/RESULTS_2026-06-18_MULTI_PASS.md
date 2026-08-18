@@ -1,11 +1,11 @@
 > **⚠️ Superseded (2026-07-06).** Predates the full-synthesis change and the
-> privacy layer. Current privacy sweep: [`RESULTS_PRIVACY.md`](RESULTS_PRIVACY.md).
+> privacy layer. Current privacy sweep: [`RESULTS_PRIVACY.md`](../RESULTS_PRIVACY.md).
 > Kept as historical record.
 
 # REGEN Multi-Pass Benchmark Results
 
 > **⚠ SUPERSEDED** — These are early multi-pass results from 2026-06-18 (3 datasets).
-> Current results: [`RESULTS_BREADTH.md`](RESULTS_BREADTH.md) (11 datasets, multi-pass, 5 seeds each, fixed active-learning loop).
+> Current results: [`RESULTS_2026-06-22_BREADTH.md`](RESULTS_2026-06-22_BREADTH.md) (11 datasets, multi-pass, 5 seeds each, fixed active-learning loop).
 
 **Date:** 2026-06-18
 **Engine:** GaussianPrior backend, GP with ARD RBF kernel + L-BFGS optimization, Scout R-EPIG targeting

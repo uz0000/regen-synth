@@ -1437,7 +1437,7 @@ def evaluate_surrogate(
 ) -> Dict[str, Any]:
     """Measure how well a REGEN surrogate stands in for the real data (TSTR).
 
-    Leakage-free by construction (PRODUCT_SPEC §5.1): the real data is split into
+    Leakage-free by construction (ARCHITECTURE §5.1): the real data is split into
     a train fold and a **quarantined** real test fold; the surrogate is generated
     from the **train fold only** (via generate() on a temp copy), so the generator
     never sees the test rows; then a model panel is trained on the surrogate vs on

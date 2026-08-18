@@ -583,7 +583,7 @@ def _cmd_screen(args):
     print(f"  {result.rationale}")
     print()
     print(f"  Data: {result.n_rare} rare rows, {result.n_features} features")
-    print(f"  Prediction ~75% accurate (benchmark/RESULTS_BREADTH.md)")
+    print(f"  Prediction ~75% accurate (benchmark/superseded/RESULTS_2026-06-22_BREADTH.md)")
     print(f"  Two known misclassifications are conservative")
     print("=" * 62)
 

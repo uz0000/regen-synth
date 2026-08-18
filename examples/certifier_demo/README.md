@@ -93,9 +93,10 @@ The `estimand_preserving` row is built against that diagnosis: model the
 predictor **joint** with a Gaussian mixture (novel rows, not perturbed real ones)
 and draw the outcome from a calibrated model of the **real conditional** P(y|x) —
 never the declared coefficient, so nothing is injected. It certifies on 37% of
-seeds — a real improvement (every other generator manages 0–1/4 coefficients,
-never a full certification), and the remaining gap has a diagnosed, quantified
-cause rather than an unknown one (see below).
+seeds — a real improvement, since no other generator here reaches a full
+certification on any seed, and it is the only one that fixes `pay_delay_1`.
+The remaining gap has a diagnosed, quantified cause rather than an unknown one
+(see below).
 
 **Honest limit — it is not free.** Preserving inference means staying faithful to
 the real joint, which costs privacy *distance*: the estimand-preserving rows are

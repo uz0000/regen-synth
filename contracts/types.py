@@ -455,7 +455,7 @@ class ScreenResult:
     """Win-boundary prediction: which method is likely to win on this data.
 
     The prediction rule is calibrated against the breadth benchmark
-    (benchmark/RESULTS_BREADTH.md, ~75% accuracy). The metric is the
+    (benchmark/superseded/RESULTS_2026-06-22_BREADTH.md, ~75% accuracy). The metric is the
     coefficient of variation (CV = σ/μ) of the fitted ARD kernel
     inverse-lengthscales — high spread means features vary in
     informativeness (REGEN-favorable), low spread means features are

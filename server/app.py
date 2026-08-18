@@ -84,7 +84,7 @@ class CampaignRequest(BaseModel):
     gp_noise: float = 0.1
     max_features: int = 0
     # Campaign is a diagnostic path; privacy defaults to "none" (matches
-    # run_campaign). Set "floored" for released pass batches. See API_GUIDE.
+    # run_campaign). Set "floored" for released pass batches. See docs/SERVER_API.md.
     privacy: str = "none"         # "none" | "floored"
     delta: float = 0.5            # δ-distance floor in σ-units (privacy="floored")
 
@@ -106,7 +106,7 @@ class GenerateRequest(BaseModel):
     # Privacy of the delivered dataset. "floored" (default) = parametric
     # generation + verbatim guard + δ-distance floor on the rare part; "none" =
     # legacy grounded sampling. NOT differential privacy. The response's
-    # "privacy" block reports exactly what held. See API_GUIDE.
+    # "privacy" block reports exactly what held. See docs/SERVER_API.md.
     privacy: str = "floored"      # "floored" | "none"
     delta: float = 0.5            # δ-distance floor in σ-units (privacy="floored")
     # Apply the OPTIONAL advisory model semantic proposal (Source 3), vetted by

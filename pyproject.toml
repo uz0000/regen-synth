@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "regen-synth"
 version = "0.1.0"
-description = "Rare-Event Generation & Noise amplification — statistically grounded synthetic data for tail events"
+description = "Does synthetic data preserve the conclusion? A generator, an independent certifier, and the finding that neither this generator nor its competitors pass."
 readme = "README.md"
 license = {text = "MIT"}
 authors = [

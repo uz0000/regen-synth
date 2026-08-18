@@ -1,5 +1,5 @@
 """
-Decision-support surface tests (PRODUCT_SPEC §5.3): a transparent tradeoff
+Decision-support surface tests (ARCHITECTURE §5.3): a transparent tradeoff
 frontier + plain-language diagnosis + recommend-with-override — it surfaces
 options, it does NOT pick for the user.
 """

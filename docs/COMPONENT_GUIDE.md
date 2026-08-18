@@ -1,150 +1,123 @@
-# REGEN — Component Guide (what's used where, and how to talk about it)
+# Component guide
 
-A reference for going back and answering "what technique is used where?" and for
-speaking about REGEN confidently and *honestly* when someone asks. It maps each
-component to the method it uses (by its real, standard name), where that lives in
-the code, and why — then separates **standard techniques** from **REGEN's own
-composition**, and closes with talking points + an FAQ.
+What each part of the system does, which standard method it uses, where it lives
+in the code, and why that method was chosen.
 
-Rule of thumb for speaking about it: **the individual math is standard and you
-should name it as such; the original thing is how it's composed into a
-*verifiable, contract-driven* pipeline.** Owning that distinction reads as rigor;
-blurring it reads as overclaim.
+For how the system works end to end, read [`HOW_IT_WORKS.md`](HOW_IT_WORKS.md)
+first. This file is the lookup table under it.
 
 ---
 
-## 1. Describe it in one breath / one minute
+## The certifier
 
-- **One breath:** "Synthetic data can look completely realistic and still lead you
-  to the wrong conclusion. REGEN checks that specifically — you declare the
-  analysis you actually care about (a regression), and it tells you, coefficient
-  by coefficient, whether the synthetic data agrees with the real thing — for
-  data from *any* generator, not just its own."
-- **One minute:** "The standard way to validate synthetic data is 'does it look
-  real' and 'does a model trained on it predict well.' Both can pass while the
-  number a decision actually depends on — a regression coefficient — silently
-  shifts, and nothing would tell you. REGEN's certifier catches that: declare
-  `outcome ~ predictors`, and it fits that analysis on the real and synthetic
-  data and reports per-coefficient agreement, with a portable certificate a third
-  party can independently recompute. REGEN also ships its own generator — the
-  system the certifier was originally built to check, and which it catches
-  failing on the credit-card demo, exactly as it would anyone else's. A second
-  generator closes part of that gap (37% full certification, up from 0%) and is
-  honest about the part it doesn't: [`docs/KNOWN_ISSUES.md`](KNOWN_ISSUES.md)."
+The core. It does not generate anything — it decides whether a conclusion
+survived.
 
-## 2. Component map — what · method · where · why
-
-### The certifier — checks whether a conclusion survives (the current headline)
-
-| Component | What it does (plain) | Method used (standard name) | Where | Why this method |
+| Component | What it does | Method | Where | Why this method |
 |---|---|---|---|---|
-| **Certifier** | fits your declared analysis on real vs. synthetic data, reports per-coefficient agreement | two-sample Wald test on regression coefficients (OLS/logit, closed-form) | `regen/certifier.py`, `regen/estimand.py` | generator-agnostic (works on anyone's synthetic data); per-coefficient, not one blurred score; portable — recomputable from disclosed θ_real ± SE without the real rows |
-| **v2 generator (estimand-preserving)** | a generator built specifically to pass the certifier | Gaussian-mixture model of the predictor joint + a calibrated model of the real conditional P(y\|x) | `regen/estimand_preserving.py` | closes part of the gap the reference generator (below) can't — 2 of 4 coefficients recover unbiased; the other 2 carry a diagnosed, quantified bias, not a hidden one — see `docs/KNOWN_ISSUES.md` |
+| **Certifier** | fits your declared analysis on the real and synthetic data, reports per-coefficient agreement | two-sample Wald consistency test on regression coefficients | `regen/certifier.py` | generator-agnostic, per-coefficient rather than one blurred score, and portable — recomputable from the disclosed θ_real ± SE without the real rows |
+| **Estimand fits** | the regressions themselves | OLS (closed-form) and logistic regression (IRLS), numpy + scipy | `regen/estimand.py` | no dependency on a stats library whose solver behaviour could drift between versions |
+| **v2 generator** | a generator built specifically to pass the certifier | Gaussian-mixture model of the predictor joint + a calibrated model of the real conditional P(y\|x) | `regen/estimand_preserving.py` | closes part of the gap the reference generator cannot; two of four coefficients recover unbiased and the rest carry a diagnosed, quantified bias — see [`KNOWN_ISSUES.md`](KNOWN_ISSUES.md) |
 
-### The reference generator — REGEN's own synthetic-data pipeline (what the certifier was built to check)
+## The reference generator
 
-| Component | What it does (plain) | Method used (standard name) | Where | Why this method |
+REGEN's own synthetic-data pipeline — the system the certifier was built to
+check, and which it refuses.
+
+| Component | What it does | Method | Where | Why this method |
 |---|---|---|---|---|
-| **Ingest** | load, clean, split into normal/rare, profile columns | dtype/cardinality inference, median/mode imputation | `engine/ingest/loader.py`, `profile.py` | deterministic, model-free baseline understanding of the data |
-| **Prior — value generator** | draws base rows grounded in the real distribution | **Gaussian copula** (mixed continuous+discrete), inverse-CDF sampling; **Gaussian Naive Bayes** density scorer | `engine/prior/grounded.py` | copula preserves each marginal *and* the correlations without copying a real row |
-| **Amplifier — tail model** | corrects/densifies the rare tail | **Gaussian Process regression** with an **ARD kernel** (via GPy) | `engine/amplifier/tail_corrector.py` (`TailCorrector`) | the tail residual is smoother/cheaper to learn than regenerating the whole distribution; ARD learns which features matter |
-| **Scout — targeting** | picks which rare region to synthesize next | **active-learning acquisition** (information-gain style score) + explored-region memory | `engine/scout/targeting.py` | focus budget on the most informative tail region (note: its incremental value is unproven — optional, not a headline) |
-| **Auditor — fidelity gate** | rejects batches that break real structure | **Total Variation Distance**, **Wasserstein-1** distance, **Pearson correlation** delta, coverage radius | `engine/auditor/fidelity.py` | catches "right marginals, scrambled joint structure" — the failure that matters |
-| **Auditor — conformance gate** | batch must obey the declared contract | bounds/type/category/uniqueness checks | `engine/auditor/conformance.py` | a batch that violates its own declared meaning isn't shippable |
-| **Examiner — lift** | does adding synthetic help a detector? | **RandomForest** + leakage-free train/test recall (held-out real rare) | `engine/examiner/detector.py` | honest measure of augmentation benefit (conditional — real only when the baseline is weak) |
-| **Examiner — TSTR** | does the surrogate *stand in* for real data? | **train-on-synthetic / test-on-real**, model panel (LogReg/RF/GBDT), **ROC-AUC** + **PR-AUC** | `engine/examiner/surrogate.py` (`measure_tstr`) | the headline "how much real performance is recovered" number, with a real-data ceiling |
-| **Privacy — δ-floor + guard** | prevents near-copy re-identification | per-record **σ-normalized nearest-neighbour distance** floor (scipy `cKDTree`), verbatim guard, **k-anonymity** for discrete tuples | `engine/privacy.py` | pushes every released rare row off the real ones; **NOT differential privacy** |
-| **ScenarioSpec — the contract** | the whole use case as one typed object | dataclasses + JSON/YAML; persisted in the manifest | `contracts/scenario.py` | single source of truth; a batch replays bit-for-bit from it |
-| **Vetting gate** | merges 3 context sources under rules | deterministic rule engine (authority order, data-is-ground-truth, …) | `regen/vetting.py` | lets context parameterize the math without ever violating it |
-| **Explanation** | every batch explains itself | computed report (gate stats, provenance, feature informativeness via class-separation Fisher score) | `regen/explain.py` | legibility — numbers, cited to versioned metric IDs, never narrated by a model |
-| **Audit bundle + verify** | a skeptic recomputes the numbers | SHA-256 artifact hashing + independent recomputation, disclosure-bounded reference aggregates | `regen/audit_bundle.py`, `regen/metrics.py` | turns claims into checkable facts (the moat) |
-| **Preflight** | is this dataset in the envelope? | rule checks (rare-count, all-categorical, time-series, dimensionality…) | `regen/preflight.py` | refuse out-of-scope shapes *before* generating |
-| **Advisory model layer** | optional: LLM proposes column *meanings* | one cached, provider-agnostic call; vetted by the gate | `regen/semantics.py` | lowers expertise barrier; **metadata only — never a value** |
-| **Manifest** | reproducibility | seed + config + schema hash + code version + artifact hashes | `engine/manifest.py` | same manifest → identical batch (Invariant 2) |
+| **Ingest** | load, clean, split into normal and rare, profile columns | dtype/cardinality inference, median/mode imputation | `engine/ingest/loader.py` | a deterministic, model-free reading of the data |
+| **Prior** | draws base rows grounded in the real distribution | mixed-data Gaussian copula, inverse-CDF sampling; Gaussian Naive Bayes density scorer | `engine/prior/grounded.py` | preserves each column's own distribution *and* how the columns move together, without copying a real row |
+| **Amplifier** | corrects and densifies the rare tail | Gaussian-process regression with an ARD kernel (GPy) | `engine/amplifier/tail_corrector.py` | the tail residual is smoother and cheaper to learn than regenerating the whole distribution; ARD learns which features matter |
+| **Scout** | picks which rare region to synthesise next | active-learning acquisition score + explored-region memory | `engine/scout/targeting.py` | focuses budget on the most informative region. Its incremental value is unproven — treat it as optional, not a headline |
+| **Auditor — fidelity** | rejects batches that break real structure | total variation distance, Wasserstein-1, Pearson correlation delta, coverage radius | `engine/auditor/fidelity.py` | catches the failure that matters: right marginals, scrambled joint structure |
+| **Auditor — conformance** | batch must obey its declared contract | bounds, type, category and uniqueness checks | `engine/auditor/conformance.py` | a batch that violates its own declared meaning is not shippable |
+| **Examiner — lift** | does adding synthetic data help a detector? | random forest + leakage-free train/test recall on held-out real rare rows | `engine/examiner/detector.py` | measures augmentation benefit honestly; real only when the baseline is weak |
+| **Examiner — TSTR** | does the synthetic set stand in for real data? | train-on-synthetic / test-on-real, three-model panel, ROC-AUC and PR-AUC | `engine/examiner/surrogate.py` | gives a recovery number against a real-data ceiling instead of an unanchored score |
+| **Privacy floor** | prevents near-copy re-identification | σ-normalised nearest-neighbour distance floor (scipy `cKDTree`), verbatim guard, k-anonymity on discrete tuples | `engine/privacy.py` | pushes every released rare row off the real ones. **Not differential privacy** |
+| **Constraint layer** | folds impossible values back onto reality | bounds and support enforcement | `engine/constraints.py` | no negative amounts, no fractional counts; never invents values the data never showed |
 
-## 3. Methods & prior art (say this exactly)
+## Configuration and assurance
 
-**Standard, off-the-shelf techniques REGEN uses** (name them freely — they're
-community/textbook methods, not anyone's proprietary IP, and not invented here):
-Gaussian copula (Sklar's theorem); Gaussian Process regression + ARD kernel
-(Rasmussen–Williams; GPy); Gaussian Naive Bayes; Total Variation Distance;
-Wasserstein-1 / optimal transport; Pearson correlation; RandomForest / Logistic
-Regression / Gradient Boosting (scikit-learn); ROC-AUC and PR-AUC; k-anonymity
-(Sweeney); nearest-neighbour distance (scipy `cKDTree`); active-learning
-information-gain acquisition; TSTR/TRTR (an established synthetic-data evaluation
-protocol); inverse-CDF / rank-based sampling; Laplace-smoothed frequency tables.
+| Component | What it does | Method | Where | Why it exists |
+|---|---|---|---|---|
+| **ScenarioSpec** | the whole use case as one typed object | dataclasses + JSON/YAML, persisted in the manifest | `contracts/scenario.py` | single source of truth; a batch replays bit-for-bit from it |
+| **Vetting gate** | merges three context sources under fixed rules | deterministic rule engine (researcher > structural > model; a proposal contradicting the data is dropped and logged) | `regen/vetting.py` | lets context parameterise the maths without ever overriding it |
+| **Explanation** | every batch explains itself | computed report: gate statistics, provenance, feature informativeness via Fisher class-separation score | `regen/explain.py` | numbers cited to versioned metric IDs, never narrated by a model |
+| **Audit bundle + verify** | a skeptic recomputes the numbers | SHA-256 artifact hashing plus independent recomputation from disclosure-bounded aggregates | `regen/audit_bundle.py`, `regen/metrics.py` | turns reported claims into checkable facts |
+| **Preflight** | is this dataset in the envelope? | rule checks on rare count, all-categorical shape, time-series shape, dimensionality | `regen/preflight.py` | refuses out-of-scope data *before* generating, so failures are named up front |
+| **Semantic layer** | optional: a model proposes column meanings and breaks target ties | one cached, provider-agnostic call, vetted by the gate | `regen/semantics.py` | lowers the expertise barrier. Metadata only — never a value |
+| **Manifest** | reproducibility | seed + config + schema hash + code version + artifact hashes | `engine/manifest.py` | same manifest produces an identical batch |
 
-**REGEN's own composition** (this is the original part — an *engineering synthesis
-+ assurance layer*, not new mathematics): the **ScenarioSpec** contract and the
-deterministic **3-source vetting gate**; **conformance-as-a-gate**; the computed
-**`explanation.json`**; the **audit bundle + `regen verify`** (independent
-recomputation, versioned metrics, a disclosure policy); the **δ-floor enforced as
-the final step and cross-checked against TSTR** to catch memorization; the
-leakage-free, honestly-reported evaluation discipline; and the **"certified
-surrogate" framing** overall.
+---
 
-**The research papers in `docs/papers/`** informed the *framing* (active residual
-learning → the Amplifier; Prior-Fitted Networks → the "Prior" name; structured
-semantic control → a deferred, unused idea). REGEN implements **standard techniques
-informed by** them — not verbatim reimplementations. An earlier RDB-PFN/TabPFN
-backend was tried and **removed** (see git history); the current Prior is empirical
-grounded/copula sampling.
+## What is standard, and what is not
 
-## 4. How to talk about it — claims to make, and to avoid
+**Standard techniques used here**, none invented for this project: Gaussian
+copula (Sklar's theorem); Gaussian-process regression with an ARD kernel
+(Rasmussen–Williams, via GPy); Gaussian Naive Bayes; total variation distance;
+Wasserstein-1; Pearson correlation; random forest, logistic regression and
+gradient boosting (scikit-learn); ROC-AUC and PR-AUC; k-anonymity (Sweeney);
+nearest-neighbour distance (scipy `cKDTree`); active-learning acquisition;
+TSTR/TRTR as an evaluation protocol; inverse-CDF sampling; Laplace-smoothed
+frequency tables.
 
-**Make these (all true and demonstrable):**
-- "The certifier catches synthetic data that passes every standard fidelity/prediction
-  check while a coefficient you'd act on silently shifts — and it caught this repo's
-  own generator doing exactly that."
-- "It's generator-agnostic and portable: it works on data from any generator, and the
-  certificate is independently recomputable without the real rows (`regen verify`)."
-- "The v2 generator is a real, partial fix, quantified honestly: 37% full
-  certification, two of four coefficients recover unbiased, and the remaining bias
-  has a diagnosed cause, not a hidden one."
-- "It grounds every value in the real data statistically and never copies a real record."
-- "The math is standard; the original part is the verifiable, contract-driven composition."
+**What this repo composed**: the `ScenarioSpec` contract and the deterministic
+three-source vetting gate; conformance as a hard gate; the computed
+`explanation.json`; the audit bundle and `regen verify` with versioned metrics
+and a disclosure policy; the δ-floor enforced as the final step and cross-checked
+against TSTR to catch memorisation; and the certifier itself — a
+generator-agnostic, per-coefficient, recomputable verdict on whether a declared
+analysis survived.
 
-**Avoid these (they don't survive scrutiny):**
-- ❌ "I invented [copula / GP / …]." → No; name them as standard.
-- ❌ "The v2 generator certifies the analysis." → It certifies 37% of the time; say the number.
-- ❌ "It improves fraud detection by 39%." → Conditional and was inflated; lead with TSTR + honesty instead.
-- ❌ "It's differential privacy." → It isn't; say what it is (near-copy floor).
-- ❌ "It's a million-dollar product." → Unproven demand; frame as a rigorous capability.
+The papers in `docs/papers/` informed framing rather than implementation: active
+residual learning suggested the Amplifier, Prior-Fitted Networks suggested the
+"Prior" name, and a structured-semantic-control paper contributed an idea that
+was ultimately deferred. An earlier TabPFN-style backend was tried and removed;
+the current Prior is empirical copula sampling.
 
-## 5. FAQ — the questions people actually ask
+## What this does not do
 
-- **"What is it, in one line?"** A tool that checks whether a conclusion you'd draw
-  from synthetic data would also be true of the real data — a check nothing else in
-  the space does, run against a generator this repo also ships (and catches failing
-  its own check).
-- **"Did you invent the math?"** No — it composes standard techniques (copulas,
-  Gaussian processes, standard classifiers/metrics). What's mine is the
-  verification/assurance layer and how it's all composed.
-- **"Is this differential privacy?"** No. It enforces a per-record distance floor
-  so no released row is a near-copy of a real one, plus a verbatim/k-anonymity
-  guard. It does **not** give an ε/δ-DP bound or stop aggregate/membership attacks.
-- **"How is it different from Gretel / Mostly AI?"** They lead with generation
-  quality and DP. REGEN leads with **independent verifiability, a use-case
-  contract, and honest measurement** — a batch you can *check*, not just trust.
-  (Different emphasis, not a superiority claim.)
-- **"Does it actually make models better?"** Only when the detector is
-  data-starved (low baseline recall) — then yes, measurably. On an already-good
-  detector it honestly reports ~0. The headline isn't lift; it's TSTR (how much
-  real performance a model trained on the surrogate recovers), read alongside the
-  privacy distance.
-- **"What can't it do?"** Single-table tabular only — not time-series,
-  relational, free text, or images; it's not differential privacy; scarce ≠
-  absent (there's a minimum viable sample); and it preserves *correlation, not
-  causation* (never present a surrogate as evidence for a causal effect).
-- **"What was the hardest / most interesting part?"** The honest evaluation:
-  finding and removing the leakage and selection bias that had inflated the
-  results — e.g. a copula that dropped discrete↔continuous correlation, and a
-  fidelity gate that scored pre-privacy-floor data instead of what actually ships
-  — and building `regen verify` so nobody has to take my word for a number.
+- **It is not differential privacy.** It enforces a per-record distance floor so
+  no released row is a near-copy of a real one, plus a verbatim and k-anonymity
+  guard. There is no ε/δ bound, and it does not stop membership-inference or
+  aggregate attacks.
+- **Certification requires the real data.** It addresses sharing, not scarcity.
+  See [`HOW_IT_WORKS.md`](HOW_IT_WORKS.md) §1.
+- **The v2 generator does not solve the problem.** It certifies on 37% of seeds.
+  The number belongs in any description of it.
+- **Amplification lift is conditional.** It is real when a detector is starved of
+  rare examples and approximately zero when the baseline is already strong. An
+  early +39% headline was leakage-inflated and became +4.4% under leakage-free
+  evaluation; that corrected number is the one to use.
+- **It preserves correlation, not causation.** A synthetic surrogate can validate
+  a pipeline's engineering. It is never evidence for a causal effect.
+- **Single-table tabular only** — not time-series, relational, free text, or
+  images. See [`CAPABILITY_MATRIX.md`](CAPABILITY_MATRIX.md).
 
-## 6. Where to point someone who wants proof
+## Common questions
+
+**What is it, in one line?** A tool that checks whether a conclusion you would
+draw from synthetic data would also be true of the real data — run against a
+generator this repo also ships, and which it catches failing that check.
+
+**How is it different from Gretel or Mostly AI?** Those lead with generation
+quality and differential privacy. This leads with independent verifiability: a
+batch you can check rather than trust. Different emphasis, not a superiority
+claim.
+
+**Does it actually make models better?** Only when the detector is data-starved.
+On an already-good detector it honestly reports approximately zero. The headline
+generator metric is TSTR, read alongside the privacy distance.
+
+**What was hardest?** The honest evaluation — finding and removing the leakage
+and selection bias that had inflated the early results, including a copula that
+dropped discrete-to-continuous correlation and a fidelity gate that scored
+pre-privacy-floor data instead of what actually shipped.
+
+## Where to look for proof
+
 - Run it: `regen doctor <data>` → `regen generate <data>` → `regen verify <out>`.
-- The honesty trail with before/after numbers: `docs/BUILDLOG.md`.
-- Formal metric definitions + thresholds: `docs/METHODS.md`.
-- Architecture and rationale: `docs/PRODUCT_SPEC.md`.
-- Privacy guarantee and its limits: `docs/PRIVACY.md`.
+- The change history with before/after numbers: [`BUILDLOG.md`](BUILDLOG.md).
+- Formal metric definitions and thresholds: [`METHODS.md`](METHODS.md).
+- Privacy guarantee and its limits: [`PRIVACY.md`](PRIVACY.md).

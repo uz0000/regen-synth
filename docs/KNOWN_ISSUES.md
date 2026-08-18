@@ -1,9 +1,25 @@
-# Known Issues
+# Known issues
 
-> This file mixes **historical, resolved** entries (kept as a record of what was
-> fixed and how) with a **current** section at the bottom, added 2026-07-06 during
-> the privacy/capability build (see `docs/BUILDLOG.md`). The first entry below is
-> historical (resolved 2026-06-22).
+This file holds two kinds of entry: what is **currently open**, and a record of
+what was **already fixed** and how. The record is kept deliberately — several of
+these were errors in this project's own published results, and removing them
+would make the work look cleaner than it was.
+
+**Open now:**
+
+| # | Issue | Effect |
+|---|---|---|
+| 1 | `privacy="floored"` degrades low-cardinality integer/ordinal data | the δ-floor can collapse coverage; use `privacy="none"` or declare the columns categorical |
+| 2 | `privacy="floored"` costs fidelity on all-categorical high-cardinality data | the floor cannot apply to non-continuous features; fidelity can drop |
+| 3 | Pandas `FutureWarning` on integer-column write-back | cosmetic |
+| 4 | Estimand certification is not power-aware | scarce real data widens θ_real's interval and makes the test lenient; surfaced as `real_significant` rather than a failure |
+| 5 | Estimand v1 supports numeric predictors only | categorical predictors and ATE are not certifiable yet |
+| 6 | The generator does not preserve estimands on discrete non-linear predictors | partially fixed by the v2 generator, which certifies on 37% of seeds |
+
+**Already fixed** (kept as a record): high-cardinality categorical TVD failures
+and the categorical decode bug (both resolved 2026-06-22), and the "~7/8 across
+seeds" claim for the v2 generator, which did not hold at scale and was corrected
+to 37% on 2026-08-16 — see the correction at the end of this file.
 
 ---
 
@@ -261,8 +277,9 @@ certification threshold. Pinning `OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
 MKL_NUM_THREADS=1` makes a given seed's result exact and repeatable — without
 it, "seed 7 certifies" is not a claim you can rely on reproducing.
 
-**Net:** v2 is a real improvement over every other generator tested (which
-certify 0–1/4 coefficients on the credit demo) — two of four coefficients
+**Net:** v2 is a real improvement over every other generator tested (none of
+which certifies the full analysis on any seed, and all of which break
+`pay_delay_1` on the credit demo) — two of four coefficients
 recover essentially unbiased, which nothing else here achieves — but "it
 certifies" is true for a minority of seeds, not a solved problem. The honest
 claim is "v2 reliably fixes `pay_delay_1`; `utilization`'s partial-correlation

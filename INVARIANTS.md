@@ -1,7 +1,7 @@
-# REGEN — build guide
+# REGEN — design rules and invariants
 
-This file is the source of truth for building REGEN. Read it before writing code. If a change
-contradicts the **Invariants** section, stop and flag it rather than working around it.
+The constraints this system was built under. §8 lists the invariants, each
+enforced by a test.
 
 REGEN is a **deterministic pipeline** that generates **statistically grounded synthetic data** and
 **amplifies rare events** so downstream ML models get better at detecting them. It is built on three
@@ -168,7 +168,7 @@ for one of:
 - **Stylist / narration** — model-grounded narrated content (personas, attack-step text).
 - **Result narration** — human-language summaries of a campaign.
 
-If/when any of these is wanted, call a plain hosted model directly (e.g. **GLM 5.2**, Claude, or any
+If/when any of these is wanted, call a plain hosted model directly (any
 OpenAI-compatible endpoint) from a thin module **outside `engine/`**. Do **not** introduce an agent
 runtime (the agent runtime or otherwise): REGEN previously carried a agent skill layer and removed it — it was a
 no-op wrapper around `regen.api` that added token cost and zero functionality. A single model call per

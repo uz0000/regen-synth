@@ -1,5 +1,5 @@
 """
-Intent → ScenarioSpec proposer tests (PRODUCT_SPEC §5.2). Fully offline: a fake
+Intent → ScenarioSpec proposer tests (ARCHITECTURE §5.2). Fully offline: a fake
 caller returns a canned scenario JSON; no network. Verifies the draft is always
 valid, the model *informs* under validation (invalid fields ignored, never
 obeyed), and the draft drives generation.
