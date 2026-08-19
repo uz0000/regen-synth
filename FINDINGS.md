@@ -46,8 +46,9 @@ answers rather than the same answer measured twice.
 
 ## 2. What happens
 
-**Six of seven sources fail. The only one that passes is the resample of real
-data, which is the control and is not synthetic.**
+**All five real generation methods fail. The only source that passes is the
+resample of real data, which is the positive control and is not synthetic.** The
+other failure is the negative control, included to show the check itself works.
 
 Full per-coefficient table: [`examples/certifier_demo/RESULTS.md`](examples/certifier_demo/RESULTS.md)
 (`python examples/certifier_demo/run_demo.py`).

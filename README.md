@@ -1,18 +1,53 @@
 # REGEN
 
-**Does synthetic data preserve the conclusion you would have drawn from the real
-data?**
+**Can synthetic data do the job real data does?**
 
-Synthetic tabular data is normally judged on distributional similarity and on
-whether a model trained on it predicts well. Neither is a statement about a
-regression coefficient, which is what most tabular analysis produces and what
-people act on. This repository measures that third property, finds that current
-generators fail it, and quantifies how far a generator built to satisfy it can
-get.
+This repository is a study of that question. Synthetic data is offered as a
+stand-in for records that cannot be shared, and the claim attached to it is that
+you can work with the stand-in and end up in the same place. We tested that claim
+against the generation methods people actually use. None of them held it
+reliably.
 
-**The result, in one line:** across seven sources of the same table, six fail to
-preserve a declared logistic regression, and the only one that passes is a
-resample of the real data.
+**What "the job" means here.** Tabular data is mostly used for one thing:
+someone fits a regression and acts on a coefficient. The coefficient says how
+much the outcome moves when one factor changes and the rest stays put — a lender
+uses it to decide which warning signs matter and by how much. That number is the
+utility. It is what the decision is actually made from. So the test is direct:
+fit the same declared analysis on the real table and on the synthetic one, and
+compare the estimates coefficient by coefficient. The properties synthetic data
+is normally graded on — each column having the right spread, the columns moving
+together correctly, a model trained on it predicting well — are proxies for this.
+The result below is that the proxies pass while the thing they stand for fails.
+
+**The result.** Five of five real generation methods failed to preserve the
+declared analysis: noise injection, a Gaussian copula, SMOTE, this repo's
+rare-event amplifier, and a generator built specifically to preserve the
+coefficient. The only source that passed is a resample of the real rows, which is
+the positive control and is not synthetic data at all. The companion repo
+[`regen-basic`](https://github.com/uz0000/regen-basic) runs the same test against
+SDV — the most widely used synthetic-tabular library — using both its Gaussian
+copula and CTGAN. Both fail it too. Seven methods, two independent codebases, one
+outcome.
+
+**"Reliably" is the operative word.** The one generator built on purpose to
+survive this test does recover the coefficient the others break — on 11 of 30
+seeds. It certifies 37% of the time, and nothing about a given run tells you in
+advance which kind you got. A method that works on a third of attempts is not
+something you can hand to someone who has to act on the answer.
+
+Every method tested, and whether the declared analysis survived it:
+
+| source | what it is | conclusion preserved |
+|---|---|---|
+| resample of real rows | positive control, not synthetic | **yes** |
+| column-wise shuffle | negative control, must fail | no |
+| noise injection (0.5σ) | common anonymisation approach | no |
+| Gaussian copula | marginals + correlation structure | no |
+| SMOTE | standard oversampler (`imblearn`) | no |
+| rare-event amplifier | this repo's generator | no |
+| coefficient-preserving generator | built for this test specifically | no (37% of seeds) |
+| SDV Gaussian copula | industry standard, in `regen-basic` | no |
+| SDV CTGAN | deep generative, in `regen-basic` | no |
 
 Read [**FINDINGS.md**](FINDINGS.md) for the full result, the mechanism, the
 replication on a second dataset and model family, and the limits.
@@ -38,7 +73,7 @@ tail correction, can be slow to build on some platforms. If the full install
 fails there, `pip install numpy pandas scipy scikit-learn pyarrow
 imbalanced-learn` is enough to run the certifier, the CLI, and every demo.
 
-## The certifier
+## How the claim is tested
 
 Declare the analysis whose conclusion has to survive. The certifier fits it on
 the real data and on the synthetic data and compares the estimates coefficient by
@@ -89,7 +124,7 @@ Exit code `0` means every declared coefficient survived, `1` means at least one
 shifted, and `2` means the check could not run, so a pipeline can distinguish a
 failed check from a check that never happened.
 
-## The generator
+## The generators tested here
 
 REGEN is also a synthetic data generator. It exists in this repository as the
 system the certifier was built to check, and the certifier refuses its output.
