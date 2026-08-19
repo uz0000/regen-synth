@@ -196,6 +196,11 @@ files link to those tables rather than restating their numbers, so a document
 cannot drift from a run. `README.md` is the entry point of any directory a reader
 lands in; all other prose lives in `docs/`, one subject per file.
 
+**Related work.** [`findit`](https://github.com/uz0000/find-it) asks the
+neighbouring question about real data: given a run of numbers, how much of what
+you are looking at is a real trend rather than luck. On public company filings
+only 22% of quarterly revenue growth turns out to be real.
+
 ## License
 
 MIT
