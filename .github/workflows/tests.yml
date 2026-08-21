@@ -44,6 +44,13 @@ jobs:
           pip install -r requirements.txt
           pip install -e .
 
+      # Run as its own step so a failure here is distinguishable from a failure
+      # in the rest of the suite from the job summary alone, without log access.
+      # These sweep 300 seeds and assert statistical properties, so they are the
+      # tests most exposed to a platform difference.
+      - name: Tests — control rates
+        run: pytest tests/test_control_rates.py -q
+
       - name: Tests
         run: pytest tests/ -q
 
