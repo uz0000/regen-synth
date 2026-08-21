@@ -180,6 +180,7 @@ more than any other method here achieves and less than a solution.
 | The same result as a visual walkthrough | [`docs/inference-explainer.html`](docs/inference-explainer.html) |
 | Claims that were revised, and why | [`CORRECTIONS.md`](CORRECTIONS.md) |
 | How the certifier and generator work | [`docs/HOW_IT_WORKS.md`](docs/HOW_IT_WORKS.md) |
+| The math behind every number, in plain language | [`docs/THE_MATH.md`](docs/THE_MATH.md) |
 | How the parts fit together | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) |
 | Which file implements which method | [`docs/COMPONENT_GUIDE.md`](docs/COMPONENT_GUIDE.md) |
 | Exact metric definitions and tolerances | [`docs/METHODS.md`](docs/METHODS.md) |

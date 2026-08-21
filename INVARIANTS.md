@@ -218,6 +218,7 @@ regen-synth/
   docs/
     README.md                # index of everything below
     HOW_IT_WORKS.md          # how the certifier and the generator work
+    THE_MATH.md              # the math behind every number, in plain language
     ARCHITECTURE.md          # how the parts connect and which rules the shape enforces
     COMPONENT_GUIDE.md       # which file implements which method, and why that method
     METHODS.md               # exact metric definitions + verification tolerances

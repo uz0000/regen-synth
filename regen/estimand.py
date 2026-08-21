@@ -2,10 +2,19 @@
 Estimand preservation — regression-coefficient recovery (the differentiator).
 
 A researcher declares an analysis (``EstimandSpec``: ``outcome ~ predictors``,
-family ols|logit). We fit it on the **real** reference to get θ_real ± CI, fit the
-*same* spec on the **delivered synthetic** to get θ_synth, and CERTIFY that each
-coefficient-of-interest's θ_synth lands within θ_real's confidence interval. This
-is a guarantee distinct from fidelity (marginals/correlations) and TSTR
+family ols|logit). We fit it on the **real** reference to get θ_real ± SE, fit the
+*same* spec on the **delivered synthetic** to get θ_synth ± SE, and CERTIFY each
+coefficient of interest with a **two-sample Wald test on the difference** (the
+default ``consistent`` rule; see ``certify`` below):
+
+    preserved  iff  |θ_real − θ_synth|  ≤  z · √(se_real² + se_synth²)
+
+Deliberately *not* "is θ_synth inside θ_real's CI" — that naive rule rewards an
+imprecise synthetic estimate, since a wider synthetic spread is more likely to
+overlap. It remains available as ``rule="within_ci"``. The plain-language account
+of why is in docs/THE_MATH.md §3.
+
+This is a guarantee distinct from fidelity (marginals/correlations) and TSTR
 (prediction): a batch can pass both while a coefficient silently shifts.
 
 Self-contained (numpy + scipy.stats) — deliberately **no statsmodels and no

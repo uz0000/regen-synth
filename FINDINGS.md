@@ -17,6 +17,10 @@ above still passes, and this repository measures how far apart the two can get.
 Every number below is produced by a script named beside it. Nothing here is
 hand-copied.
 
+The arithmetic underneath — what a coefficient is, how two of them are judged to
+agree, and why the usual quality checks cannot answer this question — is set out in
+plain language in [`docs/THE_MATH.md`](docs/THE_MATH.md).
+
 ---
 
 ## 1. The setup

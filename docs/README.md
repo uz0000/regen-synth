@@ -11,6 +11,7 @@ These files explain how the thing works and what it is held to.
 | You want | File |
 |---|---|
 | How the certifier and the generator work, end to end | [`HOW_IT_WORKS.md`](HOW_IT_WORKS.md) |
+| The math behind every number — what problem each piece solves, and what its output means | [`THE_MATH.md`](THE_MATH.md) |
 | The same result as a visual walkthrough, no regressions assumed | [`inference-explainer.html`](inference-explainer.html) |
 | How the parts connect, and which rules the shape enforces | [`ARCHITECTURE.md`](ARCHITECTURE.md) |
 | Which file implements which method, and why that method | [`COMPONENT_GUIDE.md`](COMPONENT_GUIDE.md) |
