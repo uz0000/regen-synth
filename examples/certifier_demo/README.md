@@ -52,9 +52,14 @@ and destroying every association, and must fail.
 Neither control is absolute, and it is worth knowing why before you re-run with a
 different seed. Certification needs all four coefficients to agree at once and
 each is a 95% test, so `bootstrap_real` is refused on about **12% of seeds** —
-roughly one run in eight, from chance alone. Seeds 9, 26, 27 and 35 refuse; the
-committed table uses seed 7, which certifies. A refusal there is not a broken
-certifier.
+roughly one run in eight, from chance alone. The committed table uses seed 7,
+which certifies. A refusal on another seed is not a broken certifier.
+
+Which particular seeds refuse is not stable across machines, and deliberately not
+listed: a chance refusal sits within about 0.1 of the 1.96 cutoff, and a different
+numeric build moves a borderline score by that much. That is the same fragility
+this repository documents in `estimand_preserving` — the reason `seed_sweep.py`
+reports a rate over 30 seeds instead of one run.
 
 `independent_cols` never certifies across 200 seeds, but it does not fail on
 every coefficient: `age` survives about 20% of the time. Its real effect is

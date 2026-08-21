@@ -1023,14 +1023,33 @@ the combined standard error. `age` survives the shuffle because its real effect 
   estimands of different sizes).
 - `docs/THE_MATH.md` §4 — the independence assumption, the compounding, and
   equivalence testing as the tool the repo does not yet have.
-- `tests/test_control_rates.py` (12 tests) pins all of it. Suite 222 → **234**.
+- `tests/test_control_rates.py` (7 tests) pins all of it. Suite 222 → **229**.
 
 ### Observed after
 
 | Check | Observed |
 |---|---|
-| `pytest tests/ -q` | **234 passed** |
+| `pytest tests/ -q` | **229 passed** |
 | `run_demo.py`, `fidelity_check.py`, `mechanism_check.py` re-run | `RESULTS.md`, `FIDELITY.md`, `MECHANISM.md`, `GENERALITY.md` **byte-identical** |
 | Relative links | 0 broken |
 
 No reported number moved.
+
+### Follow-up the same session — the tests themselves were fragile
+
+The first version of `test_control_rates.py` pinned four specific seeds as
+refusing. CI failed on Python 3.10 while passing on 3.11 and 3.12: two of those
+seeds sat only +0.05 and +0.08 past the 1.96 cutoff, and a different numeric
+build moves a borderline score by that much.
+
+That is precisely the fragility this repository documents in
+`estimand_preserving`, written into a test by the same hand that documented it.
+Rewritten to assert properties over a 300-seed sweep — *some* seeds are refused,
+most are not, and a chance refusal stays below z = 3.4 — none of which a build
+difference can flip. The committed demo seed stays pinned, because the published
+table depends on it.
+
+The specific seed lists were removed from the prose for the same reason: naming
+them presents a build-dependent fact as a stable one.
+
+Reusing the real fit across the sweep makes 300 seeds cost under a second.
