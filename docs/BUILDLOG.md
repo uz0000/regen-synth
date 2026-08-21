@@ -504,7 +504,7 @@ pandas int64 FutureWarning) are recorded in `docs/KNOWN_ISSUES.md` and the capab
 
 ---
 
-## Session 2026-07-09 — Phase 2 (product direction, per docs/the product spec (now `docs/ARCHITECTURE.md`).md)
+## Session 2026-07-09 — Phase 2 (product direction, per the product spec — now `docs/ARCHITECTURE.md`)
 
 Building the new parts from the product spec. This phase is about turning the
 verified engine into a *certified surrogate* a non-expert can drive and a skeptic
@@ -868,3 +868,98 @@ navigable, not defeated.
 
 **Tests:** `python -m pytest tests/test_estimand_preserving.py -q` → **4 passed**
 (certifies where baselines fail on real credit data; OLS path; determinism; guards).
+
+---
+
+## Session 2026-08-16/18 — Reorganise around the research, and measure what was only asserted
+
+Eleven commits (`a3bfe18`..`10333cc`). The repository stopped presenting itself as a
+generator with a checker attached and started presenting itself as what it is: a study
+of whether synthetic data preserves a conclusion, which ships the generator it refuses.
+Three published claims did not survive re-measurement and are recorded in
+[`../CORRECTIONS.md`](../CORRECTIONS.md).
+
+### Corrections (the substance of the session)
+
+| # | Claim | Was | Re-measured | Commit |
+|---|---|---|---|---|
+| 1 | rare-event amplification lift | +39.1% (satellite) | **~+4%** leakage-free; benchmark tables replaced with TSTR recovery | earlier, recorded here |
+| 2 | v2 certification rate | "roughly 7 of 8 runs" | **11 of 30 (37%)** over a 30-seed sweep with BLAS pinned to one thread | `1c4ae39` |
+| 3 | "the standard checks miss it" | asserted, never computed | **measured**: at strict thresholds every failing source *is* caught; the margins are thin and threshold-dependent | `407a1f1` |
+
+Correction 2's cause was the run count (8–9 runs) *and* comparability: BLAS summation
+order varies with thread count, which is enough to flip a borderline coefficient. Every
+reproduction instruction in the repo now states `OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
+MKL_NUM_THREADS=1`.
+
+Correction 3 was found by asking which sentence in the repository had no script behind
+it. Given the subject of this project, an unverified plausible claim is the specific
+failure mode it exists to argue against.
+
+### Built
+
+- **`fidelity_check.py` → `FIDELITY.md`** — the three conventional checks (KS,
+  correlation shift, TSTR) on all seven demo sources, plus a threshold-sensitivity
+  table. This is what makes correction 3 a measurement rather than an opinion.
+- **`generality_check.py` → `GENERALITY.md`** — the comparison re-run as OLS on
+  California housing (20,536 block groups). Different dataset, different model family,
+  continuous outcome. Two rows differ only in where the predictors came from, which
+  isolates the predictor joint as a cause: `AveRooms` loses a third of its size with the
+  outcome rule held correct.
+- **`regen certify` CLI** (`5b3f735`) — the certifier on any generator's output, with
+  exit codes `0`/`1`/`2` so a pipeline can distinguish a failed check from a check that
+  never ran.
+- **MIT `LICENSE`** (`8c9d95d`) — the README and `pyproject.toml` had both declared it
+  for months with no file present.
+
+### Restructured
+
+- **`FINDINGS.md`** is new and is now the document the README points at: the setup, the
+  result, whether the standard checks catch it, why it happens, whether it generalises,
+  whether it can be fixed, the structural limit, and what is not settled.
+- **`CORRECTIONS.md`** is new: what was claimed, what was wrong, what the re-run showed.
+- Superseded documentation moved to `docs/archive/` (untracked); `benchmark/` result
+  files moved to `superseded/` with date stamps rather than being deleted.
+- Prose moved out of the root into `docs/`, one subject per file.
+
+### Observed after (all re-run)
+
+| Check | Command | Observed |
+|---|---|---|
+| Full suite | `python -m pytest tests/ -q` | **222 passed** |
+| Headline table | `python examples/certifier_demo/run_demo.py` | 1/7 certified — only `bootstrap_real`, the positive control |
+| Standard checks | `python examples/certifier_demo/fidelity_check.py` | 0/7 pass everything and still fail, at strict thresholds |
+| Generality | `python examples/certifier_demo/generality_check.py` | replicates on OLS + California housing |
+| Seed sweep | `python examples/certifier_demo/seed_sweep.py` | 11/30 certify |
+
+---
+
+## Session 2026-08-21 — repository coherence pass
+
+No code behaviour changed and no measured number moved. What changed is the navigation,
+which had drifted behind the reorganisation above:
+
+- **`INVARIANTS.md` §5** mapped a pre-reorganisation tree — it listed `docs/REGEN.md`
+  and `docs/REGEN_DOCUMENTATION.md` (both since archived and untracked) and omitted
+  `FINDINGS.md`, `CORRECTIONS.md`, every current doc, and `regen/certifier.py`. Rebuilt
+  from the tracked tree. Its opening paragraph also still stated the pre-correction
+  purpose ("amplifies rare events so downstream ML models get better") as fact; it now
+  leads with the study framing and carries correction 1's conditional.
+- **16 dangling cross-references** across 11 files pointed at `ARCHITECTURE §5.1/§5.2/
+  §5.3/§5.5` (§5 is "Scope"; those subsections exist in no committed version) and at
+  `docs/SEMANTIC_FIDELITY_PLAN.md` (untracked, invisible to a cloner). Each now points
+  at the document that explains that thing today.
+- **Directory indexes added** where a reader could land without one: `docs/README.md`,
+  `examples/README.md`, `server/README.md`.
+- **`benchmark/RESULTS.md`** accounted for 2 of 13 scripts. It now covers all of them,
+  separates the standing regression check from the exploratory runners, and attaches
+  correction 1 to the JSON files that predate the leakage-free protocol.
+- **`examples/certifier_demo/README.md`** said "Four scripts" and omitted
+  `mechanism_check.py` — the script behind FINDINGS §4.
+- **`server/`** (610 LOC + a 392-line UI + 355 lines of API docs + 11 tests) appeared in
+  no root document. Now documented, including the fact that it wraps the generator and
+  has no certify endpoint.
+- **CI added** (`.github/workflows/tests.yml`), matching `regen-basic`: the suite plus
+  the headline demo, on Linux across Python 3.10–3.12.
+- `docs/BUILDLOG.md` had a heading mangled by a find-and-replace, and stopped at
+  2026-07-11 — eleven commits behind. Both fixed; this entry closes the gap.

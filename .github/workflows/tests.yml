@@ -1,0 +1,76 @@
+name: tests
+
+# Runs on Linux, which no development machine here is. The point is to find out
+# whether the pinned dependency set actually reproduces off one laptop, not to
+# re-confirm that it works where it was written. This suite asserts numeric
+# thresholds on seeded draws, and those are exactly the assertions that shift
+# with a different platform or BLAS build.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false          # report every version, not just the first to break
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
+    # BLAS summation order varies with thread count, which is enough to flip a
+    # borderline coefficient. CORRECTIONS.md §2 is the entry about discovering
+    # that the hard way. Pinned here for the same reason the docs pin it.
+    env:
+      OMP_NUM_THREADS: 1
+      OPENBLAS_NUM_THREADS: 1
+      MKL_NUM_THREADS: 1
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      # Deliberately the same commands the README gives a reader, so a green run
+      # means those instructions are known to work rather than assumed to.
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -e .
+
+      - name: Tests
+        run: pytest tests/ -q
+
+      # The headline table is the repository's central claim. If it stops
+      # reproducing, that is a build failure, not something to discover later.
+      - name: The headline result still reproduces
+        run: python examples/certifier_demo/run_demo.py
+
+      # The certifier has to keep refusing the negative control and accepting the
+      # positive one, and the CLI's exit codes are a contract a pipeline depends
+      # on: 0 survived, 1 shifted, 2 could not run.
+      - name: The certifier CLI still distinguishes its three outcomes
+        run: |
+          set +e
+          regen certify \
+            examples/certifier_demo/credit_default.csv \
+            examples/certifier_demo/credit_default.csv \
+            --outcome default --predictors pay_delay_1,utilization,log_limit,age \
+            --family logit
+          same=$?
+          regen certify examples/certifier_demo/credit_default.csv /nonexistent.csv \
+            --outcome default --predictors pay_delay_1 --family logit
+          missing=$?
+          set -e
+          if [ "$same" -ne 0 ]; then
+            echo "a table against itself must certify (exit 0), got $same"; exit 1
+          fi
+          if [ "$missing" -ne 2 ]; then
+            echo "a check that cannot run must exit 2, got $missing"; exit 1
+          fi

@@ -1,7 +1,7 @@
 """
 Surrogate quality — TSTR (Train on Synthetic, Test on Real).
 
-The headline actionable metric (ARCHITECTURE §5.1): does a model trained on
+The headline actionable metric (docs/HOW_IT_WORKS.md §5): does a model trained on
 *nothing but the synthetic surrogate* recover the performance it would get from
 real data? We report the ratio against the real-data ceiling —
 

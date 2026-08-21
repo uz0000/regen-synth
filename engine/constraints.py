@@ -9,7 +9,7 @@ The Prior (Gaussian) and residual GP both sample on an unbounded real line, so a
 synthetic row can land outside what any real row could be — a negative Amount, a
 fractional count, a binary flag at 0.7. Enforcement folds that out-of-support
 mass back onto valid values. It never invents a value the data never showed
-(see docs/SEMANTIC_FIDELITY_PLAN.md §1b, rule 4); it only constrains toward
+(see docs/COMPONENT_GUIDE.md, "Constraint layer"); it only constrains toward
 validity, which tightens fidelity rather than loosening it.
 
 Pure Python (pandas/numpy) — no model, no network. The model-advised version

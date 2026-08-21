@@ -1,13 +1,22 @@
 # REGEN — design rules and invariants
 
-The constraints this system was built under. §8 lists the invariants, each
-enforced by a test.
+The engineering constraints this system was built under. §8 lists the invariants, each
+enforced by a test. This file is about **how the code is allowed to behave**; what the
+repository actually found is in [`FINDINGS.md`](FINDINGS.md), and the claims that were
+revised along the way are in [`CORRECTIONS.md`](CORRECTIONS.md).
 
-REGEN is a **deterministic pipeline** that generates **statistically grounded synthetic data** and
-**amplifies rare events** so downstream ML models get better at detecting them. It is built on three
-research components. Every value comes out of the deterministic engine; there is no agent runtime and
-no LLM in the loop today. An optional model-driven layer (narration, reasoning-Scout) is deferred —
-see §4 and §7.
+This repository is a study of whether synthetic data preserves the conclusion a real
+table would have given you. It contains two things held to the rules below: a
+**certifier**, which decides whether a declared analysis survived and is the core; and a
+**deterministic generation pipeline**, which produces statistically grounded synthetic
+data and amplifies rare events, and exists as the reference implementation the certifier
+was built to check — which it refuses. Amplification helps a downstream detector only
+when that detector is genuinely starved of rare examples, and reports approximately zero
+otherwise ([`CORRECTIONS.md`](CORRECTIONS.md) §1); it is not a general accuracy claim.
+
+Every value comes out of the deterministic engine; there is no agent runtime and no LLM
+in the loop today. An optional model-driven layer (narration, reasoning-Scout) is
+deferred — see §4 and §7.
 
 ---
 
@@ -197,34 +206,58 @@ Rules if a model is added:
 
 ## 5. Repository layout
 
+The current tracked tree. Prose files that are not listed here do not exist in the
+published repository.
+
 ```
 regen-synth/
-  INVARIANTS.md                  # this file
-  README.md
+  README.md                  # entry point: the question, the result, where to go next
+  FINDINGS.md                # what was found, the mechanism, the replication, the limits
+  CORRECTIONS.md             # published claims that did not survive re-measurement
+  INVARIANTS.md              # this file — the rules the code is held to
   docs/
-    papers/                  # the three source PDFs (reference only)
-    REGEN.md                 # architecture overview
-    REGEN_DOCUMENTATION.md   # full API + stage reference
+    README.md                # index of everything below
+    HOW_IT_WORKS.md          # how the certifier and the generator work
+    ARCHITECTURE.md          # how the parts connect and which rules the shape enforces
+    COMPONENT_GUIDE.md       # which file implements which method, and why that method
+    METHODS.md               # exact metric definitions + verification tolerances
+    KNOWN_ISSUES.md          # what is currently open, numbered and citable
+    PRIVACY.md               # what the floor guarantees and what it does not
+    CAPABILITY_MATRIX.md     # which data shapes are supported / degraded / unsupported
+    EXPLAINABILITY.md        # `explanation.json` field reference
+    SERVER_API.md            # HTTP endpoints + the built-in web UI
+    BUILDLOG.md              # append-only change history with before/after numbers
+    inference-explainer.html # the finding as a visual walkthrough
+  regen/                     # THE CERTIFIER + the API layer above the engine
+    certifier.py             # the core: does a declared analysis survive? per coefficient
+    estimand.py              # the OLS / logistic fits, written against numpy + scipy
+    estimand_preserving.py   # the v2 generator built to pass the certifier (37% of seeds)
+    api.py                   # run_campaign, generate, screen, explore, draft_scenario
+    preflight.py             # is this dataset inside the supported envelope?
+    vetting.py               # deterministic three-source gate over ScenarioSpec fields
+    explain.py               # computed explanation.json — never narrated by a model
+    audit_bundle.py          # hashing + independent recomputation (`regen verify`)
+    metrics.py               # versioned metric IDs the bundle recomputes against
+    semantics.py             # optional model layer: column meanings, target tie-break
   engine/                    # DETERMINISTIC. No LLM, no agent, no network imports.
     prior/                   # grounded-sampling generator + P(normal|x) density scorer
-    amplifier/               # TailCorrector + correction (Rare Event Amplifier)
-    scout/                   # Scout targeting acquisition + explored-region penalty (targeting math only)
-    auditor/                 # fidelity statistics + accept/reject
-    examiner/                # downstream detector train/eval + lift metric
-    ingest/                  # load/clean/split normal vs rare + on-disk persistence
+    amplifier/               # TailCorrector residual GP (Rare Event Amplifier)
+    scout/                   # acquisition + explored-region penalty (targeting math only)
+    auditor/                 # fidelity statistics + conformance + accept/reject
+    examiner/                # downstream detector lift + TSTR surrogate quality
+    ingest/                  # load/clean/split normal vs rare, profile columns
+    constraints.py           # fold impossible values back onto observed support
+    privacy.py               # delta-distance floor, verbatim guard, k-anonymity
     manifest.py              # batch manifest: seed, schema hash, configs, code version
-  contracts/                 # shared dataclasses/enums crossing the engine↔API boundary
-  regen/                     # unified API layer (run_campaign, screen, get_results, load_synthetic)
-  cli/                       # `regen` CLI entry point
-  server/                    # FastAPI server for frontend integration
-  examples/                  # sample data + runnable demo
-  benchmark/                 # breadth/multipass benchmark runners + results
-  tests/
-    test_boundary.py         # enforces: no forbidden imports inside engine/
-    test_fidelity.py         # Auditor catches a deliberately corrupted batch
-    test_reproducibility.py  # same manifest → identical data
-    test_api.py              # API + regen/api.py boundary check
-    test_memory.py           # Scout within-run explored-region penalty
+  contracts/                 # shared dataclasses crossing the engine<->API boundary
+    types.py                 # field types, rare-event definitions, batch contracts
+    scenario.py              # ScenarioSpec — the one object both planes share
+  cli/                       # the `regen` CLI (see docs/SERVER_API.md for the HTTP twin)
+  server/                    # FastAPI wrapper + the self-contained single-page web UI
+  examples/                  # runnable demos — see examples/README.md
+    certifier_demo/          # THE HEADLINE: the five scripts behind FINDINGS.md
+  benchmark/                 # generator sweeps + results — see benchmark/RESULTS.md
+  tests/                     # 222 tests; test_boundary.py enforces invariant 1
 ```
 
 Deferred / not yet built (see §7): a structured run-state store (was "SpacetimeDB"), Neo4j

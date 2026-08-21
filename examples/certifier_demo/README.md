@@ -1,20 +1,25 @@
 # The certifier demo
 
-Four scripts. Each one answers a question, prints its result, and writes a
+Five scripts. Each one answers a question, prints its result, and writes a
 generated table that the prose elsewhere links to instead of restating.
 
-The interpretation of all four lives in [`../../FINDINGS.md`](../../FINDINGS.md).
+The interpretation of all five lives in [`../../FINDINGS.md`](../../FINDINGS.md).
 This file is about running them and reading the output.
 
 Run from the repository root, with `OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
 MKL_NUM_THREADS=1` set for bit-identical results.
 
-| Script | Question | Writes |
-|---|---|---|
-| `run_demo.py` | Does a declared regression survive synthetic data? | [`RESULTS.md`](RESULTS.md), `certificates.json` |
-| `fidelity_check.py` | Do the standard quality checks catch what the certifier catches? | [`FIDELITY.md`](FIDELITY.md) |
-| `generality_check.py` | Does the failure replicate on another dataset and model family? | [`GENERALITY.md`](GENERALITY.md) |
-| `seed_sweep.py` | Is the estimand-preserving generator's result a seed accident? | prints a bias and spread table |
+| Script | Question | Writes | FINDINGS |
+|---|---|---|---|
+| `run_demo.py` | Does a declared regression survive synthetic data? | [`RESULTS.md`](RESULTS.md), `certificates.json` | §2 |
+| `fidelity_check.py` | Do the standard quality checks catch what the certifier catches? | [`FIDELITY.md`](FIDELITY.md) | §3 |
+| `mechanism_check.py` | Is the explanation for *why* it fails actually true? | [`MECHANISM.md`](MECHANISM.md) | §4 |
+| `generality_check.py` | Does the failure replicate on another dataset and model family? | [`GENERALITY.md`](GENERALITY.md) | §5 |
+| `seed_sweep.py` | Is the estimand-preserving generator's result a seed accident? | prints a bias and spread table | §6 |
+
+A sixth script, `prepare_data.py`, is not part of that sequence: it documents where
+`credit_default.csv` came from and how the derived columns were built. It does not
+need to be re-run.
 
 ## The data
 
@@ -65,6 +70,11 @@ true.
 certificate, so the two axes can be compared directly. It also prints how the
 count of silent failures moves as the thresholds move, because it does move, and
 the thresholds are not standardised.
+
+`mechanism_check.py` prints each factual claim FINDINGS section 4 rests on, the
+measurement behind it, and whether it holds. It is there so the explanation is
+checked rather than argued: if a claim stopped holding, this is the script that
+would say so.
 
 `generality_check.py` includes two rows that differ only in where the predictors
 came from, both using the same model of the real conditional. The gap between

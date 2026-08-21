@@ -1,5 +1,5 @@
 """
-Smoke test for the certified-surrogate clean-room demo (§5.5) — guards the
+Smoke test for the certified-surrogate clean-room demo (docs/ARCHITECTURE.md §3) — guards the
 showcase script from bit-rot. The underlying pieces (generate / measure_tstr /
 verify_bundle) have their own tests; this exercises the end-to-end orchestration.
 """

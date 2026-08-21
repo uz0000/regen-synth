@@ -1,5 +1,7 @@
 # REGEN
 
+[![tests](https://github.com/uz0000/regen-synth/actions/workflows/tests.yml/badge.svg)](https://github.com/uz0000/regen-synth/actions/workflows/tests.yml)
+
 **Can synthetic data do the job real data does?**
 
 This repository is a study of that question. Synthetic data is offered as a
@@ -164,6 +166,11 @@ more than any other method here achieves and less than a solution.
 - Certification requires the real data, so it addresses sharing rather than
   scarcity. [`FINDINGS.md`](FINDINGS.md) section 7 explains why that limit is
   structural.
+- The repository also ships an HTTP server and a web UI over the *generator*
+  (`server/`). There is deliberately no certify endpoint — certification is a
+  two-party operation, so it lives in `regen certify` and the Python API. A green
+  result in that UI means a batch passed fidelity, conformance and privacy; it does
+  not mean a conclusion survived. See [`server/README.md`](server/README.md).
 
 ## Where to find things
 
@@ -179,7 +186,9 @@ more than any other method here achieves and less than a solution.
 | What is currently broken | [`docs/KNOWN_ISSUES.md`](docs/KNOWN_ISSUES.md) |
 | What the privacy floor does and does not guarantee | [`docs/PRIVACY.md`](docs/PRIVACY.md) |
 | Whether your data shape is supported | [`docs/CAPABILITY_MATRIX.md`](docs/CAPABILITY_MATRIX.md) |
+| Every field in `explanation.json` | [`docs/EXPLAINABILITY.md`](docs/EXPLAINABILITY.md) |
 | Generator benchmark numbers | [`benchmark/RESULTS.md`](benchmark/RESULTS.md) |
+| The HTTP server and its web UI | [`server/README.md`](server/README.md) |
 | Rules the codebase holds itself to | [`INVARIANTS.md`](INVARIANTS.md) |
 | Change history with before and after numbers | [`docs/BUILDLOG.md`](docs/BUILDLOG.md) |
 
@@ -193,8 +202,11 @@ package names `engine`, `contracts`, and `cli`.
 **File conventions.** Every result table under `examples/` and `benchmark/` is
 written by the script that produced it and carries a generated-file header. Prose
 files link to those tables rather than restating their numbers, so a document
-cannot drift from a run. `README.md` is the entry point of any directory a reader
-lands in; all other prose lives in `docs/`, one subject per file.
+cannot drift from a run. Every directory a reader lands in has an index that says
+what is in it and which parts are current — `README.md`, except in `benchmark/`,
+where the index is [`benchmark/RESULTS.md`](benchmark/RESULTS.md) because the
+results are the point. All other prose lives in `docs/`, one subject per file,
+indexed in [`docs/README.md`](docs/README.md).
 
 **Related work.** [`findit`](https://github.com/uz0000/find-it) asks the
 neighbouring question about real data: given a run of numbers, how much of what

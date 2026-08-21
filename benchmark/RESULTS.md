@@ -50,7 +50,55 @@ corrected. Date-stamped in [`superseded/`](superseded/):
 The full change history, with before-and-after numbers for each correction, is in
 [`../docs/BUILDLOG.md`](../docs/BUILDLOG.md).
 
+## Standing check
+
+[`run_regression.py`](run_regression.py) is not a sweep — it is the guard. It runs the
+canonical datasets at fixed seeds, self-verifies each bundle with `regen verify`, and
+compares every scored quantity against the provenance-stamped baselines in
+[`BASELINES/`](BASELINES/) within explicit tolerances. **It exits non-zero on any
+regression**: a fidelity or coverage drop, a correlation increase, a gate flip, a lift
+drop, a runtime blow-up, or a bundle that fails to verify.
+
+```bash
+python benchmark/run_regression.py                    # check against baselines
+python benchmark/run_regression.py --degrade          # prove it catches drift
+python benchmark/run_regression.py --update-baselines # after an intended change
+```
+
+## Everything else in this directory
+
+Exploratory and historical runners, kept because their outputs are cited in
+[`../CORRECTIONS.md`](../CORRECTIONS.md) and [`superseded/`](superseded/) and a frozen
+table with no script behind it is not reproducible. **None of these produce a current
+number.** The two runners in the table above, plus the standing check, are what is live.
+
+| Script | What it was for | Leaves behind |
+|---|---|---|
+| `run_multi.py` | 3 datasets x 5 seeds vs SMOTE — the first honest multi-dataset run | `RESULTS.json` |
+| `run_multipass.py` | the full Scout-driven loop vs SMOTE, same 3 datasets | `RESULTS_MULTIPASS.json` |
+| `run_breadth.py` | the 11-dataset breadth run that tested the heterogeneity hypothesis | `RESULTS_BREADTH.json` |
+| `breadth_predict.py` | the dataset registry + the a-priori predictions, committed *before* the breadth run | `breadth_predictions.json` |
+| `find_breadth.py` | one-off OpenML scan that picked those 11 datasets | `dataset_candidates.csv` |
+| `run_satellite.py` | a single-dataset re-run of the above, for the satellite case | `RESULTS_SATELLITE.json` |
+| `run_benchmark.py` | the original single-dataset credit-card-fraud campaign | `regen-output/benchmark_summary.json` |
+| `run_unified.py` | the same campaign in one process, to remove subprocess overhead | `regen-output/benchmark_summary.json` |
+| `noise_sweep.py` | swept the Prior's `noise_scale` to pick a default | `noise_sweep_results.json` |
+| `compare_backends.py` | compared the copula Prior against the since-removed PFN backend; prints only | — |
+
+**Read the lift numbers in the JSON files with the correction attached.** Everything
+produced before the leakage-free protocol overstates amplification lift — that is
+[`../CORRECTIONS.md`](../CORRECTIONS.md) §1, where satellite falls from +39% to about
++4%. The `RESULTS_TSTR.md` figures above are the ones that survived re-measurement.
+
 ## Naming
 
 - `RESULTS_<TOPIC>.md` — a current sweep, written by its script.
+- `RESULTS_<TOPIC>.json` — the machine-readable output beside it, or, with no `.md`
+  beside it, the residue of an exploratory run in the table above.
 - `superseded/RESULTS_<date>_<TOPIC>.md` — a historical run, frozen.
+
+## Data
+
+`data/` holds the benchmark tables. They are downloaded from OpenML by the runners
+rather than redistributed here, so the directory is untracked; the provenance record
+[`data/PROVENANCE.md`](data/PROVENANCE.md) is tracked and says where each one came from.

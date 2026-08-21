@@ -75,7 +75,7 @@ def _apply_domain_constraints(df: pd.DataFrame, ingest: IngestResult) -> pd.Data
     clip continuous columns to observed bounds, round integer-valued columns,
     snap binaries to their two observed values. Categoricals are decoded in
     _decode_categoricals; the label is set constant elsewhere. See
-    docs/SEMANTIC_FIDELITY_PLAN.md (M1).
+    docs/COMPONENT_GUIDE.md, "Constraint layer".
     """
     from engine.constraints import apply_constraints
     return apply_constraints(df, ingest)
@@ -1437,7 +1437,7 @@ def evaluate_surrogate(
 ) -> Dict[str, Any]:
     """Measure how well a REGEN surrogate stands in for the real data (TSTR).
 
-    Leakage-free by construction (ARCHITECTURE §5.1): the real data is split into
+    Leakage-free by construction (docs/HOW_IT_WORKS.md §5): the real data is split into
     a train fold and a **quarantined** real test fold; the surrogate is generated
     from the **train fold only** (via generate() on a temp copy), so the generator
     never sees the test rows; then a model panel is trained on the surrogate vs on
@@ -1500,7 +1500,7 @@ def evaluate_surrogate(
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 2d. DRAFT SCENARIO — intent → ScenarioSpec (non-expert entry, §5.2)
+# 2d. DRAFT SCENARIO — intent → ScenarioSpec (non-expert entry; ARCHITECTURE.md §2)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def draft_scenario(
@@ -1514,7 +1514,7 @@ def draft_scenario(
     config=None,
     caller=None,
 ):
-    """Draft a ScenarioSpec from a plain-language goal + the data profile (§5.2).
+    """Draft a ScenarioSpec from a plain-language goal + the data profile (ARCHITECTURE.md §2).
 
     Returns (draft_spec, proposal_or_None). Always a **valid, editable** draft: a
     structural baseline the (optional) advisory model refines. The model *informs*;
@@ -1553,7 +1553,7 @@ def draft_scenario(
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 2e. EXPLORE OPTIONS — decision-support tradeoff frontier (§5.3)
+# 2e. EXPLORE OPTIONS — decision-support tradeoff frontier (ARCHITECTURE.md §4, principle 2)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def _diagnose(summary: Dict[str, Any]) -> str:
@@ -1601,7 +1601,7 @@ def explore_options(
     auto: bool = False,
 ) -> Dict[str, Any]:
     """A transparent privacy↔fidelity tradeoff frontier for the human to choose from
-    (§5.3). Runs `generate()` at each privacy setting and reports the measured
+    (ARCHITECTURE.md §4, principle 2). Runs `generate()` at each privacy setting and reports the measured
     consequences + a plain-language diagnosis per option — it does NOT pick for you.
 
     Returns {options: [...], recommended: idx|None, note}. The recommendation is

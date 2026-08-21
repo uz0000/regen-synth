@@ -183,7 +183,7 @@ def _parse_columns(raw: str) -> List[ColumnSemantics]:
     return out
 
 
-# ── Full-scenario proposal (intent + gates + columns) — §5.2 ──────────────────
+# ── Full-scenario proposal (intent + gates + columns) — ARCHITECTURE.md §2 ────
 
 _SCENARIO_PROMPT = (
     "You are configuring a synthetic-data run. Given ONLY this column profile "
@@ -304,7 +304,7 @@ def _apply_gates(gates, prop: Dict[str, Any]) -> None:
         gates.delta = float(d)
 
 
-# ── Target tie-break (Source 3, advisory) — §5.2 hand-off ─────────────────────
+# ── Target tie-break (Source 3, advisory) — ARCHITECTURE.md §2 hand-off ───────
 
 _TIEBREAK_PROMPT = (
     "You are selecting the rare-event TARGET column for a synthetic-data run. "

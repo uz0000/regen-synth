@@ -40,7 +40,7 @@ SOURCES = ("user", "structural", "model")
 FAMILIES = ("ols", "logit")  # regression families an estimand may declare
 
 
-# ── Per-column semantics (the L1 contract from SEMANTIC_FIDELITY_PLAN §3) ──────
+# ── Per-column semantics (the column contract; docs/COMPONENT_GUIDE.md, "ScenarioSpec") ──
 
 @dataclass
 class ColumnSemantics:

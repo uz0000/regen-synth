@@ -1,5 +1,5 @@
 """
-Certified-surrogate clean-room demo (ARCHITECTURE §5.5).
+Certified-surrogate clean-room demo (docs/ARCHITECTURE.md §3).
 
 Stages the two-party story that ties REGEN together:
 

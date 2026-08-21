@@ -49,6 +49,40 @@ check, and which it refuses.
 | **Semantic layer** | optional: a model proposes column meanings and breaks target ties | one cached, provider-agnostic call, vetted by the gate | `regen/semantics.py` | lowers the expertise barrier. Metadata only — never a value |
 | **Manifest** | reproducibility | seed + config + schema hash + code version + artifact hashes | `engine/manifest.py` | same manifest produces an identical batch |
 
+## Entry points
+
+Nothing here computes a value. Each one assembles a call into `regen/api.py`.
+
+| Component | What it does | Where | Notes |
+|---|---|---|---|
+| **Unified API** | the one function per operation the CLI, server and demos all call | `regen/api.py` | `run_campaign`, `generate`, `screen`, `explore`, `draft_scenario`, `evaluate_surrogate` |
+| **Typed contracts** | the dataclasses and enums that cross the engine↔API boundary | `contracts/types.py` | field types, rare-event definitions, batch contracts |
+| **Column profiling** | dtype and cardinality inference feeding the ScenarioSpec | `engine/ingest/profile.py` | deterministic; the structural source in the vetting gate |
+| **CLI** | `regen <command>` | `cli/main.py` | 10 subcommands — see "The CLI surface" below |
+| **HTTP server + web UI** | a FastAPI wrapper over `regen.api`, plus a self-contained single-page front end | `server/app.py`, `server/static/index.html` | wraps the **generator** only; there is deliberately no certify endpoint. [`SERVER_API.md`](SERVER_API.md), [`../server/README.md`](../server/README.md) |
+
+## The CLI surface
+
+`regen certify` is the one that answers this repository's question. The rest drive the
+reference generator.
+
+| Command | What it does |
+|---|---|
+| `regen certify` | **the core.** Does a declared analysis survive real → synthetic? Per coefficient. |
+| `regen doctor` | preflight: is this dataset inside the supported envelope? |
+| `regen generate` | the primary generation path, auto-tuned |
+| `regen run` | the full multi-pass amplification campaign |
+| `regen verify` | independently recompute an audit bundle's numbers |
+| `regen explore` | the privacy↔fidelity frontier, reported for a human to choose from |
+| `regen propose` | draft a `ScenarioSpec` from a plain-language goal |
+| `regen screen` | predict whether amplification or SMOTE will do better on your data |
+| `regen ingest` | inspect and profile a dataset without generating anything |
+| `regen test` | run the test suite |
+
+Exit codes for `certify`: `0` every declared coefficient survived, `1` at least one
+shifted, `2` the check could not run — so a pipeline can tell a failed check from a
+check that never happened.
+
 ---
 
 ## What is standard, and what is not

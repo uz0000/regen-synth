@@ -85,6 +85,14 @@ The certifier sits outside this loop entirely. It takes a real dataset, any
 synthetic dataset, and a declared analysis, and returns a verdict. It does not
 need the generator to have been involved.
 
+**Three surfaces drive that loop**, and none of them computes a value: `cli/`
+(`regen <command>`), `server/` (FastAPI plus a self-contained web UI), and the Python
+API in `regen/api.py` that both call. They sit on the configure-and-certify side of
+the wall, and `engine/` imports none of them — `tests/test_boundary.py` enforces the
+direction. Note the asymmetry: the server wraps the **generator** and has no certify
+endpoint, because certification needs both tables and a declared analysis at once.
+See [`../server/README.md`](../server/README.md).
+
 ## 3. How a value becomes a certified surrogate
 
 Read top to bottom, this is why the output is defensible. Every step is

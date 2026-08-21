@@ -1,5 +1,5 @@
 """
-TSTR / surrogate-quality tests (ARCHITECTURE §5.1).
+TSTR / surrogate-quality tests (docs/HOW_IT_WORKS.md §5).
 
 Covers the metric's core invariants (a perfect surrogate recovers ~1.0; a noise
 surrogate recovers far less; too-few real test rare → degenerate status) and the
