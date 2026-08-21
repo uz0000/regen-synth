@@ -963,3 +963,74 @@ which had drifted behind the reorganisation above:
   the headline demo, on Linux across Python 3.10–3.12.
 - `docs/BUILDLOG.md` had a heading mangled by a find-and-replace, and stopped at
   2026-07-11 — eleven commits behind. Both fixed; this entry closes the gap.
+
+---
+
+## Session 2026-08-21 (b) — the controls, measured
+
+A review asked whether any known gap in the statistics actually damages what the
+repository reports. Checking that surfaced a fourth correction, now
+[`../CORRECTIONS.md`](../CORRECTIONS.md) entry 4.
+
+### What was wrong
+
+`FINDINGS.md` §1 and the demo README both said the positive control **must**
+certify, and that a failure meant the certifier was broken rather than the data.
+The demo README added that the negative control "must fail everything." Neither
+was measured, and both are false.
+
+The first is the damaging one: a reader re-running with a different seed sees the
+control refused and follows the repository's own instruction to conclude the tool
+is broken — a false alarm about the instrument, invited by the documentation.
+
+### Measured
+
+Demo configuration (6,000 resampled rows vs the full 30,000-row real fit):
+
+| control | result | seeds |
+|---|---|---|
+| positive, refused | **36 / 300 = 12.0%** (95% CI 8.3–15.7%) | 300 |
+| negative, certified | **0 / 200 = 0%** | 200 |
+| negative, `age` preserved | **≈ 20%** | 200 |
+
+12% is what the arithmetic predicts: four independent 95% tests refuse
+1 − 0.95⁴ = 18.5%, and the certifier is milder because it treats the two fits as
+independent when a resample of the real rows is correlated with them, inflating
+the combined standard error. `age` survives the shuffle because its real effect is
++0.010 — issue 4 (power) appearing in a control rather than a generator.
+
+### Checked along the way
+
+- **Are the standard errors right?** Analytic Wald SE against the bootstrap
+  sampling distribution, 200 resamples: ratios 1.04–1.10, so the SEs are 4–10%
+  understated.
+- **Does that flip anything?** Of 28 per-coefficient verdicts, one — 
+  `estimand_preserving` / `log_limit` at z = 2.02 — sits inside the margin. It is
+  the coefficient the demo's single-run refusal of that source turns on, and
+  §6 already reports the 30-seed rate (11/30) rather than the single run, so no
+  published claim depends on it. The headline failures sit at z = 3.4–7.3 and
+  would need SEs 1.8–3.7× larger to move.
+- **Direction of the bias.** Ignoring the covariance makes the check conservative,
+  so generator failures are *understated*. The tool's failure mode is false
+  reassurance — worth stating, given the subject.
+
+### Changed
+
+- `FINDINGS.md` §1, `examples/certifier_demo/README.md` — what the controls
+  actually do, with rates and the refusing seeds named.
+- `CORRECTIONS.md` entry 4; `docs/KNOWN_ISSUES.md` issue 9 (refusal compounds with
+  the number of declared coefficients, so certification is not comparable across
+  estimands of different sizes).
+- `docs/THE_MATH.md` §4 — the independence assumption, the compounding, and
+  equivalence testing as the tool the repo does not yet have.
+- `tests/test_control_rates.py` (12 tests) pins all of it. Suite 222 → **234**.
+
+### Observed after
+
+| Check | Observed |
+|---|---|
+| `pytest tests/ -q` | **234 passed** |
+| `run_demo.py`, `fidelity_check.py`, `mechanism_check.py` re-run | `RESULTS.md`, `FIDELITY.md`, `MECHANISM.md`, `GENERALITY.md` **byte-identical** |
+| Relative links | 0 broken |
+
+No reported number moved.

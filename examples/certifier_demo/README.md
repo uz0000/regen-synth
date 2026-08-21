@@ -45,10 +45,23 @@ same real fit.
 Seven, in a deliberate order.
 
 **Two controls, which exist to show the certifier discriminates.**
-`bootstrap_real` is a resample of the real rows and must certify; if it ever
-fails, the certifier is broken. `independent_cols` shuffles every column
-independently, preserving all marginals and destroying every association, and
-must fail everything.
+`bootstrap_real` is a resample of the real rows and should certify.
+`independent_cols` shuffles every column independently, preserving all marginals
+and destroying every association, and must fail.
+
+Neither control is absolute, and it is worth knowing why before you re-run with a
+different seed. Certification needs all four coefficients to agree at once and
+each is a 95% test, so `bootstrap_real` is refused on about **12% of seeds** —
+roughly one run in eight, from chance alone. Seeds 9, 26, 27 and 35 refuse; the
+committed table uses seed 7, which certifies. A refusal there is not a broken
+certifier.
+
+`independent_cols` never certifies across 200 seeds, but it does not fail on
+every coefficient: `age` survives about 20% of the time. Its real effect is
++0.010, and a coefficient the real data barely established is one almost any
+table can match — the power limit in
+[`../../docs/KNOWN_ISSUES.md`](../../docs/KNOWN_ISSUES.md) issue 4, visible in a
+control. Both rates are pinned in `tests/test_control_rates.py`.
 
 **Five generators.** `noised_real` adds 0.5σ Gaussian noise to real rows, the
 common anonymisation move. `gaussian_copula` reproduces the marginals and a

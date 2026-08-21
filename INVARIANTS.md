@@ -258,7 +258,7 @@ regen-synth/
   examples/                  # runnable demos — see examples/README.md
     certifier_demo/          # THE HEADLINE: the five scripts behind FINDINGS.md
   benchmark/                 # generator sweeps + results — see benchmark/RESULTS.md
-  tests/                     # 222 tests; test_boundary.py enforces invariant 1
+  tests/                     # 234 tests; test_boundary.py enforces invariant 1
 ```
 
 Deferred / not yet built (see §7): a structured run-state store (was "SpacetimeDB"), Neo4j

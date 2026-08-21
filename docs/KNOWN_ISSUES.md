@@ -18,6 +18,7 @@ Claims that were published and later revised are not issues. Those are in
 | [6](#6-a-repeating-error-in-the-coefficient-preserving-generator) | A repeating error in the coefficient-preserving generator | Medium | two of four coefficients are wrong the same way every run |
 | [7](#7-pandas-3x-breaks-numeric-coercion) | pandas 3.x breaks numeric coercion | Medium | dependencies are pinned as a result |
 | [8](#8-keeping-coefficients-privacy-and-rare-case-amplification-cannot-all-be-maximised) | Keeping coefficients, privacy, and rare-case amplification cannot all be maximised | Structural | no generator can maximise all three |
+| [9](#9-refusal-gets-more-likely-as-an-estimand-declares-more-coefficients) | Refusal gets more likely as an estimand declares more coefficients | Medium | a faithful generator is refused more often on a larger estimand |
 
 ---
 
@@ -144,6 +145,46 @@ coefficients and provides no privacy at all, because it is the real rows. A batc
 amplified provides privacy and loses the coefficients. The contribution is making the position measurable for each
 coefficient, so the trade is chosen deliberately rather than assumed. See
 [`../FINDINGS.md`](../FINDINGS.md) section 7.
+
+## 9. Refusal gets more likely as an estimand declares more coefficients
+
+**Severity:** Medium. A property of the decision rule, not a bug.
+
+An estimand is certified only when every declared coefficient is preserved, and
+each is compared at 95%. So a generator that is genuinely faithful still gets
+refused whenever any one comparison lands in its 5% tail, and that chance
+compounds with the number of coefficients declared. Four independent comparisons
+refuse about 18.5% of the time; the certifier is milder than that in practice
+because it treats the two fits as independent when they are correlated, which
+inflates the combined standard error.
+
+Measured on the positive control under the demo's configuration:
+
+```
+positive control refused   36 / 300 seeds  = 12.0%   (95% CI 8.3% - 15.7%)
+```
+
+Two consequences worth knowing:
+
+- **A refused control is not a broken checker.** This was previously documented
+  the other way round, and is [`../CORRECTIONS.md`](../CORRECTIONS.md) entry 4.
+- **Certification is not comparable across estimands of different sizes.** A
+  two-predictor estimand is easier to certify than a ten-predictor one, at the
+  same underlying fidelity, so a certification rate only means something against
+  a fixed declared analysis.
+
+**Direction of the error.** The compounding makes the check refuse good
+generators; the independence assumption makes it pass bad ones. On the reported
+results the second dominates — the headline failures sit at z = 3.4 to 7.3
+against a 1.96 cutoff — so no published verdict turns on either.
+
+**Planned.** An equivalence test with a declared margin of practical equivalence
+would replace "we could not tell them apart" with "they agree to within delta",
+and composes across coefficients without this compounding, since the claim is an
+intersection of rejections rather than of failures to reject. Not built. Related
+to issue 4, which is the same weakness seen from the other side.
+
+Rates are pinned in `tests/test_control_rates.py`.
 
 ---
 

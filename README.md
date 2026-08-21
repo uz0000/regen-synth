@@ -53,7 +53,7 @@ Every method tested, and whether the declared analysis survived it:
 
 Read [**FINDINGS.md**](FINDINGS.md) for the full result, the mechanism, the
 replication on a second dataset and model family, and the limits.
-[**CORRECTIONS.md**](CORRECTIONS.md) records the three published claims that did
+[**CORRECTIONS.md**](CORRECTIONS.md) records the four published claims that did
 not survive re-measurement.
 
 ---
@@ -66,7 +66,7 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 pip install -e .
 
-pytest tests/ -q                                    # 222 tests
+pytest tests/ -q                                    # 234 tests
 python examples/certifier_demo/run_demo.py          # reproduces the headline table
 ```
 

@@ -232,6 +232,57 @@ isn't proof there is none. Here the asymmetry runs in the safe direction: the
 finding is that generators **fail** this test, and a failure is solid evidence. But
 a *pass* is weaker evidence than a failure, and the paragraph above is why.
 
+The standard tool for the claim actually wanted is an **equivalence test**: instead
+of asking "can I tell these apart," declare a margin — say, a coefficient is close
+enough if it is within 0.05 of the real one — and test whether the difference is
+provably *inside* it. That turns a failure to find a difference into positive
+evidence of agreement. It is not implemented here, and
+[`KNOWN_ISSUES.md`](KNOWN_ISSUES.md) issues 4 and 9 are where the gap is recorded.
+
+**It assumes the two fits are independent, and they never are.** The formula
+`SE_Δ = √(SE_real² + SE_synth²)` is the variance of a difference *when the two
+quantities are unrelated*. Every synthetic source here is built from the real data,
+so the two estimates are correlated, and the full expression subtracts a covariance
+term the code does not compute:
+
+```
+Var(real − synthetic) = Var(real) + Var(synthetic) − 2·Cov(real, synthetic)
+```
+
+Dropping a positive covariance makes the combined uncertainty **too large**, which
+makes z **too small**, which biases the check toward reporting "preserved."
+
+Work out what that means for this repository. The finding is that generators
+**fail**, and a conservative test understates failures — so the results are, if
+anything, milder than the truth. But it does mean the tool's failure mode is false
+reassurance, which is precisely the sin this project exists to argue against, and
+it is worth saying rather than leaving implicit.
+
+**Each coefficient is a separate 95% test, and they compound.** Certification needs
+all four to agree at once, so a faithful generator is refused whenever any one
+comparison lands in its 5% tail. Four independent tests do that about 18.5% of the
+time (`1 − 0.95⁴`). Measured on the positive control, under the demo's exact
+configuration:
+
+```
+positive control refused   36 / 300 seeds  = 12.0%   (95% CI 8.3% - 15.7%)
+```
+
+Below 18.5%, because of the conservatism described just above — the two effects
+push in opposite directions and partly cancel, and the measured rate lands where
+that leaves it. Two things follow: a refused positive control is normal rather than
+a sign of a broken checker, and a certification rate only means something against a
+fixed declared analysis, since a larger estimand is harder to certify at the same
+underlying fidelity.
+
+**The controls show both weaknesses directly.** The negative control never
+certifies across 200 seeds — the joint structure is destroyed and three of the four
+coefficients are always caught. But `age` survives the shuffle about 20% of the
+time, because its real effect is +0.010: a coefficient the real data barely
+established is one that almost any table can match. That is the power limit above,
+visible in a control rather than in a generator. Both rates are pinned in
+`tests/test_control_rates.py`.
+
 ---
 
 ## 5. What the usual quality checks measure instead

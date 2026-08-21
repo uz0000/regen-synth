@@ -107,10 +107,67 @@ table rather than a single number, because the single number was the problem.
 
 ---
 
+## 4. "If the positive control ever fails, the certifier is broken"
+
+**Claimed.** [`FINDINGS.md`](FINDINGS.md) section 1 and the demo's own README both
+said a resample of the real rows *must* certify, and that a failure meant the
+checker was broken rather than the data. The demo README added that the negative
+control "must fail everything."
+
+**What was wrong.** Both statements are false, and the first is the damaging one.
+Certification requires all four coefficients to agree simultaneously, and each
+comparison is a 95% test. Four such tests produce an occasional flag with no bug
+present. A reader re-running with a different seed would see the positive control
+refused and follow the repository's own instruction to conclude the tool was
+broken — a false alarm about the instrument, invited by the documentation.
+
+Nothing in the repository measured either rate. The claim was the plausible,
+unverified kind that [`CORRECTIONS.md`](CORRECTIONS.md) entry 3 was already about.
+
+**Re-measured.** Under the demo's exact configuration — 6,000 resampled rows
+against the full 30,000-row real fit:
+
+```
+positive control refused   36 / 300 seeds  = 12.0%   (95% CI 8.3% - 15.7%)
+negative control certified  0 / 200 seeds  =  0%
+negative control `age` preserved          ≈ 20% of seeds
+```
+
+12% is what the arithmetic predicts. Four independent 95% tests refuse
+1 − 0.95⁴ = 18.5% of the time; the certifier is mildly conservative here because
+it treats the two fits as independent when a resample of the real rows is
+correlated with them, which inflates the combined standard error. The measured
+rate lands where that correction puts it.
+
+The negative control's absolute claim survives — it never certified — but "fails
+everything" does not. `age` has a real effect of +0.010, and a coefficient the
+real data barely established is one almost any table can match. That is issue 4
+in [`docs/KNOWN_ISSUES.md`](docs/KNOWN_ISSUES.md) appearing in a control rather
+than in a generator.
+
+**What changed.** Both documents now state what the controls actually do, with
+the rates and the reason. The committed demo seed still certifies, so the
+published table is unaffected, and the seeds that do refuse are named so a reader
+can reproduce a refusal deliberately instead of discovering one by accident.
+`tests/test_control_rates.py` pins all of it. A new issue 9 in
+[`docs/KNOWN_ISSUES.md`](docs/KNOWN_ISSUES.md) records the underlying property:
+the more coefficients an estimand declares, the more often a faithful generator
+is refused, so certification is not comparable across estimands of different
+sizes.
+
+**What did not change.** No reported result moves. The headline failures sit at
+z = 3.4 to 7.3 against a 1.96 cutoff, and the conservatism described above biases
+the certifier *toward* passing, so generator failures are understated rather than
+overstated.
+
+---
+
 ## How these get found
 
-Each of the three came from the same move: taking a number that had been
+Each of the four came from the same move: taking a number that had been
 established once and running it again at larger scale, under a stricter
 protocol, or for the first time. The first two were found that way after
-publication. The third was found by asking which sentence in the repository had
-no script behind it.
+publication. The third and fourth were found by asking which sentence in the
+repository had no script behind it — entry 4 is the same failure as entry 3,
+found again in a place the first sweep did not reach, which is the argument for
+running that question over the whole repository rather than once.

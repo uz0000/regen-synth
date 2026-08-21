@@ -36,10 +36,19 @@ The four coefficients are what has to survive. `pay_delay_1`, how many periods
 behind the account already is, is by far the strongest warning sign at +0.714.
 
 Seven versions of this table are compared. Two are controls, included to show the
-check itself works. The first is a plain resample of the real rows, which must
-come back matching, and if it ever fails the check is broken rather than the
-data. The second shuffles each column on its own, which leaves every column
-looking untouched while destroying how they line up, and must fail.
+check itself works. The first is a plain resample of the real rows, which should
+come back matching. The second shuffles each column on its own, which leaves
+every column looking untouched while destroying how they line up, and must fail.
+
+Both controls behave, and neither is absolute. Certification requires all four
+coefficients to agree at once, and each comparison is a 95% test, so the
+positive control is refused on about **12% of seeds** by chance alone — it is not
+evidence the checker is broken. The negative control never certifies across 200
+seeds, but it does not fail on *every* coefficient: `age` survives about 20% of
+the time, because its real effect is +0.010 and a coefficient the real data
+barely established is one that almost anything can match. That is the power limit
+in [`docs/KNOWN_ISSUES.md`](docs/KNOWN_ISSUES.md) issue 4 showing up in the
+controls, and both rates are measured in `tests/test_control_rates.py`.
 
 The other five are real synthetic-data methods.
 
@@ -280,10 +289,11 @@ of assumed.
 
 ## 9. What was corrected along the way
 
-Three published claims from this project did not survive re-measurement,
-including the certification rate in section 6 and the framing in section 3. Each
-is recorded with what was claimed, what the re-run showed, and what changed, in
-[`CORRECTIONS.md`](CORRECTIONS.md).
+Four published claims from this project did not survive re-measurement,
+including the certification rate in section 6, the framing in section 3, and the
+claim in section 1 that a failing positive control would mean a broken checker.
+Each is recorded with what was claimed, what the re-run showed, and what changed,
+in [`CORRECTIONS.md`](CORRECTIONS.md).
 
 ## 10. Prior art
 
