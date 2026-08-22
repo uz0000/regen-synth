@@ -19,6 +19,7 @@ Claims that were published and later revised are not issues. Those are in
 | [7](#7-pandas-3x-breaks-numeric-coercion) | pandas 3.x breaks numeric coercion | Medium | dependencies are pinned as a result |
 | [8](#8-keeping-coefficients-privacy-and-rare-case-amplification-cannot-all-be-maximised) | Keeping coefficients, privacy, and rare-case amplification cannot all be maximised | Structural | no generator can maximise all three |
 | [9](#9-refusal-gets-more-likely-as-an-estimand-declares-more-coefficients) | Refusal gets more likely as an estimand declares more coefficients | Medium | a faithful generator is refused more often on a larger estimand |
+| [10](#10-the-high-cardinality-tvd-gate-sits-inside-its-own-noise-band) | The high-cardinality TVD gate sits inside its own noise band | Medium | a faithful high-cardinality batch is rejected on some seeds |
 
 ---
 
@@ -186,6 +187,47 @@ to issue 4, which is the same weakness seen from the other side.
 
 Rates are pinned in `tests/test_control_rates.py`.
 
+## 10. The high-cardinality TVD gate sits inside its own noise band
+
+**Severity:** Medium. A threshold that does not separate what it is meant to
+separate, on this data shape.
+
+For a column with more categories than the batch can cover, the auditor compares
+only the top-K categories by real frequency. That fixed the arithmetic problem in
+the resolved list below. It did not make the gate reliable.
+
+Measured on the Open Payments-shaped fixture (500 power-law categories, 1,000
+real rows, 200 synthetic), five seeds:
+
+```
+matching distributions      TVD 0.137 mean, range 0.106 - 0.174
+genuinely mismatched        TVD 0.587 mean
+gate                        0.15
+```
+
+Discrimination is not in doubt — matching and mismatched are four-fold apart. The
+problem is that the *gate* sits inside the matching case's spread, so a faithful
+batch is rejected on a substantial share of seeds while a corrupted one is always
+caught. The check is directionally right and its cut-off is not earned.
+
+**Why it looked fine before.** The top-K set was selected with
+`value_counts().nlargest(k)`, which breaks ties arbitrarily; 17 categories tie at
+the boundary on this fixture. The score therefore varied by platform, and the
+knife-edge stayed invisible until the tie-break was made deterministic and the
+score settled at a reproducible 0.152. That reproducibility bug is fixed
+(`engine/auditor/fidelity.py`); the gate question it was hiding is this issue.
+
+**Not fixed here on purpose.** Loosening the threshold changes what the auditor
+ships, which is a product decision rather than a bug fix, and would move
+accepted-batch counts in the benchmark. The options are a wider cut-off for
+high-cardinality columns specifically, a K that does not grow with batch size
+(TVD *worsens* as K grows, because a larger K pulls in categories the real sample
+itself estimates badly), or a gate calibrated from the sampling noise at the
+observed scale rather than set as a constant.
+
+**Workaround.** Treat a high-cardinality TVD near the gate as inconclusive rather
+than as a verdict, and read it beside the mismatched reference of roughly 0.6.
+
 ---
 
 ## Resolved
@@ -207,7 +249,13 @@ was a sampling limit being read as data corruption. `_tvd_discrete()` now
 compares the top K categories by real frequency, with the remainder pooled into a
 single bucket, where `K = min(n_unique, max(20, n_synthetic // 5))` keeps roughly
 five synthetic rows per compared category. At Open Payments scale, matching
-distributions now score about 0.14 and pass, while genuinely mismatched
-distributions score about 0.60 and are still rejected.
+distributions score about 0.14 against roughly 0.60 for genuinely mismatched
+ones, so the two are cleanly separated.
+
+**Partially superseded by issue 10.** This entry originally read "score about
+0.14 and pass". The mean is right; the "and pass" was not. The spread across
+seeds is 0.106 to 0.174 against a 0.15 gate, so a faithful batch is rejected on a
+substantial share of runs. The arithmetic problem described here is genuinely
+resolved; the threshold question it exposed is open as issue 10.
 
 Implementation: `engine/auditor/fidelity.py`, tests in `tests/test_fidelity.py`.

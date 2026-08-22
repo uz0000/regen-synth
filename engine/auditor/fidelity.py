@@ -330,7 +330,17 @@ def _tvd_discrete(real: pd.Series, synth: pd.Series, config: AuditorConfig) -> f
     # K scales with synthetic batch size: ~5 rows per category for stable
     # proportion estimates.
     k = min(n_unique, max(20, ns // 5))
-    top_k = set(real_clean.value_counts().nlargest(k).index)
+    # Deterministic tie-break. `nlargest(k)` picks arbitrarily among categories
+    # that share the k-th count, and which ones it picks depends on pandas'
+    # internal ordering — so the same data could produce a different top-K set,
+    # and a different TVD, on a different platform. On the Open Payments-shaped
+    # fixture in tests/test_fidelity.py, 17 categories tie at the boundary. This
+    # was observed as a CI failure on Linux against a passing macOS run.
+    # Ordering by (count descending, category ascending) makes the set unique,
+    # which Invariant 2 requires: same input, same output, anywhere.
+    counts = real_clean.value_counts()
+    ordered = sorted(counts.index, key=lambda c: (-int(counts[c]), str(c)))
+    top_k = set(ordered[:k])
 
     real_top_mass = (real_clean.isin(top_k)).sum() / nr
     synth_top_mass = (synth_clean.isin(top_k)).sum() / ns
